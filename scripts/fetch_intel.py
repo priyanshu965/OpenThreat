@@ -2,15 +2,28 @@
 CYBERWATCH DASHBOARD — fetch_intel.py
 ======================================
 Fetches threat intelligence from multiple free sources:
-  - 15 RSS feeds          → News, advisories, incident reports
+  - 16 RSS feeds          → News, advisories, incident reports
   - NVD (NIST) CVE API    → Latest vulnerabilities
-  - Reddit r/netsec       → Community intel
+  - Reddit r/netsec       → Community intel (public/403)
   - AlienVault OTX API    → Threat pulses (API key)
   - URLhaus               → Malware URLs & payload hashes (keyless)
   - Spamhaus DROP         → Malicious IP ranges (keyless)
   - Feodo Tracker         → C2 server IPs (keyless)
   - AbuseIPDB             → IP blacklist (API key)
   - PhishTank             → Phishing URLs (API key)
+  - OSV (Open Source Vulns) → 25+ ecosystem databases (keyless)
+  - MalwareBazaar         → Malware samples (keyless)
+  - ThreatFox             → C2 IOCs (keyless)
+  - MSRC                  → Microsoft advisories (RSS)
+  - Fedora Bodhi          → Fedora security updates (API)
+  - Gentoo GLSA           → Gentoo advisories (RSS)
+  - Arch Linux            → Arch security issues (JSON)
+  - Oracle Linux          → Oracle advisories (RSS)
+  - Amazon Linux          → ALAS advisories (RSS)
+  - CentOS                → CentOS announcements (RSS)
+  - VMware                → VMware security advisories (RSS)
+  - Mitre CWE             → CWE taxonomy (API)
+  - IOC Extraction        → Regex-based from all item descriptions
   - AI Enrichment         → Groq (primary) with Gemini fallback
 
 Output: data/intel.json  +  data/archive/YYYY-MM-DD.json
@@ -352,6 +365,7 @@ def fetch_rss(source: dict) -> list[dict]:
                 "cve_id": extract_cve_id(text), "source": source["name"],
                 "category": category, "severity": severity, "cvss_score": None,
                 "published": pub_date,
+                "iocs": extract_iocs(text),
             })
     except Exception as e:
         log.error(f"Unexpected error {source['name']}: {e}")
@@ -390,6 +404,7 @@ def fetch_nvd_cves() -> list[dict]:
             "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}", "cve_id": cve_id,
             "source": "NVD", "category": "cve", "severity": severity,
             "cvss_score": cvss_score, "published": parse_date(cve.get("published", "")),
+            "iocs": extract_iocs(description),
         })
     log.info(f"  Got {len(items)} CVEs from NVD")
     return items
@@ -415,6 +430,7 @@ def fetch_reddit_netsec() -> list[dict]:
             "url": p.get("url", ""), "cve_id": extract_cve_id(title),
             "source": "Reddit/netsec", "category": infer_category(title, "news"),
             "severity": infer_severity(title, "low"), "cvss_score": None, "published": published,
+            "iocs": extract_iocs(title + " " + p.get("selftext","")),
         })
     log.info(f"  Got {len(items)} posts from Reddit r/netsec")
     return items
@@ -441,6 +457,7 @@ def fetch_otx_pulse() -> list[dict]:
             "cve_id": None, "source": "AlienVault OTX", "category": "incident",
             "severity": infer_severity(name + " " + description, "medium"),
             "cvss_score": None, "published": parse_date(pulse.get("created", now_utc())),
+            "iocs": extract_iocs(name + " " + description),
         })
     log.info(f"  Got {len(items)} pulses from AlienVault OTX")
     return items
@@ -473,6 +490,7 @@ def fetch_urlhaus() -> list[dict]:
                 "url": url, "cve_id": None, "source": "URLhaus",
                 "category": "incident", "severity": infer_severity(threat + " " + tags, "high"),
                 "cvss_score": None, "published": parse_date(date_added),
+                "iocs": {"url": [url]}
             })
     except Exception as e:
         log.warning(f"URLhaus request failed: {e}")
@@ -502,6 +520,7 @@ def fetch_spamhaus_drop() -> list[dict]:
             "url": f"https://www.spamhaus.org/drop/", "cve_id": None,
             "source": "Spamhaus", "category": "advisory", "severity": "medium",
             "cvss_score": None, "published": now_utc(),
+            "iocs": {"cidr": [cidr]},
         })
         if len(items) >= MAX_ITEMS_PER_SOURCE:
             break
@@ -532,6 +551,7 @@ def fetch_feodo() -> list[dict]:
             "url": f"https://feodotracker.abuse.ch/browse/host/{ip}/",
             "cve_id": None, "source": "Feodo Tracker", "category": "incident",
             "severity": "high", "cvss_score": None, "published": parse_date(first_seen),
+            "iocs": {"ipv4": [ip]},
         })
     log.info(f"  Got {len(items)} C2 IPs from Feodo Tracker")
     return items
@@ -568,6 +588,7 @@ def fetch_abuseipdb() -> list[dict]:
             "cve_id": None, "source": "AbuseIPDB", "category": "incident",
             "severity": "high" if confidence >= 90 else "medium",
             "cvss_score": None, "published": now_utc(),
+            "iocs": {"ipv4": [ip]},
         })
     log.info(f"  Got {len(items)} IPs from AbuseIPDB")
     return items
@@ -599,8 +620,383 @@ def fetch_phishtank() -> list[dict]:
             "url": phish_detail or phish_url, "cve_id": None,
             "source": "PhishTank", "category": "incident", "severity": "medium",
             "cvss_score": None, "published": parse_date(submission_time),
+            "iocs": {"url": [phish_url]},
         })
     log.info(f"  Got {len(items)} phishing URLs from PhishTank")
+    return items
+
+# ── OSV Vulnerability Fetcher (covers 25+ sources) ───────────────────────────
+
+OSV_ECOSYSTEMS = [
+    "Debian", "Ubuntu", "Alpine", "Red Hat", "SUSE", "openSUSE",
+    "AlmaLinux", "Rocky Linux", "Azure Linux", "Chainguard", "Wolfi",
+    "PyPI", "RubyGems", "crates.io", "Packagist", "Go", "npm",
+    "Maven", "NuGet", "GitHub Actions", "OSS-Fuzz", "Linux Kernel",
+    "Android", "Homebrew", "VSCode", "Haskell", "Hex", "Pub",
+]
+
+def fetch_osv() -> list[dict]:
+    log.info("Fetching OSV vulnerabilities...")
+    items = []
+    for eco in OSV_ECOSYSTEMS:
+        try:
+            resp = requests.post(
+                "https://api.osv.dev/v1/query",
+                json={"ecosystem": eco, "page_size": 10},
+                headers=HEADERS, timeout=15
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            for vuln_id in data.get("vulns", []):
+                try:
+                    detail = requests.get(f"https://api.osv.dev/v1/vulns/{vuln_id['id']}", headers=HEADERS, timeout=10)
+                    detail.raise_for_status()
+                    v = detail.json()
+                except:
+                    continue
+                title = v.get("summary", v.get("id", "Unknown"))
+                desc = v.get("details", "")[:500]
+                aliases = v.get("aliases", [])
+                cve_id = next((a for a in aliases if a.startswith("CVE-")), None)
+                severity = "medium"
+                if v.get("database_specific", {}).get("severity"):
+                    severity = v["database_specific"]["severity"].lower()
+                items.append({
+                    "title": f"[{eco}] {title[:150]}",
+                    "description": clean_html(desc),
+                    "url": f"https://osv.dev/vulnerability/{v['id']}",
+                    "cve_id": cve_id, "source": "OSV",
+                    "category": "cve", "severity": severity,
+                    "cvss_score": None,
+                    "published": parse_date(v.get("published", "")),
+                    "iocs": extract_iocs(title + " " + desc),
+                    "ecosystem": eco,
+                })
+            time.sleep(0.5)
+        except Exception as e:
+            log.warning(f"OSV ecosystem '{eco}' failed: {e}")
+    log.info(f"  Got {len(items)} vulns from OSV ({len(OSV_ECOSYSTEMS)} ecosystems)")
+    return items
+
+# ── MalwareBazaar Fetcher (keyless) ──────────────────────────────────────────
+
+def fetch_malwarebazaar() -> list[dict]:
+    log.info("Fetching MalwareBazaar recent samples...")
+    items = []
+    try:
+        resp = requests.post(
+            "https://mb-api.abuse.ch/api/v1/",
+            data={"query": "get_recent", "selector": "time"},
+            headers=HEADERS, timeout=15
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        for entry in data.get("data", [])[:MAX_ITEMS_PER_SOURCE]:
+            sha256 = entry.get("sha256_hash", "")
+            md5 = entry.get("md5_hash", "")
+            file_name = entry.get("file_name", "unknown")
+            file_type = entry.get("file_type", "")
+            signature = entry.get("signature", "")
+            first_seen = entry.get("first_seen", "")
+            tags = entry.get("tags", [])
+            tag_str = ", ".join(tags[:5]) if tags else ""
+            desc = f"SHA256: {sha256[:20]}... | MD5: {md5} | Type: {file_type} | Tags: {tag_str}"
+            if signature:
+                desc += f" | Malware: {signature}"
+            items.append({
+                "title": f"MalwareBazaar: {file_name} ({signature or file_type})",
+                "description": desc,
+                "url": f"https://bazaar.abuse.ch/sample/{sha256}/",
+                "cve_id": None, "source": "MalwareBazaar",
+                "category": "incident", "severity": "high",
+                "cvss_score": None, "published": parse_date(first_seen),
+                "iocs": {"sha256": [sha256], "md5": [md5]} if md5 else {"sha256": [sha256]},
+            })
+    except Exception as e:
+        log.warning(f"MalwareBazaar failed: {e}")
+    log.info(f"  Got {len(items)} samples from MalwareBazaar")
+    return items
+
+# ── ThreatFox Fetcher (keyless) ──────────────────────────────────────────────
+
+def fetch_threatfox() -> list[dict]:
+    log.info("Fetching ThreatFox recent IOCs...")
+    items = []
+    try:
+        resp = requests.post(
+            "https://threatfox-api.abuse.ch/api/v1/",
+            json={"query": "recent", "limit": MAX_ITEMS_PER_SOURCE},
+            headers=HEADERS, timeout=15
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        for entry in data.get("data", [])[:MAX_ITEMS_PER_SOURCE]:
+            ioc = entry.get("ioc", "")
+            ioc_type = entry.get("ioc_type", "")
+            malware = entry.get("malware", "")
+            threat = entry.get("threat_type", "")
+            first_seen = entry.get("first_seen", "")
+            reference = entry.get("reference", "")
+            malware_printable = entry.get("malware_printable", "")
+            desc = f"IOC: {ioc} | Type: {malware_printable or malware} | Threat: {threat}"
+            iocs = {}
+            if ":" in ioc and ioc.count(".") == 3:
+                iocs["ipv4"] = [ioc.split(":")[0]]
+            elif ioc.startswith("http"):
+                iocs["url"] = [ioc]
+            elif "." in ioc and " " not in ioc:
+                iocs["domain"] = [ioc.lower()]
+            else:
+                iocs = extract_iocs(ioc)
+            items.append({
+                "title": f"ThreatFox: {ioc[:60]} ({malware_printable or malware})",
+                "description": desc,
+                "url": reference or f"https://threatfox.abuse.ch/browse/{ioc}/",
+                "cve_id": None, "source": "ThreatFox",
+                "category": "incident", "severity": "high",
+                "cvss_score": None, "published": parse_date(first_seen),
+                "iocs": iocs,
+            })
+    except Exception as e:
+        log.warning(f"ThreatFox failed: {e}")
+    log.info(f"  Got {len(items)} IOCs from ThreatFox")
+    return items
+
+# ── MSRC Fetcher (RSS) ───────────────────────────────────────────────────────
+
+def fetch_msrc() -> list[dict]:
+    log.info("Fetching MSRC advisories...")
+    items = []
+    try:
+        resp = requests.get("https://msrc.microsoft.com/update-guide/rss", headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        feed = feedparser.parse(resp.text)
+        for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
+            title = entry.get("title", "MSRC Advisory")
+            link = entry.get("link", "")
+            desc = clean_html(entry.get("summary", ""))[:500]
+            pub = parse_date(entry.get("published_parsed"))
+            items.append({
+                "title": title, "description": desc, "url": link,
+                "cve_id": extract_cve_id(title + " " + desc), "source": "MSRC",
+                "category": "advisory", "severity": infer_severity(title, "high"),
+                "cvss_score": None, "published": pub,
+                "iocs": extract_iocs(title + " " + desc),
+            })
+    except Exception as e:
+        log.warning(f"MSRC failed: {e}")
+    log.info(f"  Got {len(items)} from MSRC")
+    return items
+
+# ── Fedora Bodhi Fetcher ────────────────────────────────────────────────────
+
+def fetch_fedora() -> list[dict]:
+    log.info("Fetching Fedora updates...")
+    items = []
+    try:
+        data = make_request("https://bodhi.fedoraproject.org/updates/?limit=10&status=stable&type=security")
+        if data:
+            for update in data.get("updates", [])[:MAX_ITEMS_PER_SOURCE]:
+                title = update.get("title", update.get("updateid", "Fedora Update"))
+                desc = update.get("notes", "")[:400]
+                pub = parse_date(update.get("date_submitted", ""))
+                items.append({
+                    "title": f"Fedora: {title[:100]}",
+                    "description": clean_html(desc) or f"Fedora security update",
+                    "url": f"https://bodhi.fedoraproject.org/updates/{title}",
+                    "cve_id": extract_cve_id(title + " " + desc), "source": "Fedora",
+                    "category": "advisory", "severity": infer_severity(title, "medium"),
+                    "cvss_score": None, "published": pub,
+                    "iocs": extract_iocs(desc),
+                })
+    except Exception as e:
+        log.warning(f"Fedora failed: {e}")
+    log.info(f"  Got {len(items)} from Fedora")
+    return items
+
+# ── Gentoo GLSA Fetcher (RSS) ──────────────────────────────────────────────
+
+def fetch_gentoo() -> list[dict]:
+    log.info("Fetching Gentoo GLSAs...")
+    items = []
+    try:
+        resp = requests.get("https://security.gentoo.org/glsa/rss/", headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        feed = feedparser.parse(resp.text)
+        for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
+            title = entry.get("title", "Gentoo GLSA")
+            link = entry.get("link", "")
+            desc = clean_html(entry.get("summary", ""))[:400]
+            pub = parse_date(entry.get("published_parsed"))
+            items.append({
+                "title": title, "description": desc, "url": link,
+                "cve_id": extract_cve_id(title + " " + desc), "source": "Gentoo",
+                "category": "advisory", "severity": infer_severity(title, "medium"),
+                "cvss_score": None, "published": pub,
+                "iocs": extract_iocs(desc),
+            })
+    except Exception as e:
+        log.warning(f"Gentoo failed: {e}")
+    log.info(f"  Got {len(items)} from Gentoo")
+    return items
+
+# ── Arch Linux Security Fetcher ─────────────────────────────────────────────
+
+def fetch_archlinux() -> list[dict]:
+    log.info("Fetching Arch Linux issues...")
+    items = []
+    try:
+        data = make_request("https://security.archlinux.org/issues.json")
+        if data:
+            for issue in data[:MAX_ITEMS_PER_SOURCE]:
+                title = issue.get("title", issue.get("id", "Arch Issue"))
+                cve = issue.get("cve", [])
+                cve_id = cve[0] if cve else None
+                desc = issue.get("issue_type", "") + ": " + issue.get("severity", "")
+                pub = parse_date(issue.get("created_at", ""))
+                items.append({
+                    "title": f"Arch Linux: {title[:120]}",
+                    "description": f"Type: {issue.get('issue_type','')} | Severity: {issue.get('severity','')} | Package: {issue.get('package','')}",
+                    "url": f"https://security.archlinux.org/{issue.get('id','')}",
+                    "cve_id": cve_id, "source": "Arch Linux",
+                    "category": "advisory", "severity": infer_severity(title, "medium"),
+                    "cvss_score": None, "published": pub,
+                    "iocs": extract_iocs(title),
+                })
+    except Exception as e:
+        log.warning(f"Arch Linux failed: {e}")
+    log.info(f"  Got {len(items)} from Arch Linux")
+    return items
+
+# ── Oracle Linux Fetcher ───────────────────────────────────────────────────
+
+def fetch_oracle_linux() -> list[dict]:
+    log.info("Fetching Oracle Linux advisories...")
+    items = []
+    try:
+        resp = requests.get("https://linux.oracle.com/security/oval/", headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        feed = feedparser.parse(resp.text)
+        for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
+            title = entry.get("title", "Oracle Advisory")
+            link = entry.get("link", "")
+            desc = clean_html(entry.get("summary", ""))[:400]
+            pub = parse_date(entry.get("published_parsed"))
+            items.append({
+                "title": title, "description": desc, "url": link,
+                "cve_id": extract_cve_id(title + " " + desc), "source": "Oracle Linux",
+                "category": "advisory", "severity": infer_severity(title, "medium"),
+                "cvss_score": None, "published": pub,
+                "iocs": extract_iocs(desc),
+            })
+    except Exception as e:
+        log.warning(f"Oracle Linux failed: {e}")
+    log.info(f"  Got {len(items)} from Oracle Linux")
+    return items
+
+# ── Amazon Linux Fetcher ───────────────────────────────────────────────────
+
+def fetch_amazon_linux() -> list[dict]:
+    log.info("Fetching Amazon Linux advisories...")
+    items = []
+    try:
+        for alas_type in ["ALAS-2025", "ALAS2-2025"]:
+            resp = requests.get(f"https://alas.aws.amazon.com/alas/{alas_type}.xml", headers=HEADERS, timeout=15)
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.text)
+            for entry in feed.entries[:MAX_ITEMS_PER_SOURCE // 2]:
+                title = entry.get("title", "Amazon Linux Advisory")
+                link = entry.get("link", "")
+                desc = clean_html(entry.get("summary", ""))[:400]
+                pub = parse_date(entry.get("published_parsed"))
+                items.append({
+                    "title": title, "description": desc, "url": link,
+                    "cve_id": extract_cve_id(title + " " + desc), "source": "Amazon Linux",
+                    "category": "advisory", "severity": infer_severity(title, "medium"),
+                    "cvss_score": None, "published": pub,
+                    "iocs": extract_iocs(desc),
+                })
+    except Exception as e:
+        log.warning(f"Amazon Linux failed: {e}")
+    log.info(f"  Got {len(items)} from Amazon Linux")
+    return items
+
+# ── CentOS Announce Fetcher ────────────────────────────────────────────────
+
+def fetch_centos() -> list[dict]:
+    log.info("Fetching CentOS announcements...")
+    items = []
+    try:
+        resp = requests.get("https://lists.centos.org/pipermail/centos-announce/", headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        feed = feedparser.parse(resp.text)
+        for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
+            title = entry.get("title", "CentOS Announce")
+            link = entry.get("link", "")
+            desc = clean_html(entry.get("summary", ""))[:400]
+            pub = parse_date(entry.get("published_parsed"))
+            items.append({
+                "title": title, "description": desc, "url": link,
+                "cve_id": extract_cve_id(title + " " + desc), "source": "CentOS",
+                "category": "advisory", "severity": infer_severity(title, "medium"),
+                "cvss_score": None, "published": pub,
+                "iocs": extract_iocs(desc),
+            })
+    except Exception as e:
+        log.warning(f"CentOS failed: {e}")
+    log.info(f"  Got {len(items)} from CentOS")
+    return items
+
+# ── VMware Security Fetcher ───────────────────────────────────────────────
+
+def fetch_vmware() -> list[dict]:
+    log.info("Fetching VMware security advisories...")
+    items = []
+    try:
+        resp = requests.get("https://www.vmware.com/security/advisories/rss.xml", headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        feed = feedparser.parse(resp.text)
+        for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
+            title = entry.get("title", "VMware Advisory")
+            link = entry.get("link", "")
+            desc = clean_html(entry.get("summary", ""))[:400]
+            pub = parse_date(entry.get("published_parsed"))
+            items.append({
+                "title": title, "description": desc, "url": link,
+                "cve_id": extract_cve_id(title + " " + desc), "source": "VMware",
+                "category": "advisory", "severity": infer_severity(title, "high"),
+                "cvss_score": None, "published": pub,
+                "iocs": extract_iocs(desc),
+            })
+    except Exception as e:
+        log.warning(f"VMware failed: {e}")
+    log.info(f"  Got {len(items)} from VMware")
+    return items
+
+# ── Mitre CWE Fetcher ─────────────────────────────────────────────────────
+
+def fetch_mitre_cwe() -> list[dict]:
+    log.info("Fetching Mitre CWE data...")
+    items = []
+    try:
+        data = make_request("https://cwe-api.mitre.org/api/v1/cwe/weaknesses?limit=10&offset=0")
+        if data:
+            for weakness in data.get("weaknesses", [])[:MAX_ITEMS_PER_SOURCE]:
+                cwe_id = weakness.get("id", "")
+                name = weakness.get("name", "")
+                desc = weakness.get("description", "")[:400]
+                items.append({
+                    "title": f"{cwe_id}: {name}",
+                    "description": desc,
+                    "url": f"https://cwe.mitre.org/data/definitions/{cwe_id.replace('CWE-','')}.html",
+                    "cve_id": None, "source": "Mitre CWE",
+                    "category": "advisory", "severity": "medium",
+                    "cvss_score": None, "published": now_utc(),
+                    "iocs": extract_iocs(desc),
+                })
+    except Exception as e:
+        log.warning(f"Mitre CWE failed: {e}")
+    log.info(f"  Got {len(items)} from Mitre CWE")
     return items
 
 # ── EPSS Scoring ──────────────────────────────────────────────────────────────
@@ -721,6 +1117,42 @@ def extract_cve_id(text: str) -> str | None:
     match = re.search(r"CVE-\d{4}-\d{4,7}", text, re.IGNORECASE)
     return match.group(0).upper() if match else None
 
+# ── IOC Extraction Engine ─────────────────────────────────────────────────────
+
+IOC_PATTERNS = {
+    'sha256': re.compile(r'\b[a-fA-F0-9]{64}\b'),
+    'sha1':   re.compile(r'\b[a-fA-F0-9]{40}\b'),
+    'md5':    re.compile(r'\b[a-fA-F0-9]{32}\b'),
+    'ipv4':   re.compile(r'(?<![0-9])(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?![0-9])'),
+    'domain': re.compile(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'),
+    'url':    re.compile(r'https?://[^\s<>"\'{}|\\^`\[\]]+', re.I),
+    'cve':    re.compile(r'CVE-\d{4}-\d{4,7}', re.I),
+    'cidr':   re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b'),
+    'email':  re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'),
+}
+
+def extract_iocs(text: str) -> dict[str, list[str]]:
+    if not text:
+        return {k: [] for k in IOC_PATTERNS}
+    result = {}
+    text_clean = text.replace('[.]', '.').replace('hxxp', 'http').replace('hxxps', 'https').replace('[at]', '@')
+    for ioc_type, pattern in IOC_PATTERNS.items():
+        matches = pattern.findall(text_clean)
+        seen = set()
+        unique = []
+        for m in matches:
+            m = m.strip().lower()
+            if m not in seen and len(m) > 2:
+                # Filter private IPs for ipv4
+                if ioc_type == 'ipv4':
+                    parts = m.split('.')
+                    if parts[0] in ('10', '127') or (parts[0] == '172' and 16 <= int(parts[1]) <= 31) or (parts[0] == '192' and parts[1] == '168'):
+                        continue
+                seen.add(m)
+                unique.append(m)
+        result[ioc_type] = unique
+    return result
+
 def deduplicate(items: list[dict]) -> list[dict]:
     seen, unique = set(), []
     for item in items:
@@ -734,7 +1166,7 @@ def deduplicate(items: list[dict]) -> list[dict]:
 
 def main():
     log.info("═" * 60)
-    log.info("CYBERWATCH v2.1 — Starting intel pipeline (16 RSS + 7 API sources)")
+    log.info("CYBERWATCH v2.2 — Starting intel pipeline (16 RSS + 19 API sources)")
     log.info("═" * 60)
 
     all_items = []
@@ -802,6 +1234,90 @@ def main():
     except Exception as e:
         log.error(f"PhishTank failed: {e}")
 
+    # 10. OSV (covers 25+ ecosystems)
+    try:
+        all_items.extend(fetch_osv())
+    except Exception as e:
+        log.error(f"OSV failed: {e}")
+    time.sleep(1)
+
+    # 11. MalwareBazaar
+    try:
+        all_items.extend(fetch_malwarebazaar())
+    except Exception as e:
+        log.error(f"MalwareBazaar failed: {e}")
+    time.sleep(1)
+
+    # 12. ThreatFox
+    try:
+        all_items.extend(fetch_threatfox())
+    except Exception as e:
+        log.error(f"ThreatFox failed: {e}")
+    time.sleep(1)
+
+    # 13. MSRC
+    try:
+        all_items.extend(fetch_msrc())
+    except Exception as e:
+        log.error(f"MSRC failed: {e}")
+    time.sleep(1)
+
+    # 14. Fedora
+    try:
+        all_items.extend(fetch_fedora())
+    except Exception as e:
+        log.error(f"Fedora failed: {e}")
+    time.sleep(1)
+
+    # 15. Gentoo
+    try:
+        all_items.extend(fetch_gentoo())
+    except Exception as e:
+        log.error(f"Gentoo failed: {e}")
+    time.sleep(1)
+
+    # 16. Arch Linux
+    try:
+        all_items.extend(fetch_archlinux())
+    except Exception as e:
+        log.error(f"Arch Linux failed: {e}")
+    time.sleep(1)
+
+    # 17. Oracle Linux
+    try:
+        all_items.extend(fetch_oracle_linux())
+    except Exception as e:
+        log.error(f"Oracle Linux failed: {e}")
+    time.sleep(1)
+
+    # 18. Amazon Linux
+    try:
+        all_items.extend(fetch_amazon_linux())
+    except Exception as e:
+        log.error(f"Amazon Linux failed: {e}")
+    time.sleep(1)
+
+    # 19. CentOS
+    try:
+        all_items.extend(fetch_centos())
+    except Exception as e:
+        log.error(f"CentOS failed: {e}")
+    time.sleep(1)
+
+    # 20. VMware
+    try:
+        all_items.extend(fetch_vmware())
+    except Exception as e:
+        log.error(f"VMware failed: {e}")
+    time.sleep(1)
+
+    # 21. Mitre CWE
+    try:
+        all_items.extend(fetch_mitre_cwe())
+    except Exception as e:
+        log.error(f"Mitre CWE failed: {e}")
+    time.sleep(1)
+
     # ── Deduplicate + sort ──────────────────────────────────────────────────
     all_items = deduplicate(all_items)
     all_items.sort(key=lambda x: x.get("published", ""), reverse=True)
@@ -859,8 +1375,8 @@ def main():
     output = {
         "last_updated": now_utc(),
         "total_items": len(all_items),
-        "pipeline_version": "2.1.0",
-        "sources_fetched": len(RSS_SOURCES) + 7,
+        "pipeline_version": "2.2.0",
+        "sources_fetched": len(RSS_SOURCES) + 7 + 12,
         "ai_provider_configured": bool(GROQ_API_KEY) or bool(GEMINI_API_KEY),
         "source_breakdown": dict(source_counter.most_common()),
         "items": all_items,
