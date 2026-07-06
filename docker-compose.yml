@@ -1,0 +1,42 @@
+# ── CyberWatch Docker Compose ──────────────────────────────────────
+# Usage:
+#   docker-compose up -d              → Start dashboard on port 8080
+#   docker-compose run fetcher        → Run one-off intel fetch
+#   docker-compose -f docker-compose.yml -f docker-compose.cron.yml up
+#                                    → With scheduled fetcher
+# ────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+services:
+  dashboard:
+    build:
+      context: .
+      target: frontend
+    ports:
+      - "8080:80"
+    volumes:
+      - ./data:/usr/share/nginx/html/data
+      - ./data/archive:/usr/share/nginx/html/data/archive
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  fetcher:
+    build:
+      context: .
+      target: fetcher
+    volumes:
+      - ./data:/app/data
+      - ./data/archive:/app/data/archive
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OTX_API_KEY=${OTX_API_KEY:-}
+      - WEBHOOK_URL=${WEBHOOK_URL:-}
+      - WEBHOOK_TYPE=${WEBHOOK_TYPE:-slack}
+    profiles:
+      - manual

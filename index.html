@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://platform.linkedin.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://media.licdn.com; connect-src 'self' https://services.nvd.nist.gov;" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta http-equiv="X-Frame-Options" content="DENY" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>CyberWatch</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- JetBrains Mono for terminal feel, Syne for headings -->
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <!-- Mermaid.js for AI-generated attack flow diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <!-- LinkedIn Profile Badge -->
+  <script src="https://platform.linkedin.com/badges/js/profile.js" async defer></script>
+</head>
+<body>
+
+  <!-- Animated background grid -->
+  <div class="bg-grid"></div>
+  <div class="scan-line"></div>
+
+  <!-- ═══════════════════════════ HEADER ═══════════════════════════ -->
+  <header class="site-header">
+    <div class="header-left">
+      <div class="logo">
+        <span class="logo-bracket">[</span>
+        <span class="logo-text">CYBER<span class="logo-accent">WATCH</span></span>
+        <span class="logo-bracket">]</span>
+      </div>
+      <div class="header-meta">
+        <span class="status-dot"></span>
+        <span id="last-updated">Initializing feed...</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="stat-pill" id="stat-critical">
+        <span class="stat-label">CRITICAL</span>
+        <span class="stat-value" id="count-critical">—</span>
+      </div>
+      <div class="stat-pill" id="stat-high">
+        <span class="stat-label">HIGH</span>
+        <span class="stat-value" id="count-high">—</span>
+      </div>
+      <div class="stat-pill" id="stat-medium">
+        <span class="stat-label">MEDIUM</span>
+        <span class="stat-value" id="count-medium">—</span>
+      </div>
+      <div class="stat-pill" id="stat-items">
+        <span class="stat-label">TOTAL</span>
+        <span class="stat-value" id="count-total">—</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════ CONTROLS ═══════════════════════════ -->
+  <section class="controls-bar">
+    <div class="search-wrapper">
+      <span class="search-icon">⌕</span>
+      <input
+        type="text"
+        id="search-input"
+        class="search-input"
+        placeholder="Search threats, CVEs, keywords..."
+        autocomplete="off"
+      />
+    </div>
+    <div class="filter-tabs" id="filter-tabs">
+      <button class="filter-btn active" data-filter="all">ALL</button>
+      <button class="filter-btn" data-filter="cve">CVEs</button>
+      <button class="filter-btn" data-filter="news">NEWS</button>
+      <button class="filter-btn" data-filter="advisory">ADVISORIES</button>
+      <button class="filter-btn" data-filter="incident">INCIDENTS</button>
+      <button class="filter-btn matrix-btn" data-filter="matrix">⬛ ATT&CK MATRIX</button>
+      
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════ DAILY SUMMARY ═══════════════════════════ -->
+  <div id="daily-summary" class="daily-summary" style="display:none;">
+    <div class="summary-inner">
+      <span class="summary-label">📋 TODAY'S BRIEF</span>
+      <div class="summary-stats" id="summary-stats"><!-- filled by JS --></div>
+      <span class="summary-divider">|</span>
+      <span class="summary-top" id="summary-top-threat"><!-- filled by JS --></span>
+    </div>
+  </div>
+
+  <!-- Mobile sidebar toggle -->
+  <div class="mobile-stats-toggle" id="mobile-stats-toggle" style="display:none;">
+    <button class="toggle-btn" id="toggle-sidebar-btn" onclick="toggleMobileSidebar()">
+      <span id="toggle-label">▼ SHOW STATS</span>
+    </button>
+  </div>
+
+  <!-- ═══════════════════════════ MAIN CONTENT ═══════════════════════════ -->
+  <main class="dashboard">
+
+    <!-- Sidebar: Stats + Sources -->
+    <aside class="sidebar">
+
+      <div class="sidebar-card">
+        <div class="sidebar-title">SEVERITY BREAKDOWN</div>
+        <div class="severity-chart" id="severity-chart">
+          <div class="sev-row">
+            <span class="sev-label critical">CRITICAL</span>
+            <div class="sev-bar-wrap"><div class="sev-bar critical" id="bar-critical"></div></div>
+            <span class="sev-count" id="sev-count-critical">0</span>
+          </div>
+          <div class="sev-row">
+            <span class="sev-label high">HIGH</span>
+            <div class="sev-bar-wrap"><div class="sev-bar high" id="bar-high"></div></div>
+            <span class="sev-count" id="sev-count-high">0</span>
+          </div>
+          <div class="sev-row">
+            <span class="sev-label medium">MEDIUM</span>
+            <div class="sev-bar-wrap"><div class="sev-bar medium" id="bar-medium"></div></div>
+            <span class="sev-count" id="sev-count-medium">0</span>
+          </div>
+          <div class="sev-row">
+            <span class="sev-label low">LOW</span>
+            <div class="sev-bar-wrap"><div class="sev-bar low" id="bar-low"></div></div>
+            <span class="sev-count" id="sev-count-low">0</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-title">ACTIVE SOURCES</div>
+        <div class="source-list" id="source-list">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-title">CATEGORY BREAKDOWN</div>
+        <div class="cat-list" id="cat-list">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-title">CONNECT</div>
+        <div class="linkedin-badge-wrap">
+          <div class="badge-base LI-profile-badge" data-locale="en_US" data-size="medium" data-theme="dark" data-type="VERTICAL" data-vanity="priyanshu12" data-version="v1"></div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Main Feed -->
+    <section class="feed">
+      <div class="feed-header">
+        <span id="feed-count">Loading intelligence feed...</span>
+        <span class="feed-sort">↓ LATEST FIRST</span>
+      </div>
+
+      <!-- Loading state -->
+      <div id="loading-state" class="loading-state">
+        <div class="loader-ring"></div>
+        <p>Fetching threat intelligence...</p>
+      </div>
+
+      <!-- Error state -->
+      <div id="error-state" class="error-state" style="display:none;">
+        <p class="error-icon">⚠</p>
+        <p>Failed to load intel feed. Check that <code>data/intel.json</code> exists.</p>
+      </div>
+
+      <!-- Cards container -->
+      <div id="cards-container" class="cards-container" style="display:none;"></div>
+
+      <!-- MITRE ATT&CK Matrix View -->
+      <div id="matrix-view" class="matrix-view" style="display:none;">
+        <div class="matrix-legend">
+          <div class="legend-item"><span class="legend-dot active-high"></span> High activity (3+)</div>
+          <div class="legend-item"><span class="legend-dot active-med"></span> Seen in feed</div>
+          <div class="legend-item"><span class="legend-dot inactive"></span> Not observed</div>
+          <div class="matrix-hint">Click any technique to filter the feed → switch to ALL view</div>
+        </div>
+        <div class="matrix-grid" id="matrix-grid"><!-- Populated by JS --></div>
+      </div>
+
+      
+
+      <!-- No results -->
+      <div id="no-results" class="no-results" style="display:none;">
+        <p>No results match your search.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
+<footer class="site-footer">
+      <span>CYBERWATCH</span>
+      <span>Updates every 2 hours</span>
+    </footer>
+
+    <!-- CVE Detail Modal -->
+    <div id="cve-modal" class="modal-overlay" style="display:none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title" id="modal-cve-id">CVE-XXXX-XXXXX</span>
+          <button class="modal-close" onclick="closeCveModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="modal-body">
+          <div class="modal-loading">
+            <div class="loader-ring"></div>
+            <span>Fetching NVD details...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  <!--
+    ═══════════════════════════════════════════════════════════════
+    EMBEDDED FALLBACK DATA
+    This data is used when the dashboard is opened directly as a
+    file (file:// protocol). On GitHub Pages the live intel.json
+    is fetched instead and this is ignored.
+
+    ➜ HOW TO UPDATE THIS:
+       After running `python scripts/fetch_intel.py`, copy the
+       contents of data/intel.json and paste it below.
+       But on GitHub Pages you never need to — it updates itself!
+    ═══════════════════════════════════════════════════════════════
+  -->
+  <script>
+    window.INTEL_DATA = {
+  "last_updated": "2025-01-15T06:00:00Z",
+  "total_items": 20,
+  "items": [
+    {
+      "title": "CVE-2025-0282: Ivanti Connect Secure Stack Buffer Overflow",
+      "description": "A stack-based buffer overflow in Ivanti Connect Secure before 22.7R2.5 allows a remote unauthenticated attacker to achieve remote code execution. CISA added this to the Known Exploited Vulnerabilities catalog.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2025-0282",
+      "cve_id": "CVE-2025-0282",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": 9.0,
+      "published": "2025-01-14T18:00:00Z",
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Threat Actor] --> B[External Remote Services]\n    B --> C[Stack Buffer Overflow]\n    C --> D[Remote Code Execution]\n    D --> E[Full System Compromise]",
+      "ttps": [
+        {"id": "T1133", "name": "External Remote Services", "tactic": "Initial Access", "tactic_id": "TA0001"},
+        {"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access", "tactic_id": "TA0001"},
+        {"id": "T1059", "name": "Command and Scripting Interpreter", "tactic": "Execution", "tactic_id": "TA0002"}
+      ]
+    },
+    {
+      "title": "CISA Adds Four Known Exploited Vulnerabilities to Catalog",
+      "description": "CISA has added four new vulnerabilities to its Known Exploited Vulnerabilities Catalog based on evidence of active exploitation. These are frequent attack vectors for malicious cyber actors.",
+      "url": "https://www.cisa.gov/news-events/alerts/2025/01/14/cisa-adds-four-known-exploited-vulnerabilities-catalog",
+      "cve_id": null,
+      "source": "CISA",
+      "category": "advisory",
+      "severity": "high",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Threat Actor] --> B[Initial Access]\n    B --> C[Execution]\n    C --> D[Impact]",
+      "ttps": []
+    },
+    {
+      "title": "New EAGERBEE Malware Variant Targeting Middle East ISPs and Government Entities",
+      "description": "A new variant of the EAGERBEE backdoor remote access trojan framework targeting internet service providers and government entities in the Middle East, with novel plugin components for file system manipulation and data exfiltration.",
+      "url": "https://thehackernews.com/2025/01/eagerbee-backdoor-variant-middle-east.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Threat Actor] --> B[Phishing / Supply Chain]\n    B --> C[EAGERBEE Backdoor Install]\n    C --> D[Plugin Deployment]\n    D --> E[Data Exfiltration via C2]",
+      "ttps": [
+        {"id": "T1219", "name": "Remote Access Software", "tactic": "Command & Control", "tactic_id": "TA0011"},
+        {"id": "T1041", "name": "Exfiltration Over C2 Channel", "tactic": "Exfiltration", "tactic_id": "TA0010"}
+      ]
+    },
+    {
+      "title": "CVE-2024-49113: Windows LDAP Remote Code Execution Vulnerability",
+      "description": "A critical remote code execution vulnerability in Windows LDAP allows an unauthenticated attacker to send specially crafted requests and achieve remote code execution on the target server.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-49113",
+      "cve_id": "CVE-2024-49113",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": 9.8,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Threat Actor] --> B[Craft Malicious LDAP Request]\n    B --> C[Trigger RCE on Windows Server]\n    C --> D[Code Execution as SYSTEM]\n    D --> E[Lateral Movement / Persistence]",
+      "ttps": [
+        {"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access", "tactic_id": "TA0001"},
+        {"id": "T1059", "name": "Command and Scripting Interpreter", "tactic": "Execution", "tactic_id": "TA0002"}
+      ]
+    },
+    {
+      "title": "FunkSec Ransomware Group Claims 85 Victims Using AI-Generated Malware",
+      "description": "A new ransomware group FunkSec used ai-generated malware code to develop custom ransomware and claimed 85 victims. They encrypt files, delete shadow copies and backup files, and demanded ransom.",
+      "url": "https://www.bleepingcomputer.com/news/security/funksec-ransomware-group-claims-85-victims-in-december/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Threat Actor] --> B[AI-Generated Ransomware Dev]\n    B --> C[Phishing / RDP Brute Force]\n    C --> D[File Encryption + Shadow Copy Deletion]\n    D --> E[Ransom Demand]",
+      "ttps": [
+        {"id": "T1587.001", "name": "Malware", "tactic": "Resource Development", "tactic_id": "TA0042"},
+        {"id": "T1486", "name": "Data Encrypted for Impact", "tactic": "Impact", "tactic_id": "TA0040"}
+      ]
+    },
+    {
+      "title": "Microsoft January 2025 Patch Tuesday: 159 Vulnerabilities Fixed",
+      "description": "Microsoft Patch Tuesday addresses 159 vulnerabilities including 10 critical remote code execution flaws, 3 actively exploited zero-days, and privilege escalation vulnerabilities. Administrators urged to patch immediately.",
+      "url": "https://www.bleepingcomputer.com/news/microsoft/microsoft-january-2025-patch-tuesday/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "advisory",
+      "severity": "critical",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Attacker] --> B[Exploit Unpatched System]\n    B --> C[RCE or PrivEsc]\n    C --> D[Persistence / Lateral Move]\n    D --> E[Data Exfiltration or Ransomware]",
+      "ttps": [
+        {"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access", "tactic_id": "TA0001"},
+        {"id": "T1068", "name": "Exploitation for Privilege Escalation", "tactic": "Privilege Escalation", "tactic_id": "TA0004"}
+      ]
+    },
+    {
+      "title": "SANS ISC: Active Scanning for Exposed Git Repositories Spikes",
+      "description": "Threat actors are actively scanning for exposed .git directories using automated vulnerability scanning tools like gobuster to find source code, credentials, and configuration files on web servers.",
+      "url": "https://isc.sans.edu/diary/",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Threat Actor] --> B[Automated Gobuster Scan]\n    B --> C[Exposed .git Directory Found]\n    C --> D[Source Code + Secret Extraction]\n    D --> E[Credential Abuse / Further Access]",
+      "ttps": [
+        {"id": "T1595", "name": "Active Scanning", "tactic": "Reconnaissance", "tactic_id": "TA0043"},
+        {"id": "T1083", "name": "File and Directory Discovery", "tactic": "Discovery", "tactic_id": "TA0007"}
+      ]
+    },
+    {
+      "title": "Thousands of Fortinet Devices Backdoored via Symlink Web Shell",
+      "description": "Threat actors planted a persistent web shell backdoor on thousands of Fortinet devices by creating a symbolic link that survives firmware updates, allowing continued access. Indicator removal used to cover tracks.",
+      "url": "https://krebsonsecurity.com/2025/01/thousands-fortinet-devices-backdoored/",
+      "cve_id": "CVE-2023-27997",
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "critical",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Attacker] --> B[Exploit FortiOS CVE-2023-27997]\n    B --> C[Deploy Symlink Web Shell]\n    C --> D[Survive Firmware Update]\n    D --> E[Persistent C2 Access]\n    E --> F[Cover Tracks via Indicator Removal]",
+      "ttps": [
+        {"id": "T1505", "name": "Server Software Component", "tactic": "Persistence", "tactic_id": "TA0003"},
+        {"id": "T1070", "name": "Indicator Removal", "tactic": "Defense Evasion", "tactic_id": "TA0005"}
+      ]
+    },
+    {
+      "title": "CVE-2025-0283: Ivanti Connect Secure Privilege Escalation",
+      "description": "A privilege escalation vulnerability in Ivanti Connect Secure allows a local authenticated attacker to elevate to root. Exploited together with CVE-2025-0282 in the same attack chains via VPN exploitation.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2025-0283",
+      "cve_id": "CVE-2025-0283",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": 7.0,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Authenticated Local User] --> B[Trigger PrivEsc Vuln]\n    B --> C[Gain Root Privileges]\n    C --> D[Full VPN Appliance Control]",
+      "ttps": [
+        {"id": "T1068", "name": "Exploitation for Privilege Escalation", "tactic": "Privilege Escalation", "tactic_id": "TA0004"}
+      ]
+    },
+    {
+      "title": "North Korean Lazarus Group Steals $308 Million from DMM Bitcoin Exchange",
+      "description": "North Korean Lazarus Group hackers used social engineering and supply chain compromise for financial theft of $308 million in cryptocurrency from DMM Bitcoin. Stolen credentials and user execution were key vectors.",
+      "url": "https://thehackernews.com/2025/01/north-korea-lazarus-dmm-bitcoin.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Lazarus Group] --> B[Social Engineering + Supply Chain]\n    B --> C[Stolen Credentials]\n    C --> D[Exchange System Access]\n    D --> E[$308M Crypto Theft]",
+      "ttps": [
+        {"id": "T1195", "name": "Supply Chain Compromise", "tactic": "Initial Access", "tactic_id": "TA0001"},
+        {"id": "T1657", "name": "Financial Theft", "tactic": "Impact", "tactic_id": "TA0040"}
+      ]
+    },
+    {
+      "title": "PoC for Apache Struts RCE (CVE-2024-53677) Released Publicly",
+      "description": "A working proof-of-concept exploit for Apache Struts remote code execution vulnerability enabling unauthenticated remote code execution via path traversal has been released. Treat as actively exploited.",
+      "url": "https://www.reddit.com/r/netsec",
+      "cve_id": "CVE-2024-53677",
+      "source": "Reddit/netsec",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": 9.5,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Attacker] --> B[Send Crafted HTTP Request]\n    B --> C[Path Traversal Trigger]\n    C --> D[Unauthenticated RCE]\n    D --> E[Server Compromise]",
+      "ttps": [
+        {"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access", "tactic_id": "TA0001"}
+      ]
+    },
+    {
+      "title": "CISA Emergency Directive: Disconnect Ivanti Appliances Immediately",
+      "description": "CISA directive requires federal agencies to immediately disconnect Ivanti Connect Secure VPN appliances. Active exploitation of multiple critical vulnerabilities including authentication bypass and external remote services abuse observed.",
+      "url": "https://www.cisa.gov/news-events/directives",
+      "cve_id": null,
+      "source": "CISA",
+      "category": "advisory",
+      "severity": "critical",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Attacker] --> B[Exploit Ivanti Auth Bypass]\n    B --> C[VPN Appliance Access]\n    C --> D[Federal Network Pivot]\n    D --> E[Espionage / Data Theft]",
+      "ttps": [
+        {"id": "T1133", "name": "External Remote Services", "tactic": "Initial Access", "tactic_id": "TA0001"},
+        {"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access", "tactic_id": "TA0001"}
+      ]
+    },
+    {
+      "title": "Banshee Stealer macOS Malware Uses XProtect Encryption to Evade Detection",
+      "description": "New Banshee macOS Stealer variant uses XProtect string encryption algorithm to bypass antivirus and impair defenses. Targets browser credentials, cryptocurrency wallets, iCloud keychain, and password managers.",
+      "url": "https://thehackernews.com/2025/01/banshee-stealer-macos.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "news",
+      "severity": "high",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Victim] --> B[Malicious App / Download]\n    B --> C[Banshee Stealer Executes]\n    C --> D[XProtect Encryption Bypass]\n    D --> E[Credential + Wallet Exfil]",
+      "ttps": [
+        {"id": "T1562", "name": "Impair Defenses", "tactic": "Defense Evasion", "tactic_id": "TA0005"},
+        {"id": "T1555", "name": "Credentials from Password Stores", "tactic": "Credential Access", "tactic_id": "TA0006"}
+      ]
+    },
+    {
+      "title": "CVE-2024-55591: FortiOS Authentication Bypass — Mass Exploitation Observed",
+      "description": "Critical authentication bypass in Fortinet FortiOS and FortiProxy allows unauthenticated attacker to gain super-admin privileges. Mass exploitation underway. Attackers creating backdoor accounts and modifying firewall policies.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-55591",
+      "cve_id": "CVE-2024-55591",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": 9.6,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Unauthenticated Attacker] --> B[Exploit Node.js WebSocket Module]\n    B --> C[Auth Bypass — Gain Super-Admin]\n    C --> D[Create Backdoor Accounts]\n    D --> E[Firewall Policy Manipulation]\n    E --> F[Persistent Access]",
+      "ttps": [
+        {"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access", "tactic_id": "TA0001"},
+        {"id": "T1136", "name": "Create Account", "tactic": "Persistence", "tactic_id": "TA0003"}
+      ]
+    },
+    {
+      "title": "PowerSchool Breach: Stolen Credentials Expose Student Records Across North America",
+      "description": "Attackers used stolen credentials via credential stuffing to access PowerSchool Student Information System. Data exfiltration of personal data of students and teachers across US and Canadian school districts.",
+      "url": "https://www.bleepingcomputer.com/news/security/powerschool-data-breach/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Attacker] --> B[Credential Stuffing Attack]\n    B --> C[PowerSchool SIS Login]\n    C --> D[Bulk Student + Teacher PII Export]\n    D --> E[Data Sold / Extortion]",
+      "ttps": [
+        {"id": "T1078", "name": "Valid Accounts", "tactic": "Initial Access", "tactic_id": "TA0001"},
+        {"id": "T1041", "name": "Exfiltration Over C2 Channel", "tactic": "Exfiltration", "tactic_id": "TA0010"}
+      ]
+    },
+    {
+      "title": "SANS ISC: Detecting Encrypted Malware C2 Traffic with Zeek and Suricata",
+      "description": "Practical guide to detecting encrypted command and control communications using open-source network sniffing tools. Covers cobalt strike beaconing and common remote access trojan C2 detection patterns.",
+      "url": "https://isc.sans.edu/diary/",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Malware] --> B[Encrypted C2 Channel TLS]\n    B --> C[Beacon Detection via Zeek/Suricata]\n    C --> D[Analyst Alert + Investigation]",
+      "ttps": [
+        {"id": "T1071", "name": "Application Layer Protocol", "tactic": "Command & Control", "tactic_id": "TA0011"},
+        {"id": "T1219", "name": "Remote Access Software", "tactic": "Command & Control", "tactic_id": "TA0011"}
+      ]
+    },
+    {
+      "title": "CVE-2024-49138: Windows CLFS Zero-Day Exploited Before Patch Tuesday",
+      "description": "Privilege escalation in Windows Common Log File System (CLFS) driver exploited as zero-day before patching. Attackers gained SYSTEM-level privileges via local privilege escalation exploitation.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-49138",
+      "cve_id": "CVE-2024-49138",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": 7.8,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Local Attacker] --> B[Trigger CLFS Driver Bug]\n    B --> C[Privilege Escalation to SYSTEM]\n    C --> D[Persistence + Lateral Movement]",
+      "ttps": [
+        {"id": "T1068", "name": "Exploitation for Privilege Escalation", "tactic": "Privilege Escalation", "tactic_id": "TA0004"}
+      ]
+    },
+    {
+      "title": "MirrorFace APT Uses Spearphishing to Target European Diplomatic Entities",
+      "description": "Chinese APT MirrorFace expanded beyond Japan to target European diplomats using spearphishing emails delivering ANEL and NOOPDOOR backdoors as remote access tools. Data exfiltration over C2 channel observed.",
+      "url": "https://thehackernews.com/2025/01/mirrorface-apt-europe-targeting.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[MirrorFace APT] --> B[Spearphishing Email]\n    B --> C[Victim Opens Attachment]\n    C --> D[ANEL / NOOPDOOR Backdoor]\n    D --> E[Persistent Remote Access]\n    E --> F[Diplomatic Data Exfiltration]",
+      "ttps": [
+        {"id": "T1566", "name": "Phishing", "tactic": "Initial Access", "tactic_id": "TA0001"},
+        {"id": "T1041", "name": "Exfiltration Over C2 Channel", "tactic": "Exfiltration", "tactic_id": "TA0010"}
+      ]
+    },
+    {
+      "title": "US Treasury Sanctions Chinese Firm Behind Salt Typhoon Telecom Breaches",
+      "description": "Salt Typhoon nation-state attackers used network sniffing and automated collection to compromise major US telecom providers, enabling surveillance. Treasury sanctions Chinese cybersecurity firm involved.",
+      "url": "https://krebsonsecurity.com/2025/01/treasury-sanctions-salt-typhoon/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "news",
+      "severity": "high",
+      "cvss_score": null,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Salt Typhoon APT] --> B[Exploit Telecom Infrastructure]\n    B --> C[Network Sniffing + Data Collection]\n    C --> D[Surveillance of US Officials]\n    D --> E[Espionage Operations]",
+      "ttps": [
+        {"id": "T1040", "name": "Network Sniffing", "tactic": "Credential Access", "tactic_id": "TA0006"},
+        {"id": "T1119", "name": "Automated Collection", "tactic": "Collection", "tactic_id": "TA0009"}
+      ]
+    },
+    {
+      "title": "CISA Alert: Oracle WebLogic Deserialization Vulnerability Exploited in the Wild",
+      "description": "CISA warns threat actors actively exploit deserialization vulnerability in Oracle WebLogic Server for client execution and remote code execution. Federal agencies urged to patch immediately.",
+      "url": "https://www.cisa.gov/news-events/alerts",
+      "cve_id": "CVE-2023-21839",
+      "source": "CISA",
+      "category": "advisory",
+      "severity": "medium",
+      "cvss_score": 7.5,
+      "ai_summary": "AI analysis pending",
+      "severity_score": null,
+      "workflow_graph": "graph LR\n    A[Attacker] --> B[Craft Deserialization Payload]\n    B --> C[Send to WebLogic T3 Port]\n    C --> D[Remote Code Execution]\n    D --> E[Post-Exploitation]",
+      "ttps": [
+        {"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access", "tactic_id": "TA0001"},
+        {"id": "T1203", "name": "Exploitation for Client Execution", "tactic": "Execution", "tactic_id": "TA0002"}
+      ]
+    }
+  ]
+};
+  </script>
+
+  <script src="app.js"></script>
+</body>
+</html>
