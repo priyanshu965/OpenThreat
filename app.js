@@ -105,6 +105,10 @@ function applyFilters() {
   
 
   filteredItems = allItems.filter(item => {
+    if (activeFilter === 'iocs') {
+      const iocs = item.iocs;
+      return iocs && Object.values(iocs).some(v => v && v.length > 0);
+    }
     const catMatch = activeFilter === 'all' || item.category === activeFilter;
     if (!catMatch) return false;
 
@@ -259,6 +263,9 @@ function buildCard(item, index) {
     ? `<span class="meta-tag meta-epss" title="EPSS: ${(item.epss_score * 100).toFixed(2)}% probability of exploit in 30 days">✦ EPSS ${(item.epss_score * 100).toFixed(1)}%</span>`
     : '';
 
+  // IOC indicators
+  const iocHTML = buildIOCSection(item);
+
   // Analysis section — graph source is unescaped for Mermaid
   const graphSource    = (item.workflow_graph || '').replace(/\\n/g, '\n');
   const aiSummaryText  = item.ai_summary || '';
@@ -309,6 +316,7 @@ function buildCard(item, index) {
       ${cvssHTML}${aiScoreHTML}${epssHTML}
       <span class="meta-date">${dateStr}</span>
     </div>
+    ${iocHTML}
     ${analysisHTML}
     ${expandHintHTML}
   `;
@@ -823,6 +831,33 @@ function escapeHTML(str) {
     .replace(/'/g, '&#039;');
 }
 
+// ─── IOC Display ─────────────────────────────────────────────────────────
+const IOC_LABELS = {
+  ipv4: 'IP', domain: 'DOMAIN', url: 'URL', sha256: 'SHA256',
+  sha1: 'SHA1', md5: 'MD5', cve: 'CVE', cidr: 'CIDR', email: 'EMAIL'
+};
+
+function buildIOCSection(item) {
+  const iocs = item.iocs;
+  if (!iocs) return '';
+
+  const pills = [];
+  for (const [type, values] of Object.entries(iocs)) {
+    if (values && values.length > 0) {
+      const label = IOC_LABELS[type] || type.toUpperCase();
+      pills.push(`<span class="ioc-pill ioc-${type}" title="${escapeHTML(values.join(', '))}">${label}: ${escapeHTML(values.length > 2 ? values[0] + ' +' + (values.length-1) : values.join(', '))}</span>`);
+    }
+  }
+
+  if (pills.length === 0) return '';
+
+  return `
+    <div class="card-iocs">
+      ${pills.join('')}
+    </div>
+  `;
+}
+
 // ─── Keyboard Shortcuts ─────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -863,6 +898,12 @@ document.addEventListener('keydown', e => {
     case 'i':
       activeFilter = 'incident';
       document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'incident'));
+      showContent();
+      applyFilters();
+      break;
+    case 'o':
+      activeFilter = 'iocs';
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'iocs'));
       showContent();
       applyFilters();
       break;
