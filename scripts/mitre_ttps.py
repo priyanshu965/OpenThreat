@@ -1168,4 +1168,5 @@ def map_ttps(text: str) -> list[dict]:
     # Sort: tactic order, then technique id
     tactic_rank = {t["id"]: i for i, t in enumerate(TACTIC_ORDER)}
     final.sort(key=lambda x: (tactic_rank.get(x["tactic_id"], 99), x["id"]))
-    return final
+    # Cap at 10 most specific matches to prevent noise in JSON / matrix view.
+    return final[:10]

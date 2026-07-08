@@ -40,6 +40,9 @@ jobs:
         id: livecheck
         env:
           RUN_LIVE_TESTS: "1"
+          NVD_API_KEY:       ${{ secrets.NVD_API_KEY }}
+          THREATFOX_API_KEY: ${{ secrets.THREATFOX_API_KEY }}
+          MB_API_KEY:        ${{ secrets.MB_API_KEY }}
         run: |
           python -m unittest tests/test_integration.py -v 2>&1 | tee live-check.log
 

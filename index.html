@@ -3,12 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://platform.linkedin.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://media.licdn.com; connect-src 'self' https://services.nvd.nist.gov;" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://platform.linkedin.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://media.licdn.com https://media.licdn.demdex.net; connect-src 'self' https://services.nvd.nist.gov; worker-src 'self'; frame-src https://platform.linkedin.com;" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta http-equiv="X-Frame-Options" content="DENY" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <meta name="theme-color" content="#0d1117" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%23080b0f'/%3E%3Ctext x='96' y='140' text-anchor='middle' font-family='monospace' font-size='120' font-weight='bold' fill='%2300ffe1'%3E%5B%5D%3C/text%3E%3C/svg%3E" type="image/svg+xml" />
   <title>CyberWatch</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=2.4.0" />
   <!-- JetBrains Mono for terminal feel, Syne for headings -->
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <!-- Mermaid.js for AI-generated attack flow diagrams -->
@@ -59,13 +64,14 @@
   <section class="controls-bar">
     <div class="search-wrapper">
       <span class="search-icon">⌕</span>
-      <input
-        type="text"
-        id="search-input"
-        class="search-input"
-        placeholder="Search threats, CVEs, keywords..."
-        autocomplete="off"
-      />
+        <input
+          type="text"
+          id="search-input"
+          class="search-input"
+          placeholder="Search threats, CVEs, keywords..."
+          autocomplete="off"
+          aria-label="Search threats"
+        />
     </div>
     <div class="filter-tabs" id="filter-tabs">
       <button class="filter-btn active" data-filter="all">ALL</button>
@@ -91,7 +97,7 @@
 
   <!-- Mobile sidebar toggle -->
   <div class="mobile-stats-toggle" id="mobile-stats-toggle" style="display:none;">
-    <button class="toggle-btn" id="toggle-sidebar-btn" onclick="toggleMobileSidebar()">
+    <button class="toggle-btn" id="toggle-sidebar-btn">
       <span id="toggle-label">▼ SHOW STATS</span>
     </button>
   </div>
@@ -155,6 +161,17 @@
 
       <div class="sidebar-card">
         <div class="sidebar-title">
+          <span>MY STACK</span>
+          <span id="stack-match-count" class="sidebar-title-badge"></span>
+        </div>
+        <input type="text" id="stack-input" class="watchlist-input" list="stack-suggestions"
+               placeholder="+ vendor/product (e.g. fortinet/fortios)" autocomplete="off" />
+        <datalist id="stack-suggestions"></datalist>
+        <div class="stack-chips" id="stack-chips"><!-- filled by JS --></div>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-title">
           <span>SOURCE HEALTH</span>
           <span id="source-health-summary" class="sidebar-title-badge"></span>
         </div>
@@ -190,7 +207,7 @@
       </div>
 
       <!-- Cards container -->
-      <div id="cards-container" class="cards-container" style="display:none;"></div>
+      <div id="cards-container" class="cards-container" style="display:none;" role="feed" aria-busy="true"></div>
 
       <!-- MITRE ATT&CK Matrix View -->
       <div id="matrix-view" class="matrix-view" style="display:none;">
@@ -220,15 +237,15 @@
   <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
 <footer class="site-footer">
       <span>CYBERWATCH</span>
-      <span>Updates every 2 hours</span>
+      <span>Updates every hour</span>
     </footer>
 
     <!-- CVE Detail Modal -->
-    <div id="cve-modal" class="modal-overlay" style="display:none;">
+    <div id="cve-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="modal-cve-id">
       <div class="modal-content">
         <div class="modal-header">
           <span class="modal-title" id="modal-cve-id">CVE-XXXX-XXXXX</span>
-          <button class="modal-close" onclick="closeCveModal()">&times;</button>
+          <button class="modal-close" onclick="closeCveModal()" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body" id="modal-body">
           <div class="modal-loading">
@@ -256,6 +273,6 @@
     window.INTEL_DATA = null;
   </script>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2.4.0"></script>
 </body>
 </html>

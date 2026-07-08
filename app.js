@@ -71,10 +71,12 @@ document.addEventListener('DOMContentLoaded', () => {
   initSearch();
   initSeverityFilters();
   initWatchlist();
+  initStack();
   initSortToggle();
   initInfiniteScroll();
   initDelegations();
   restoreUIState();
+  initHashRouting();
   loadIntelData();
 });
 
@@ -104,6 +106,130 @@ function restoreUIState() {
     wlBtn.textContent = '★ SHOWING WATCHLIST';
   }
 }
+
+// ─── Deep Link Routing ─────────────────────────────────────────────────────────
+// Supports #cve-CVE-2024-XXXXX and #item-<index> hash patterns.
+function initHashRouting() {
+  window.addEventListener('hashchange', handleHash);
+  if (location.hash) setTimeout(handleHash, 500);
+}
+function handleHash() {
+  const h = location.hash.slice(1);
+  if (!h) return;
+  const cveMatch = h.match(/^cve-(CVE-\d{4}-\d{4,7})$/i);
+  if (cveMatch) {
+    openCveModal(cveMatch[1].toUpperCase());
+    return;
+  }
+  const idxMatch = h.match(/^item-(\d+)$/);
+  if (idxMatch) {
+    const idx = parseInt(idxMatch[1]);
+    const item = allItems[idx];
+    if (item) {
+      jumpToItem(item.cve_id || item.title?.slice(0, 60));
+    }
+  }
+}
+window.navigateTo = function(hash) {
+  location.hash = hash;
+};
+
+// ─── "Seen CVEs" tracking for first-view NEW badge ────────────────────────────
+// Persisted in localStorage so returning users see what's truly new.
+let seenCves = new Set();
+const SEEN_KEY = 'cw_seen_cves';
+try {
+  const raw = localStorage.getItem(SEEN_KEY);
+  if (raw) seenCves = new Set(JSON.parse(raw));
+} catch (_) {}
+
+function markAsSeen(cveId) {
+  if (!cveId) return;
+  if (!seenCves.has(cveId)) {
+    seenCves.add(cveId);
+    try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seenCves])); } catch (_) {}
+  }
+}
+
+// ─── "My Stack" (CPE/product matching) ────────────────────────────────────────
+// User-defined vendor/product pairs that get highlighted when an item's
+// affected_products field matches. Persisted in localStorage.
+let myStack = [];
+const STACK_KEY = 'cw_my_stack';
+try { myStack = JSON.parse(localStorage.getItem(STACK_KEY) || '[]'); } catch (_) { myStack = []; }
+
+function saveStack() { try { localStorage.setItem(STACK_KEY, JSON.stringify(myStack)); } catch (_) {} }
+
+function matchesStack(item) {
+  if (!myStack.length) return false;
+  const prods = (item.affected_products || []).map(p => p.toLowerCase());
+  return myStack.some(sp => prods.some(p => p.includes(sp.toLowerCase())));
+}
+
+function initStack() {
+  const input = document.getElementById('stack-input');
+  if (!input) return;
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const val = input.value.trim();
+      if (val && !myStack.includes(val)) {
+        myStack.push(val);
+        saveStack();
+        renderStack();
+        applyFilters();
+      }
+      input.value = '';
+    }
+  });
+  // Suggest from affected_products on all loaded items.
+  input.addEventListener('focus', () => {
+    const suggestions = new Set();
+    allItems.forEach(i => (i.affected_products || []).forEach(p => {
+      const short = p.split('/').slice(-2).join('/');
+      if (short && !myStack.includes(short)) suggestions.add(short);
+    }));
+    const datalist = document.getElementById('stack-suggestions');
+    if (datalist && suggestions.size) {
+      datalist.innerHTML = [...suggestions].sort().slice(0, 20).map(s => `<option value="${escapeHTML(s)}">`).join('');
+    }
+  });
+  renderStack();
+}
+
+function renderStack() {
+  const wrap = document.getElementById('stack-chips');
+  if (!wrap) return;
+  const matchCount = allItems.filter(matchesStack).length;
+  if (!myStack.length) {
+    wrap.innerHTML = '<span class="watchlist-empty">Add vendor/product to track your stack (e.g. fortinet/fortios, apache/log4j, microsoft/exchange)</span>';
+  } else {
+    wrap.innerHTML = myStack.map(kw =>
+      `<span class="stack-chip">${escapeHTML(kw)}<span class="stack-x" data-stack="${escapeHTML(kw)}">×</span></span>`
+    ).join('');
+  }
+  const badge = document.getElementById('stack-match-count');
+  if (badge) badge.textContent = myStack.length ? `${matchCount} match${matchCount !== 1 ? 'es' : ''}` : '';
+}
+
+window.removeStackKeyword = function(kw) {
+  myStack = myStack.filter(w => w !== kw);
+  saveStack();
+  renderStack();
+  applyFilters();
+};
+
+// ─── Trend Direction Indicator ────────────────────────────────────────────────
+function trendArrow(current, previous) {
+  if (previous == null) return '';
+  if (current > previous) return '<span class="trend-up">▲</span>';
+  if (current < previous) return '<span class="trend-down">▼</span>';
+  return '<span class="trend-flat">─</span>';
+}
+
+// ─── Combined intel.json + trends.json output flag ──────────────────────────
+// If the pipeline produced a combined file (intel_combined.json) with embedded
+// trends, we load that instead of fetching two files.
+let _combinedData = null;
 
 // ─── Load Data ────────────────────────────────────────────────────────────────
 async function loadIntelData() {
@@ -190,6 +316,9 @@ function applyFilters() {
       (item.ai_summary  && item.ai_summary.toLowerCase().includes(q))  ||
       (item.ttps && item.ttps.some(t =>
         t.id.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)
+      )) ||
+      (item.affected_products && item.affected_products.some(p =>
+        p.toLowerCase().includes(q)
       ))
     );
   });
@@ -334,10 +463,21 @@ function buildCard(item, index) {
       ).join('')
     : '';
 
+  // Public PoC badge
+  const pocBadgeHTML = item.has_poc
+    ? `<span class="poc-badge" title="Public PoC on GitHub${item.poc_url ? ': ' + item.poc_url : ''}"><a href="${escapeHTML(item.poc_url || '#')}" target="_blank" rel="noopener" onclick="event.stopPropagation()">💥 PoC</a></span>`
+    : '';
+
+  // Stack match badge
+  const stackMatch = matchesStack(item);
+  const stackBadgeHTML = stackMatch ? `<span class="stack-badge" title="Matches your monitored stack">⚙ STACK</span>` : '';
+
+  // Mark this CVE as seen (local NEW tracking)
+  if (item.cve_id) markAsSeen(item.cve_id);
+
   // CISA KEV badge
   const cisaKevHTML = item.cisa_kev
     ? `<span class="cisa-kev-badge" title="Known Exploited Vulnerability (CISA KEV)">KEV</span>`
-    : '';
 
   const cveIdHTML  = item.cve_id ? `<span class="cve-id" data-cve="${escapeHTML(item.cve_id)}" title="Click for CVE details">${escapeHTML(item.cve_id)}</span> · ` : '';
   const descHTML   = item.description
@@ -397,7 +537,7 @@ function buildCard(item, index) {
                onclick="event.stopPropagation()">${escapeHTML(item.title)}</a>`
           : escapeHTML(item.title)
         }
-        ${newBadgeHTML}${aiBadgeHTML}${cisaKevHTML}
+        ${newBadgeHTML}${aiBadgeHTML}${cisaKevHTML}${pocBadgeHTML}${stackBadgeHTML}
       </p>
       ${badgeHTML}
     </div>
@@ -602,6 +742,9 @@ function renderDailySummary() {
   const high       = allItems.filter(i => i.severity === 'high').length;
   const medium     = allItems.filter(i => i.severity === 'medium').length;
   const newItems   = allItems.filter(i => i.published && Date.now()-new Date(i.published)<86400000).length;
+  const kevItems   = allItems.filter(i => i.cisa_kev).length;
+  const pocItems   = allItems.filter(i => i.has_poc).length;
+  const stackItems = allItems.filter(matchesStack).length;
   const incidents  = allItems.filter(i => i.category === 'incident').length;
   const cves       = allItems.filter(i => i.category === 'cve').length;
   const advisories = allItems.filter(i => i.category === 'advisory').length;
@@ -619,8 +762,12 @@ function renderDailySummary() {
     <span class="summary-stat"><span class="summary-stat-val n">${incidents}</span><span class="summary-stat-lbl">INCIDENTS</span></span>
     <span class="summary-stat"><span class="summary-stat-val n">${advisories}</span><span class="summary-stat-lbl">ADVISORIES</span></span>
     <span class="summary-divider">·</span>
+    <span class="summary-stat"><span class="summary-stat-val" style="color:var(--critical)">${kevItems}</span><span class="summary-stat-lbl">KEV</span></span>
+    <span class="summary-stat"><span class="summary-stat-val" style="color:var(--high)">${pocItems}</span><span class="summary-stat-lbl">PoC</span></span>
+    <span class="summary-divider">·</span>
     <span class="summary-stat"><span class="summary-stat-val" style="color:var(--accent-cyan)">${newItems}</span><span class="summary-stat-lbl">NEW TODAY</span></span>
     <span class="summary-stat"><span class="summary-stat-val" style="color:#a78bfa">${aiEnriched}</span><span class="summary-stat-lbl">AI ENRICHED</span></span>
+    ${stackItems ? `<span class="summary-stat"><span class="summary-stat-val" style="color:#ff8c42">${stackItems}</span><span class="summary-stat-lbl">STACK HITS</span></span>` : ''}
   `;
 
   const topThreat = allItems.find(i => i.severity === 'critical') ||
@@ -646,18 +793,25 @@ function renderDailySummary() {
 }
 
 // ─── Mobile Sidebar Toggle ────────────────────────────────────────────────────
-window.toggleMobileSidebar = function() {
-  const sidebar = document.querySelector('.sidebar');
-  const label   = document.getElementById('toggle-label');
-  if (!sidebar) return;
-  const isOpen = sidebar.classList.toggle('mobile-open');
-  if (label) label.textContent = isOpen ? '▲ HIDE STATS' : '▼ SHOW STATS';
-};
+(function initMobileToggle() {
+  const btn = document.getElementById('toggle-sidebar-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const sidebar = document.querySelector('.sidebar');
+    const label   = document.getElementById('toggle-label');
+    if (!sidebar) return;
+    const isOpen = sidebar.classList.toggle('mobile-open');
+    if (label) label.textContent = isOpen ? '▲ HIDE STATS' : '▼ SHOW STATS';
+  });
+})();
 
 // ─── CVE Deep-Dive Modal ─────────────────────────────────────────────────────
 // Cross-reference links for a CVE: NVD, EPSS (FIRST), CISA KEV, cve.org.
-function buildCveXrefLinks(cveId, isKev) {
+function buildCveXrefLinks(cveId, isKev, pocUrl) {
   const id = encodeURIComponent(cveId);
+  const pocLink = pocUrl
+    ? `<a class="xref-link xref-poc" href="${escapeHTML(pocUrl)}" target="_blank" rel="noopener">💥 PoC ↗</a>`
+    : '';
   return `
     <div class="modal-xref-links">
       <a class="xref-link" href="https://nvd.nist.gov/vuln/detail/${id}" target="_blank" rel="noopener">NVD ↗</a>
@@ -665,6 +819,7 @@ function buildCveXrefLinks(cveId, isKev) {
       <a class="xref-link" href="https://api.first.org/data/v1/epss?cve=${id}" target="_blank" rel="noopener">EPSS ↗</a>
       <a class="xref-link ${isKev ? 'xref-kev' : ''}" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=${id}" target="_blank" rel="noopener">${isKev ? '⚠ CISA KEV ↗' : 'CISA KEV ↗'}</a>
       <a class="xref-link" href="https://www.exploit-db.com/search?cve=${id}" target="_blank" rel="noopener">ExploitDB ↗</a>
+      ${pocLink}
     </div>`;
 }
 
@@ -676,7 +831,7 @@ window.openCveModal = function(cveId) {
   if (!modal || !modalTitle || !modalBody) return;
   
   const item = allItems.find(i => i.cve_id?.toUpperCase() === cveId.toUpperCase());
-  const xrefs = buildCveXrefLinks(cveId, !!item?.cisa_kev);
+  const xrefs = buildCveXrefLinks(cveId, !!item?.cisa_kev, item?.poc_url);
 
   modalTitle.textContent = cveId;
   modalBody.innerHTML = `
@@ -764,7 +919,7 @@ async function fetchCveDetails(cveId) {
       const severityClass = severity.toLowerCase();
       
       modalBody.innerHTML = `
-        ${buildCveXrefLinks(cveId, !!item?.cisa_kev)}
+        ${buildCveXrefLinks(cveId, !!item?.cisa_kev, item?.poc_url)}
         <div class="modal-section">
           <div class="modal-section-title">Overview</div>
           <div class="modal-grid">
@@ -843,7 +998,7 @@ async function fetchCveDetails(cveId) {
   // All retries failed — still show cross-reference links so the user can
   // check NVD / EPSS / KEV manually.
   modalBody.innerHTML = `
-    ${buildCveXrefLinks(cveId, false)}
+          ${buildCveXrefLinks(cveId, false, item?.poc_url)}
     <div class="modal-error">Failed to load CVE details: ${escapeHTML(lastError?.message || 'Unknown error')}</div>`;
 }
 
@@ -1048,6 +1203,11 @@ function initDelegations() {
       removeWatchKeyword(watchX.dataset.keyword);
       return;
     }
+    const stackX = e.target.closest('.stack-x');
+    if (stackX && stackX.dataset.stack) {
+      removeStackKeyword(stackX.dataset.stack);
+      return;
+    }
     const trendCve = e.target.closest('.trending-cve');
     if (trendCve && trendCve.dataset.cve) {
       openCveModal(trendCve.dataset.cve);
@@ -1152,11 +1312,15 @@ async function showTrendsView() {
 // data/trends.json isn't reachable (e.g. file:// preview).
 function buildTrendsFromItems() {
   const sev = { critical: 0, high: 0, medium: 0, low: 0 };
-  const actors = {}, sources = {};
+  const actors = {}, sources = {}, ttps = {};
   allItems.forEach(i => {
     const s = (i.severity || 'medium').toLowerCase(); if (s in sev) sev[s]++;
     (i.threat_actors || []).forEach(a => actors[a] = (actors[a] || 0) + 1);
     if (i.source) sources[i.source] = (sources[i.source] || 0) + 1;
+    (i.ttps || []).forEach(t => {
+      const key = t.id || t.name || '?';
+      ttps[key] = (ttps[key] || 0) + 1;
+    });
   });
   const toArr = o => Object.entries(o).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
   return {
@@ -1165,7 +1329,7 @@ function buildTrendsFromItems() {
     severity_totals: sev,
     top_actors: toArr(actors).slice(0, 10),
     top_sources: toArr(sources).slice(0, 12),
-    top_ttps: [],
+    top_ttps: toArr(ttps).slice(0, 10).map(({ name, count }) => ({ id: name, name, count })),
     trending_cves: allItems.filter(i => i.priority_score != null)
       .sort((a, b) => b.priority_score - a.priority_score).slice(0, 15)
       .map(i => ({ cve: i.cve_id, max_priority: i.priority_score, kev: !!i.cisa_kev,
@@ -1179,14 +1343,15 @@ function renderTrends(t) {
   const maxTotal = Math.max(1, ...daily.map(d => d.total));
 
   // Stacked volume bars over time.
-  const volBars = daily.map(d => {
+  const volBars = daily.map((d, i) => {
+    const prev = i > 0 ? daily[i - 1] : null;
     const h = pct => `${(pct / maxTotal) * 100}%`;
     const seg = (cls, n) => n > 0 ? `<span class="tb-seg ${cls}" style="height:${h(n)}" title="${d.date}: ${n} ${cls}"></span>` : '';
     return `<div class="trend-bar-col" title="${escapeHTML(d.date)}: ${d.total} items">
       <div class="trend-bar-stack">
         ${seg('critical', d.critical)}${seg('high', d.high)}${seg('medium', d.medium)}${seg('low', d.low)}
       </div>
-      <span class="trend-bar-x">${escapeHTML((d.date || '').slice(5))}</span>
+      <span class="trend-bar-x">${escapeHTML((d.date || '').slice(5))} ${trendArrow(d.total, prev?.total)}</span>
     </div>`;
   }).join('');
 
@@ -1435,7 +1600,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ─── Service Worker Registration (Offline Mode) ─────────────────────────
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then(
+    navigator.serviceWorker.register('service-worker.js').then(
       (registration) => {
         console.log('SW registered:', registration.scope);
       },

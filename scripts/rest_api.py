@@ -31,7 +31,7 @@ INTEL_FILE   = DATA_DIR / "intel.json"
 
 MIME_JSON = ("Content-Type", "application/json")
 MIME_HTML = ("Content-Type", "text/html")
-CORS_HDR  = ("Access-Control-Allow-Origin", "*")
+CORS_HDR  = ("Access-Control-Allow-Origin", os.environ.get("CORS_ORIGIN", "*"))
 
 
 class APIHandler(BaseHTTPRequestHandler):

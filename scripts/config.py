@@ -78,6 +78,7 @@ class Config:
     gemini_api_key    = os.environ.get("GEMINI_API_KEY", "")
     abuseipdb_api_key = os.environ.get("ABUSEIPDB_API_KEY", "")
     phishtank_api_key = os.environ.get("PHISHTANK_API_KEY", "")
+    nvd_api_key       = os.environ.get("NVD_API_KEY", "")
 
     # ── Alerting ───────────────────────────────────────────────────────────
     webhook_url   = os.environ.get("WEBHOOK_URL", "")
@@ -93,6 +94,7 @@ class Config:
     priority_cvss_weight = _float("PRIORITY_CVSS_WEIGHT", 40.0)
     priority_epss_weight = _float("PRIORITY_EPSS_WEIGHT", 40.0)
     priority_kev_bonus   = _float("PRIORITY_KEV_BONUS", 20.0)
+    priority_poc_bonus   = _float("PRIORITY_POC_BONUS", 15.0)
 
     threatfox_api_key = os.environ.get("THREATFOX_API_KEY", "")
     mb_api_key        = os.environ.get("MB_API_KEY", "")

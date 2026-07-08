@@ -551,11 +551,14 @@ def fetch_nvd_cves() -> list[dict]:
     items = []
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=NVD_LOOKBACK_DAYS)
-    data = make_request("https://services.nvd.nist.gov/rest/json/cves/2.0", params={
+    nvd_params = {
         "pubStartDate": start_date.strftime("%Y-%m-%dT%H:%M:%S.000"),
         "pubEndDate": end_date.strftime("%Y-%m-%dT%H:%M:%S.000"),
         "resultsPerPage": MAX_ITEMS_PER_SOURCE,
-    })
+    }
+    if CONFIG.nvd_api_key:
+        nvd_params["apiKey"] = CONFIG.nvd_api_key
+    data = make_request("https://services.nvd.nist.gov/rest/json/cves/2.0", params=nvd_params)
     if not data:
         return items
     for vuln in data.get("vulnerabilities", []):
@@ -571,12 +574,22 @@ def fetch_nvd_cves() -> list[dict]:
                 cvss_score = ml[0].get("cvssData", {}).get("baseScore")
                 severity = cvss_to_severity(cvss_score)
                 break
+        # Affected vendor/product pairs from CPE criteria — powers the
+        # dashboard's "my stack" watchlist matching.
+        products = set()
+        for conf in cve.get("configurations", []) or []:
+            for node in conf.get("nodes", []) or []:
+                for match in node.get("cpeMatch", []) or []:
+                    parts = (match.get("criteria") or "").split(":")
+                    if len(parts) > 4:  # cpe:2.3:a:vendor:product:...
+                        products.add(f"{parts[3]}/{parts[4]}")
         items.append({
             "title": f"{cve_id}: {description[:80]}...", "description": description,
             "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}", "cve_id": cve_id,
             "source": "NVD", "category": "cve", "severity": severity,
             "cvss_score": cvss_score, "published": parse_date(cve.get("published", "")),
             "iocs": extract_iocs(description),
+            "affected_products": sorted(products)[:8],
         })
     log.info(f"  Got {len(items)} CVEs from NVD")
     return items
@@ -588,7 +601,7 @@ def fetch_reddit_netsec() -> list[dict]:
     items = []
     try:
         resp = requests.get("https://www.reddit.com/r/netsec/.rss",
-                            headers={**HEADERS, "User-Agent": "CyberWatch/2.3 (macOS; rv:1.0)"},
+                             headers={**HEADERS, "User-Agent": f"{CONFIG.http_user_agent} (macOS; rv:1.0)"},
                             timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         feed = feedparser.parse(resp.text)
@@ -903,7 +916,6 @@ def fetch_threatfox() -> list[dict]:
 _RSS_SOURCE_CONFIG: list[dict] = [
     {"name": "MSRC",          "url": "https://api.msrc.microsoft.com/update-guide/rss",                                   "severity": "high"},
     {"name": "Gentoo",        "url": "https://security.gentoo.org/glsa/feed.rss",                                         "severity": "medium"},
-    {"name": "Oracle Linux",  "url": "https://linux.oracle.com/security/rss/",                                            "severity": "medium"},
     {"name": "CentOS Stream", "url": "https://blog.centos.org/feed/",                                                     "severity": "medium"},
     {"name": "VMware",        "url": "https://www.broadcom.com/support/security/advisories/json",                         "severity": "high"},
 ]
@@ -1017,12 +1029,6 @@ def fetch_archlinux() -> list[dict]:
     log.info(f"  Got {len(items)} from Arch Linux")
     return items
 
-# ── Oracle Linux Fetcher ───────────────────────────────────────────────────
-
-def fetch_oracle_linux() -> list[dict]:
-    log.info("Oracle Linux no longer publishes a public RSS feed — skipping.")
-    return []
-
 # ── Amazon Linux Fetcher ───────────────────────────────────────────────────
 
 def fetch_amazon_linux() -> list[dict]:
@@ -1120,6 +1126,161 @@ def fetch_mitre_cwe() -> list[dict]:
     log.info(f"  Got {len(items)} from Mitre CWE")
     return items
 
+# ── GitHub Security Advisories (GHSA) Fetcher ────────────────────────────────
+
+def fetch_ghsa() -> list[dict]:
+    """GitHub's global advisory database — best-in-class OSS vuln coverage.
+    Keyless (60 req/h) or authenticated via GITHUB_TOKEN (5000 req/h)."""
+    log.info("Fetching GitHub Security Advisories...")
+    items = []
+    headers = {**HEADERS, "Accept": "application/vnd.github+json"}
+    gh_token = os.environ.get("GITHUB_TOKEN", "")
+    if gh_token:
+        headers["Authorization"] = f"Bearer {gh_token}"
+    try:
+        resp = requests.get(
+            "https://api.github.com/advisories",
+            params={"per_page": MAX_ITEMS_PER_SOURCE, "sort": "published", "direction": "desc"},
+            headers=headers, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        for adv in resp.json()[:MAX_ITEMS_PER_SOURCE]:
+            summary = adv.get("summary", "GitHub Advisory")
+            desc = clean_html(adv.get("description", ""))[:400]
+            sev = (adv.get("severity") or "medium").lower()
+            if sev == "moderate":
+                sev = "medium"
+            cvss = (adv.get("cvss") or {}).get("score")
+            # Affected packages → stack-profile matching signal.
+            packages = []
+            for v in adv.get("vulnerabilities", []) or []:
+                pkg = (v.get("package") or {})
+                if pkg.get("name"):
+                    packages.append(f"{pkg.get('ecosystem', '')}/{pkg['name']}".strip("/"))
+            items.append({
+                "title": f"GHSA: {summary[:150]}",
+                "description": desc or summary,
+                "url": adv.get("html_url", ""),
+                "cve_id": adv.get("cve_id"),
+                "source": "GitHub Advisories", "category": "cve",
+                "severity": sev if sev in ("critical", "high", "medium", "low") else "medium",
+                "cvss_score": cvss,
+                "published": parse_date(adv.get("published_at", "")),
+                "iocs": extract_iocs(desc),
+                "affected_products": packages[:8],
+            })
+    except Exception as e:
+        log.warning(f"GHSA failed: {e}")
+    log.info(f"  Got {len(items)} from GitHub Advisories")
+    return items
+
+# ── PoC-in-GitHub Fetcher ─────────────────────────────────────────────────────
+# nomi-sec/PoC-in-GitHub tracks public exploit PoCs. The motikan2010 API serves
+# it as JSON. Used two ways: (1) recent PoC drops as feed items, (2) a CVE→PoC
+# map that feeds the exploitability score (has_poc flag).
+
+def _fetch_recent_pocs() -> list[dict]:
+    cached = _cached_fetch("pocs.json", 6, _fetch_pocs_raw)
+    if not cached:
+        return []
+    try:
+        return json.loads(cached)
+    except Exception:
+        return []
+
+def _fetch_pocs_raw() -> tuple[str | None, str | None]:
+    try:
+        resp = requests.get(
+            "https://poc-in-github.motikan2010.net/api/v1/",
+            params={"sort": "created_at", "limit": 100},
+            headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        return json.dumps(resp.json().get("pocs", [])), None
+    except Exception as e:
+        return None, str(e)
+
+def build_poc_map() -> dict[str, str]:
+    """CVE ID → PoC repo URL for recently-published public exploits."""
+    poc_map = {}
+    for poc in _fetch_recent_pocs():
+        cve = (poc.get("cve_id") or "").upper()
+        if cve.startswith("CVE-") and cve not in poc_map:
+            poc_map[cve] = poc.get("html_url", "")
+    return poc_map
+
+def fetch_poc_github() -> list[dict]:
+    log.info("Fetching PoC-in-GitHub recent exploits...")
+    items = []
+    for poc in _fetch_recent_pocs()[:MAX_ITEMS_PER_SOURCE]:
+        cve = (poc.get("cve_id") or "").upper()
+        name = poc.get("name", cve or "PoC")
+        desc = (poc.get("description") or poc.get("vuln_description") or "")[:400]
+        stars = poc.get("stargazers_count", "0")
+        items.append({
+            "title": f"PoC released: {cve or name}",
+            "description": desc or f"Public proof-of-concept exploit published on GitHub ({stars}★).",
+            "url": poc.get("html_url", ""),
+            "cve_id": cve if cve.startswith("CVE-") else None,
+            "source": "PoC-in-GitHub", "category": "cve", "severity": "high",
+            "cvss_score": None,
+            "published": parse_date((poc.get("created_at") or "").replace(" ", "T")),
+            "iocs": {},
+            "has_poc": True,
+        })
+    log.info(f"  Got {len(items)} from PoC-in-GitHub")
+    return items
+
+# ── Zero Day Initiative (ZDI) Fetcher ─────────────────────────────────────────
+
+def fetch_zdi() -> list[dict]:
+    """ZDI advisories — often ahead of vendor announcements. Two feeds:
+    published advisories and upcoming (unpatched, high-signal)."""
+    items = []
+    for feed_name, url in [("published", "https://www.zerodayinitiative.com/rss/published/"),
+                           ("upcoming",  "https://www.zerodayinitiative.com/rss/upcoming/")]:
+        got = _fetch_rss_source("ZDI", url, "high")
+        for item in got[:MAX_ITEMS_PER_SOURCE // 2]:
+            if feed_name == "upcoming":
+                item["title"] = f"[0-day queue] {item['title']}"
+            item["category"] = "cve"
+            items.append(item)
+    log.info(f"  Got {len(items)} from ZDI")
+    return items
+
+# ── Ransomware.live Fetcher ───────────────────────────────────────────────────
+
+def fetch_ransomware_live() -> list[dict]:
+    log.info("Fetching Ransomware.live recent victims...")
+    items = []
+    try:
+        resp = requests.get("https://api.ransomware.live/v2/recentvictims",
+                            headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        for victim in resp.json()[:MAX_ITEMS_PER_SOURCE]:
+            group = victim.get("group_name", victim.get("group", "unknown group"))
+            name = victim.get("victim", victim.get("post_title", "Unknown victim"))
+            country = victim.get("country", "")
+            activity = victim.get("activity", "")
+            desc_parts = [f"Ransomware group '{group}' claimed victim: {name}."]
+            if country:
+                desc_parts.append(f"Country: {country}.")
+            if activity and activity != "Not Found":
+                desc_parts.append(f"Sector: {activity}.")
+            when = victim.get("attackdate", victim.get("discovered", ""))
+            items.append({
+                "title": f"Ransomware: {group} claims {name[:80]}",
+                "description": " ".join(desc_parts),
+                "url": victim.get("url") or f"https://www.ransomware.live/group/{group}",
+                "cve_id": None, "source": "Ransomware.live",
+                "category": "incident", "severity": "high",
+                "cvss_score": None, "published": parse_date(when),
+                "iocs": {},
+                "threat_actors_hint": [group] if group else [],
+            })
+    except Exception as e:
+        log.warning(f"Ransomware.live failed: {e}")
+    log.info(f"  Got {len(items)} from Ransomware.live")
+    return items
+
 # ── Cached external data ──────────────────────────────────────────────────────
 # EPSS scores and CISA KEV change at most daily. Cache them on disk so we don't
 # re-fetch the same ~200 KB payloads every single pipeline run.
@@ -1132,8 +1293,9 @@ def _cache_path(name: str) -> Path:
 
 def _cached_fetch(name: str, ttl_hours: int, fetcher) -> str | None:
     """Return cached content (decoded text) if fresh, else call ``fetcher()``
-    and cache the result. ``fetcher`` must return ``(content_str, None)`` on
-    success or ``(None, error_str)`` on failure."""
+    and cache the result atomically (write to tmp, then rename). ``fetcher``
+    must return ``(content_str, None)`` on success or ``(None, error_str)``
+    on failure."""
     path = _cache_path(name)
     # Check freshness.
     if path.exists():
@@ -1144,7 +1306,10 @@ def _cached_fetch(name: str, ttl_hours: int, fetcher) -> str | None:
     # Fetch.
     content, err = fetcher()
     if content is not None:
-        path.write_text(content, encoding="utf-8")
+        # Atomic write: temp file → rename to avoid partial reads.
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(content, encoding="utf-8")
+        tmp.replace(path)
         return content
     # Fetch failed; try stale cache as fallback.
     if path.exists():
@@ -1290,8 +1455,9 @@ def compute_priority(item: dict) -> dict | None:
     cvss = item.get("cvss_score")
     epss = item.get("epss_score")
     kev  = bool(item.get("cisa_kev"))
+    poc  = bool(item.get("has_poc"))
 
-    if cvss is None and epss is None and not kev:
+    if cvss is None and epss is None and not kev and not poc:
         return None
 
     try:
@@ -1308,6 +1474,10 @@ def compute_priority(item: dict) -> dict | None:
 
     score = (CONFIG.priority_cvss_weight * (cvss_val / 10.0)
              + CONFIG.priority_epss_weight * epss_val)
+    if poc:
+        # Public exploit code exists — weaponization is one git clone away.
+        score += CONFIG.priority_poc_bonus
+        score = max(score, 70.0)
     if kev:
         score += CONFIG.priority_kev_bonus
         score = max(score, 90.0)
@@ -1323,6 +1493,8 @@ def compute_priority(item: dict) -> dict | None:
     reasons = []
     if kev:
         reasons.append("CISA KEV (actively exploited)")
+    if poc:
+        reasons.append("Public PoC on GitHub")
     if epss is not None:
         reasons.append(f"EPSS {epss_val * 100:.1f}%")
     if cvss is not None:
@@ -1524,11 +1696,14 @@ API_SOURCES = [
     ("Fedora",         fetch_fedora),
     ("Gentoo",         fetch_gentoo),
     ("Arch Linux",     fetch_archlinux),
-    ("Oracle Linux",   fetch_oracle_linux),
     ("Amazon Linux",   fetch_amazon_linux),
     ("CentOS",         fetch_centos),
     ("Mitre CWE",      fetch_mitre_cwe),
     ("VMware",         fetch_vmware),
+    ("GitHub Advisories", fetch_ghsa),
+    ("PoC-in-GitHub",  fetch_poc_github),
+    ("ZDI",            fetch_zdi),
+    ("Ransomware.live", fetch_ransomware_live),
 ]
 
 def run_source(name: str, fetcher, health: dict) -> list[dict]:
@@ -1623,8 +1798,8 @@ def main():
                 item["epss_score"] = epss_scores.get(item["cve_id"].upper())
         log.info(f"  Applied EPSS scores")
 
-    # ── CISA KEV ───────────────────────────────────────────────────────────
-    cisa_kev = fetch_cisa_kev()
+    # ── CISA KEV (skip if no CVEs in feed this run) ────────────────────────
+    cisa_kev = fetch_cisa_kev() if cve_ids else set()
     if cisa_kev:
         kev_count = 0
         for item in all_items:
@@ -1633,18 +1808,34 @@ def main():
                 kev_count += 1
         log.info(f"  Marked {kev_count} CVEs from CISA KEV")
 
+    # ── Public PoC availability (PoC-in-GitHub) ────────────────────────────
+    poc_map = build_poc_map()
+    if poc_map:
+        poc_count = 0
+        for item in all_items:
+            cve = (item.get("cve_id") or "").upper()
+            if cve and cve in poc_map and not item.get("has_poc"):
+                item["has_poc"] = True
+                item["poc_url"] = poc_map[cve]
+                poc_count += 1
+        log.info(f"  Marked {poc_count} items with public PoC availability")
+
     # ── Detect threat actors ───────────────────────────────────────────────
     log.info("Detecting threat actors...")
     actor_count = 0
     for item in all_items:
         text = item.get("title", "") + " " + item.get("description", "")
         actors = detect_threat_actors(text)
+        # Ransomware.live provides the group name directly.
+        for hint in item.pop("threat_actors_hint", []):
+            if hint and hint not in actors:
+                actors.append(hint)
         if actors:
             item["threat_actors"] = actors
             actor_count += 1
     log.info(f"  Detected threat actors in {actor_count} items")
 
-    # ── CVE prioritization score (blend of CVSS + EPSS + CISA KEV) ─────────
+    # ── CVE prioritization score (CVSS + EPSS + CISA KEV + public PoC) ─────
     prioritized = 0
     for item in all_items:
         priority = compute_priority(item)
@@ -1683,17 +1874,22 @@ def main():
         "items": all_items,
     }
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
-    log.info(f"✓ Wrote {len(all_items)} items to {OUTPUT_PATH}")
-
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # ── Archive first (crash-safe: if this fails, intel.json is untouched) ──
     archive_path = ARCHIVE_DIR / f"{today_str}.json"
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     with open(archive_path, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
     log.info(f"✓ Archived to {archive_path}")
+
+    # ── Write intel.json atomically (tmp → rename) ────────────────────────
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = OUTPUT_PATH.with_suffix(f".{os.getpid()}.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+    tmp.replace(OUTPUT_PATH)   # atomic on POSIX, near-atomic on Windows
+    log.info(f"✓ Wrote {len(all_items)} items to {OUTPUT_PATH}")
 
     # ── Prune old archives ─────────────────────────────────────────────────
     if ARCHIVE_DIR.exists():

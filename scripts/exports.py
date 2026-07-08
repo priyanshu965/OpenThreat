@@ -20,6 +20,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from email.utils import format_datetime
 from xml.sax.saxutils import escape as xml_escape
 
 # Deterministic namespace for STIX/indicator IDs (a fixed random UUID).
@@ -124,9 +125,19 @@ def _write_stix(rows, path: Path, generated: str) -> int:
     return len(objects)
 
 
+def _rfc822(dt_str: str) -> str:
+    """Convert ISO-8601 string to RFC 822 (required by RSS 2.0)."""
+    try:
+        dt = datetime.fromisoformat(dt_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return format_datetime(dt)
+    except Exception:
+        return format_datetime(datetime.now(timezone.utc))
+
 def _write_rss(output: dict, path: Path, limit: int = 60) -> None:
     items = output.get("items", [])[:limit]
-    updated = output.get("last_updated", datetime.now(timezone.utc).isoformat())
+    updated = _rfc822(output.get("last_updated", ""))
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<rss version="2.0"><channel>',
@@ -142,7 +153,7 @@ def _write_rss(output: dict, path: Path, limit: int = 60) -> None:
         sev = (item.get("severity") or "").upper()
         cats = xml_escape(item.get("category") or "")
         guid = xml_escape(item.get("url") or item.get("title") or title)
-        pub = xml_escape(item.get("published") or updated)
+        pub = xml_escape(_rfc822(item.get("published") or output.get("last_updated", "")))
         parts.append(
             "<item>"
             f"<title>[{sev}] {title}</title>"
