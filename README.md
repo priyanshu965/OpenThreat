@@ -1,184 +1,179 @@
-# CyberWatch
+<div align="center">
 
-A free, self-updating cybersecurity threat intelligence dashboard. Aggregates
-CVEs, advisories, incidents, and news from 15+ sources into a single interface.
-Runs daily via GitHub Actions — zero infrastructure needed.
+# 🛡️ CyberWatch
 
-## Features
+**A free, self-updating cybersecurity threat intelligence dashboard**  
+*Aggregates CVEs, advisories, incidents & news from 15+ sources. Runs hourly via GitHub Actions — zero infrastructure.*
 
-- **15+ data sources** — NVD, CISA, MSRC, OSV, Gentoo, Oracle Linux, CentOS,
-  VMware, AlienVault OTX, The Hacker News, Bleeping Computer, Krebs, SANS,
-  Reddit r/netsec, TheRecord
-- **Rule-based enrichment** on every item — 3‑sentence summary, IOC extraction
-  (IPs, hashes), severity inference, category-appropriate Mermaid graphs
-- **AI enrichment** — Gemini (primary) or Groq (fallback) overwrites rule data
-  for top‑priority items (configurable limit, default 10)
-- **Priority scoring** — blends CVSS + EPSS + CISA KEV into a 0–100 "act first"
-  score with urgency badges (urgent/elevated/moderate/low)
-- **Trends** — 30‑day volume, severity, actor, and CVE trend charts
-- **STIX exports** — `iocs.csv`, `iocs.json`, `stix.json`, `feed.xml` written
-  every run
-- **Webhook alerts** — Slack, Discord, Telegram, or Email for high‑severity
-  items with persistent dedup (no repeat alerts for same CVE)
-- **Source health tracking** — per‑run status logged to JSONL time series
-- **MITRE ATT&CK mapping** — 14 tactics, 504 techniques/sub‑techniques,
-  ~2,800 keywords; scanned at fetch time
-- **Dashboard** — dark terminal theme, infinite scroll, watchlist, sort toggle,
-  MITRE matrix heatmap, priority badges, Mermaid threat graphs
-- **Parallelised fetching** — RSS + API sources fetched concurrently
-  (ThreadPoolExecutor, configurable workers)
-- **Docker support** — multi‑stage build with version labels
+[![GitHub Actions](https://img.shields.io/badge/Updates-Hourly-00ADD8?logo=githubactions&logoColor=white)](https://github.com/priyanshu965/Cyberwatch/actions)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![Dashboard](https://img.shields.io/badge/Dashboard-GitHub%20Pages-222222?logo=githubpages&logoColor=white)](https://priyanshu965.github.io/Cyberwatch/)
+[![AI](https://img.shields.io/badge/AI-Gemini%20%2F%20Groq-8E44AD?logo=googleai&logoColor=white)](https://ai.google.dev)
 
-## Project Structure
-
-```
-.
-├── .github/
-│   ├── workflows/
-│   │   └── update.yml            ← GitHub Actions: hourly schedule
-│   └── dependabot.yml            ← Weekly pip & GHA updates
-├── scripts/
-│   ├── fetch_intel.py            ← Pipeline: fetch → enrich → export
-│   ├── config.py                 ← Central config (env‑overridable)
-│   ├── webhook_post.py           ← Slack / Discord / Telegram / Email alerts
-│   ├── trends.py                 ← 30‑day trend builder
-│   ├── exports.py                ← STIX / CSV / JSON / RSS exports
-│   └── mitre_ttps.py             ← MITRE ATT&CK database (504 entries)
-├── data/
-│   ├── intel.json                ← Auto‑generated daily
-│   ├── archive/                  ← Daily snapshots (pruned after N days)
-│   ├── trends.json               ← 30‑day trend data
-│   ├── exports/                  ← STIX, CSV, JSON, RSS
-│   ├── .alert_state.json         ← Webhook dedup memory
-│   ├── .cache/                   ← EPSS / CISA KEV (24h TTL)
-│   └── source_health_history.jsonl ← Health time‑series
-├── tests/
-│   └── test_pipeline.py          ← Unit tests for pipeline helpers
-├── index.html                    ← Dashboard UI
-├── style.css                     ← Dark terminal theme
-├── app.js                        ← Feed, matrix, search, filter, trends
-├── requirements.txt              ← Runtime dependencies
-├── requirements-dev.txt          ← Dev dependencies (pytest, ruff)
-├── Dockerfile                    ← Multi‑stage: frontend + fetcher
-└── nginx.conf                    ← Nginx config for frontend
-```
-
-## Quick Start
-
-### GitHub Pages (zero setup)
-
-1. Fork this repo
-2. Enable GitHub Pages on `main` root
-3. The workflow runs hourly — your dashboard will be live at
-   `https://<user>.github.io/Cyberwatch/`
-
-### Docker
-
-```bash
-# Build with version label
-VERSION=$(git rev-parse --short HEAD)
-docker build --build-arg VERSION=$VERSION -t cyberwatch .
-
-# Run the fetcher
-docker run --rm cyberwatch python scripts/fetch_intel.py
-```
-
-### Local
-
-```bash
-pip install -r requirements.txt         # runtime deps only
-pip install -r requirements-dev.txt     # includes pytest, ruff
-python scripts/fetch_intel.py           # generates data/intel.json
-```
-
-### Tests
-
-```bash
-python -m unittest tests/test_pipeline.py -v
-```
-
-## Configuration
-
-All settings in `scripts/config.py` are overridable via environment variables:
-
-| Variable | Default | Description |
-|---|---|---|
-| `GROQ_API_KEY` | — | Groq API key for AI enrichment (fallback) |
-| `GEMINI_API_KEY` | — | Gemini API key for AI enrichment (primary) |
-| `AI_ENRICH_LIMIT` | `10` | Items enriched per run via AI |
-| `WEBHOOK_URL` | — | Webhook URL for alerts |
-| `WEBHOOK_TYPE` | `slack` | `slack`, `discord`, `telegram`, or `email` |
-| `SMTP_HOST` | — | SMTP server (for email alerts) |
-| `SMTP_TO` | — | Recipient address (for email alerts) |
-| `ALERT_SEVERITIES` | `critical,high` | Minimum severity for alerting |
-| `THREATFOX_API_KEY` | — | API key for ThreatFox IOCs |
-| `MB_API_KEY` | — | API key for MalwareBazaar |
-| `PRIORITY_CVSS_WEIGHT` | `40` | CVSS weight in priority score |
-| `PRIORITY_EPSS_WEIGHT` | `40` | EPSS weight in priority score |
-| `PRIORITY_KEV_BONUS` | `20` | CISA KEV flat bonus |
-
-## Customization
-
-**Add an RSS source:**
-
-Edit `RSS_SOURCES` in `scripts/fetch_intel.py`:
-```python
-{
-    "name": "Dark Reading",
-    "url":  "https://www.darkreading.com/rss.xml",
-    "category": "news",
-    "severity": "medium",
-},
-```
-
-**Change the update schedule:**
-
-Edit the cron in `.github/workflows/update.yml`:
-```yaml
-- cron: '0 */6 * * *'   # every 6 hours
-```
-
-## Data Sources
-
-| Source | Type | Key? |
-|---|---|---|
-| NVD (NIST) | CVEs | No |
-| CISA Alerts | Advisories | No |
-| OSV.dev | Open‑Source Vulns | No |
-| MSRC | Microsoft Vulns | No |
-| Gentoo | Linux Vulns | No |
-| Oracle Linux | Linux Vulns | No |
-| CentOS | Linux Vulns | No |
-| VMware | Virtualisation Vulns | No |
-| AlienVault OTX | Threat Pulses | Yes |
-| The Hacker News | News | No |
-| Bleeping Computer | Incidents | No |
-| Krebs on Security | News | No |
-| SANS ISC | Threat Diaries | No |
-| Reddit r/netsec | Community | No |
-| TheRecord | News | No |
-
-## How It Works
-
-1. **Fetch** — RSS feeds & API sources are fetched in parallel (8 workers)
-2. **Enrich (rule)** — Every item gets a description summary, IOC scan, severity
-   inference, category, and Mermaid graph
-3. **Prioritise** — Items with CVSS/EPSS/KEV data are scored and sorted first
-4. **Enrich (AI)** — Top N items (default 10) are sent to Gemini for deeper
-   analysis; Groq is the fallback if Gemini is unavailable
-5. **Export** — Writes `intel.json`, trends, archives, and STIX/CSV/RSS exports
-6. **Alert** — New high‑severity items trigger webhooks (Slack/Discord/Telegram/Email)
-7. **Commit** — The GitHub Action commits all output back to the repo
-
-## Tips
-
-- Works even if some sources fail — uses whatever data was fetched
-- EPSS & CISA KEV are cached for 24h (reduces API calls)
-- `data/.alert_state.json` is in `.gitignore` — CI force‑adds it to persist
-  dedup across runs
-- No API keys are needed for basic operation (only AI enrichment and AlienVault
-  require keys)
+</div>
 
 ---
 
-*Built with GitHub Actions, Python, and vanilla JS.*
+## ✨ What It Does
+
+| Capability | Detail |
+|---|---|
+| **🔍 15+ Sources** | NVD, CISA, MSRC, OSV, Gentoo, Oracle, CentOS Stream, VMware/Broadcom, AlienVault OTX, THN, Bleeping Computer, Krebs, SANS, Reddit r/netsec, TheRecord, ThreatFox, MalwareBazaar, URLhaus, Spamhaus, Feodo, Arch, Fedora, Amazon Linux, Dark Reading, SecurityWeek, Cisco Talos, Unit 42 … |
+| **🤖 AI Enrichment** | Gemini (primary) / Groq (fallback) writes detailed summaries, severity scores & Mermaid attack graphs for top-priority items |
+| **⚡ Priority Scoring** | Blends CVSS + EPSS + CISA KEV into a 0–100 "act-first" score with badges (`URGENT` / `ELEVATED` / `MODERATE` / `LOW`) |
+| **📊 Trends & Exports** | 30-day charts (volume, severity, actors, CVEs) + STIX/CSV/JSON/RSS exports every run |
+| **🔔 Webhook Alerts** | Slack / Discord / Telegram / Email for high-severity items — persistent dedup so you never see the same CVE twice |
+| **🩺 Source Health** | Per-run status + JSONL time-series — know instantly when a feed goes dark |
+| **🗺️ MITRE ATT&CK** | 14 tactics, 504 techniques, ~2,800 keywords mapped at fetch time with a heatmap matrix |
+| **⚡ Parallel Fetching** | RSS feeds & API sources fetched concurrently (ThreadPoolExecutor) — full pipeline in ~90 seconds |
+| **🧪 Tested** | Unit tests for pipeline helpers (extraction, inference, scoring) |
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────┐    ┌──────────────┐    ┌──────────────┐    ┌─────────────┐
+│ 15+ Sources │───▶│ fetch_intel  │───▶│ enrich + AI  │───▶│  intel.json │
+│ (RSS + API)  │    │ (parallel)   │    │ (rules→Gemini)│    │  + archive  │
+└─────────────┘    └──────────────┘    └──────────────┘    └──────┬──────┘
+                                                                  │
+                    ┌──────────────────────────────────────────────┘
+                    ▼
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│ Webhook     │  │ Trends &    │  │ STIX / CSV  │  │ GitHub      │
+│ Alert       │  │ Charts      │  │ / RSS       │  │ Pages       │
+│ (Slack/Disc)│  │ (30d)       │  │ Exports     │  │ Dashboard   │
+└─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘
+```
+
+---
+
+## 🚀 Quick Start
+
+### 🌐 GitHub Pages — 30 seconds
+
+```bash
+# 1. Fork the repo
+# 2. Settings → Pages → Deploy from main / (root)
+# 3. Done. Your dashboard at https://<user>.github.io/Cyberwatch/
+```
+
+### 🐳 Docker
+
+```bash
+VERSION=$(git rev-parse --short HEAD)
+docker build --build-arg VERSION=$VERSION -t cyberwatch .
+docker run --rm cyberwatch python scripts/fetch_intel.py
+```
+
+### 🐍 Local
+
+```bash
+pip install -r requirements.txt
+python scripts/fetch_intel.py          # generates data/intel.json
+```
+
+### 🧪 Run Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m unittest tests/test_pipeline.py -v
+```
+
+---
+
+## ⚙️ Configuration
+
+All settings in `scripts/config.py` — overridable via environment variables:
+
+| Variable | Default | What It Does |
+|---|---|---|
+| `GEMINI_API_KEY` | — | Primary AI enrichment (recommended) |
+| `GROQ_API_KEY` | — | Fallback AI enrichment |
+| `AI_ENRICH_LIMIT` | `10` | Items enriched per run |
+| `WEBHOOK_URL` / `WEBHOOK_TYPE` | — / `slack` | Alert destination (`slack`, `discord`, `telegram`, `email`) |
+| `SMTP_HOST` / `SMTP_TO` | — | Email alert config |
+| `ALERT_SEVERITIES` | `critical,high` | Minimum severity to trigger alert |
+| `OTX_API_KEY` | — | AlienVault OTX threat pulses |
+| `THREATFOX_API_KEY` | — | ThreatFox C2 IOCs |
+| `MB_API_KEY` | — | MalwareBazaar samples |
+| `PRIORITY_CVSS_WEIGHT` | `40` | CVSS weight (0–100 score) |
+| `PRIORITY_EPSS_WEIGHT` | `40` | EPSS weight |
+| `PRIORITY_KEV_BONUS` | `20` | CISA KEV flat bonus |
+
+---
+
+## 📦 Project Map
+
+```
+📁 .github/workflows/update.yml        ← Hourly scheduler
+📁 scripts/
+├── fetch_intel.py                     ← Pipeline: fetch → enrich → export
+├── config.py                          ← Central config (env‑overridable)
+├── webhook_post.py                    ← Slack / Discord / Telegram / Email
+├── trends.py                          ← 30‑day trend builder
+├── exports.py                         ← STIX / CSV / JSON / RSS
+└── mitre_ttps.py                      ← MITRE ATT&CK (504 techniques)
+📁 tests/test_pipeline.py              ← Unit tests
+📄 index.html  +  style.css  +  app.js ← Dashboard (dark terminal theme)
+📄 Dockerfile                          ← Multi‑stage build
+📄 requirements.txt  +  requirements-dev.txt
+```
+
+---
+
+## 🔌 Data Sources
+
+| 🟢 Always Free | 🔑 Optional API Key | 🚫 No Longer Available |
+|---|---|---|
+| NVD, CISA, MSRC, OSV, Gentoo | AlienVault OTX | (replaced with working alternatives) |
+| Oracle Linux, CentOS Stream | ThreatFox | |
+| VMware/Broadcom, Amazon Linux | MalwareBazaar | |
+| The Hacker News, Bleeping Computer | AbuseIPDB | |
+| Krebs, SANS, Reddit r/netsec | PhishTank | |
+| TheRecord, Dark Reading, SecurityWeek | | |
+| Threatpost, Cisco Talos, Unit 42 | | |
+| Graham Cluley, ESET, CyberSecurity News | | |
+| GBHackers, Fedora, Arch Linux | | |
+| URLhaus, Spamhaus DROP, Feodo Tracker | | |
+
+---
+
+## 🔄 Pipeline
+
+```
+1️⃣  FETCH ──── Parallel RSS + API (8 workers, ~90s)
+      │
+2️⃣  ENRICH ─── Rule-based (every item): summary, IOCs, severity, category, Mermaid graph
+      │
+3️⃣  PRIORITISE ── CVSS + EPSS + KEV → 0–100 score → sort
+      │
+4️⃣  AI ENRICH ── Top N items → Gemini (primary) / Groq (fallback)
+      │
+5️⃣  EXPORT ──── intel.json + archive + trends + STIX/CSV/RSS
+      │
+6️⃣  ALERT ───── High-severity items → Slack / Discord / Telegram / Email
+      │
+7️⃣  COMMIT ──── GitHub Action commits everything back to the repo
+```
+
+---
+
+## 💡 Tips
+
+- **No API keys? No problem.** Core features work without any keys — only AI enrichment and a few threat-feed APIs need them
+- **EPSS & CISA KEV** are cached for 24 h — no redundant API calls
+- **Dedup is persistent** — `data/.alert_state.json` survives across runs (force-added in CI)
+- **Partial failure is fine** — the pipeline never crashes on a dead source; it logs and moves on
+- **All output is static** — `intel.json` + HTML + CSS + JS → serves perfectly from GitHub Pages
+
+---
+
+<div align="center">
+
+Built with ❤️ using **GitHub Actions**, **Python**, and **vanilla JS**  
+*Stay safe out there.*
+
+</div>
