@@ -94,6 +94,9 @@ class Config:
     priority_epss_weight = _float("PRIORITY_EPSS_WEIGHT", 40.0)
     priority_kev_bonus   = _float("PRIORITY_KEV_BONUS", 20.0)
 
+    threatfox_api_key = os.environ.get("THREATFOX_API_KEY", "")
+    mb_api_key        = os.environ.get("MB_API_KEY", "")
+
     http_user_agent = _str("HTTP_USER_AGENT", "CyberWatch/2.3 (threat-intel dashboard)")
 
     @property

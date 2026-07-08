@@ -106,11 +106,13 @@ AI_ENRICH_LIMIT      = CONFIG.ai_enrich_limit
 ARCHIVE_RETENTION_DAYS = CONFIG.archive_retention_days
 
 # API keys (set as environment variables)
-OTX_API_KEY      = CONFIG.otx_api_key
-GROQ_API_KEY     = CONFIG.groq_api_key
-GEMINI_API_KEY   = CONFIG.gemini_api_key
-ABUSEIPDB_KEY    = CONFIG.abuseipdb_api_key
-PHISHTANK_KEY    = CONFIG.phishtank_api_key
+OTX_API_KEY       = CONFIG.otx_api_key
+GROQ_API_KEY      = CONFIG.groq_api_key
+GEMINI_API_KEY    = CONFIG.gemini_api_key
+ABUSEIPDB_KEY     = CONFIG.abuseipdb_api_key
+PHISHTANK_KEY     = CONFIG.phishtank_api_key
+THREATFOX_API_KEY = CONFIG.threatfox_api_key
+MB_API_KEY        = CONFIG.mb_api_key
 
 GROQ_MODEL_PRIMARY  = CONFIG.groq_model_primary
 GROQ_MODEL_FALLBACK = CONFIG.groq_model_fallback
@@ -131,7 +133,7 @@ DEFAULT_WORKFLOW_GRAPH = (
 
 # ── RSS Feed Sources (15 total) ───────────────────────────────────────────────
 RSS_SOURCES = [
-    {"name": "CISA",             "url": "https://www.cisa.gov/news.xml",                         "category": "advisory", "severity": "high"},
+    {"name": "CISA",             "url": "https://www.cisa.gov/cybersecurity-advisories/all.xml",   "category": "advisory", "severity": "high"},
     {"name": "The Hacker News",  "url": "https://feeds.feedburner.com/TheHackersNews",            "category": "news",     "severity": "medium"},
     {"name": "Bleeping Computer","url": "https://www.bleepingcomputer.com/feed/",                 "category": "news",     "severity": "medium"},
     {"name": "Krebs on Security","url": "https://krebsonsecurity.com/feed/",                      "category": "news",     "severity": "medium"},
@@ -145,7 +147,7 @@ RSS_SOURCES = [
     {"name": "Graham Cluley",    "url": "https://grahamcluley.com/feed/",                         "category": "news",     "severity": "medium"},
     {"name": "ESET WeLiveSecurity","url": "https://welivesecurity.com/feed/",                     "category": "news",     "severity": "medium"},
     {"name": "CyberSecurity News","url": "https://cybersecuritynews.com/feed/",                   "category": "news",     "severity": "medium"},
-    {"name": "GBHackers",        "url": "https://gbhackers.com/feed/",                            "category": "news",     "severity": "medium"},
+    {"name": "GBHackers",        "url": "https://gbhackers.com/feed/",                            "category": "news",     "severity": "medium", "headers": {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}},
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -511,8 +513,9 @@ def enrich_with_ai(items: list[dict]) -> list[dict]:
 def fetch_rss(source: dict) -> list[dict]:
     log.info(f"Fetching RSS: {source['name']}")
     items = []
+    hdrs = {**HEADERS, **source.get("headers", {})}
     try:
-        resp = requests.get(source["url"], headers=HEADERS, timeout=15)
+        resp = requests.get(source["url"], headers=hdrs, timeout=15)
         resp.raise_for_status()
         feed = feedparser.parse(resp.text)
         if feed.bozo and not feed.entries:
@@ -585,24 +588,26 @@ def fetch_nvd_cves() -> list[dict]:
 def fetch_reddit_netsec() -> list[dict]:
     log.info("Fetching Reddit r/netsec...")
     items = []
-    data = make_request("https://www.reddit.com/r/netsec.json?limit=15",
-                        headers={**HEADERS, "User-Agent": "CyberWatch/2.0 (macOS)"})
-    if not data:
-        return items
-    for post in data.get("data", {}).get("children", []):
-        p = post.get("data", {})
-        if p.get("stickied"):
-            continue
-        title = p.get("title", "Untitled")
-        created = p.get("created_utc")
-        published = datetime.fromtimestamp(created, tz=timezone.utc).isoformat() if created else now_utc()
-        items.append({
-            "title": title, "description": clean_html(p.get("selftext", "")) or f"Reddit (score: {p.get('score',0)})",
-            "url": p.get("url", ""), "cve_id": extract_cve_id(title),
-            "source": "Reddit/netsec", "category": infer_category(title, "news"),
-            "severity": infer_severity(title, "low"), "cvss_score": None, "published": published,
-            "iocs": extract_iocs(title + " " + p.get("selftext","")),
-        })
+    try:
+        resp = requests.get("https://www.reddit.com/r/netsec/.rss",
+                            headers={**HEADERS, "User-Agent": "CyberWatch/2.3 (macOS; rv:1.0)"},
+                            timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        feed = feedparser.parse(resp.text)
+        for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
+            title = entry.get("title", "Untitled")
+            link = entry.get("link", "")
+            desc = clean_html(entry.get("summary", ""))[:400]
+            pub = parse_date(entry.get("published_parsed"))
+            items.append({
+                "title": title, "description": desc or f"Reddit (score: {entry.get('slash_comments', '')})",
+                "url": link, "cve_id": extract_cve_id(title),
+                "source": "Reddit/netsec", "category": infer_category(title, "news"),
+                "severity": infer_severity(title, "low"), "cvss_score": None, "published": pub,
+                "iocs": extract_iocs(title + " " + desc),
+            })
+    except Exception as e:
+        log.warning(f"Reddit r/netsec failed: {e}")
     log.info(f"  Got {len(items)} posts from Reddit r/netsec")
     return items
 
@@ -798,30 +803,42 @@ def fetch_phishtank() -> list[dict]:
 
 # ── OSV Vulnerability Fetcher (covers 25+ sources) ───────────────────────────
 
-OSV_ECOSYSTEMS = [
-    "Debian", "Ubuntu", "Alpine", "Red Hat", "SUSE", "openSUSE",
-    "AlmaLinux", "Rocky Linux", "Azure Linux", "Chainguard", "Wolfi",
+# OSV ecosystems that support listing without a specific package name.
+# Distro ecosystems (Debian, Ubuntu, …) require a version suffix or package
+# name and return 400 when queried bare — they're queried separately below.
+OSV_ECOSYSTEMS_BARE = [
     "PyPI", "RubyGems", "crates.io", "Packagist", "Go", "npm",
     "Maven", "NuGet", "GitHub Actions", "OSS-Fuzz", "Linux Kernel",
     "Android", "Homebrew", "VSCode", "Haskell", "Hex", "Pub",
+]
+# Distro ecosystems with their specific version suffixes.
+OSV_ECOSYSTEMS_DISTRO = [
+    "Debian:12", "Debian:11",
+    "Ubuntu:24.04", "Ubuntu:22.04",
+    "Alpine:v3.21", "Alpine:v3.20",
+    "Red Hat", "SUSE", "Rocky Linux", "AlmaLinux",
 ]
 
 def fetch_osv() -> list[dict]:
     log.info("Fetching OSV vulnerabilities...")
     vuln_ids: list[tuple[str, str]] = []  # (ecosystem, vuln_id)
-    for eco in OSV_ECOSYSTEMS:
+    all_ecosystems = [
+        *[(eco, eco) for eco in OSV_ECOSYSTEMS_BARE],
+        *[(eco, eco.split(":")[0]) for eco in OSV_ECOSYSTEMS_DISTRO],
+    ]
+    for query_eco, display_eco in all_ecosystems:
         try:
             resp = requests.post(
                 "https://api.osv.dev/v1/query",
-                json={"ecosystem": eco, "page_size": 10},
+                json={"ecosystem": query_eco, "page_size": 10},
                 headers=HEADERS, timeout=REQUEST_TIMEOUT
             )
             resp.raise_for_status()
             data = resp.json()
             for vref in data.get("vulns", []):
-                vuln_ids.append((eco, vref["id"]))
+                vuln_ids.append((display_eco, vref["id"]))
         except Exception as e:
-            log.warning(f"OSV ecosystem '{eco}' query failed: {e}")
+            log.warning(f"OSV ecosystem '{query_eco}' query failed: {e}")
 
     # Parallel detail fetches.
     items = []
@@ -862,19 +879,22 @@ def fetch_osv() -> list[dict]:
         for fut in as_completed(fut_map):
             pass
 
-    log.info(f"  Got {len(items)} vulns from OSV ({len(OSV_ECOSYSTEMS)} ecosystems, {len(vuln_ids)} vulns queried)")
+    log.info(f"  Got {len(items)} vulns from OSV ({len(all_ecosystems)} ecosystems, {len(vuln_ids)} vulns queried)")
     return items
 
 # ── MalwareBazaar Fetcher (keyless) ──────────────────────────────────────────
 
 def fetch_malwarebazaar() -> list[dict]:
+    if not MB_API_KEY:
+        log.info("MB_API_KEY not set — skipping MalwareBazaar")
+        return []
     log.info("Fetching MalwareBazaar recent samples...")
     items = []
     try:
         resp = requests.post(
             "https://mb-api.abuse.ch/api/v1/",
             data={"query": "get_recent", "selector": "time"},
-            headers=HEADERS, timeout=15
+            headers={**HEADERS, "Auth-Key": MB_API_KEY}, timeout=15
         )
         resp.raise_for_status()
         data = resp.json()
@@ -907,13 +927,16 @@ def fetch_malwarebazaar() -> list[dict]:
 # ── ThreatFox Fetcher (keyless) ──────────────────────────────────────────────
 
 def fetch_threatfox() -> list[dict]:
+    if not THREATFOX_API_KEY:
+        log.info("THREATFOX_API_KEY not set — skipping ThreatFox")
+        return []
     log.info("Fetching ThreatFox recent IOCs...")
     items = []
     try:
         resp = requests.post(
             "https://threatfox-api.abuse.ch/api/v1/",
             json={"query": "recent", "limit": MAX_ITEMS_PER_SOURCE},
-            headers=HEADERS, timeout=15
+            headers={**HEADERS, "Auth-Key": THREATFOX_API_KEY}, timeout=15
         )
         resp.raise_for_status()
         data = resp.json()
@@ -952,17 +975,19 @@ def fetch_threatfox() -> list[dict]:
 # ── Generic RSS source fetcher ────────────────────────────────────────────────
 
 _RSS_SOURCE_CONFIG: list[dict] = [
-    {"name": "MSRC",          "url": "https://msrc.microsoft.com/update-guide/rss",                                        "severity": "high"},
-    {"name": "Gentoo",        "url": "https://security.gentoo.org/glsa/rss/",                                             "severity": "medium"},
-    {"name": "Oracle Linux",  "url": "https://linux.oracle.com/security/oval/",                                           "severity": "medium"},
-    {"name": "CentOS",        "url": "https://lists.centos.org/pipermail/centos-announce/",                               "severity": "medium"},
-    {"name": "VMware",        "url": "https://www.vmware.com/security/advisories/rss.xml",                                "severity": "high"},
+    {"name": "MSRC",          "url": "https://api.msrc.microsoft.com/update-guide/rss",                                   "severity": "high"},
+    {"name": "Gentoo",        "url": "https://security.gentoo.org/glsa/feed.rss",                                         "severity": "medium"},
+    {"name": "Oracle Linux",  "url": "https://linux.oracle.com/security/rss/",                                            "severity": "medium"},
+    {"name": "CentOS Stream", "url": "https://blog.centos.org/feed/",                                                     "severity": "medium"},
+    {"name": "VMware",        "url": "https://www.broadcom.com/support/security/advisories/json",                         "severity": "high"},
 ]
 
-def _fetch_rss_source(name: str, url: str, default_severity: str) -> list[dict]:
-    """Generic RSS feed parser used by multiple Linux-vendor sources."""
+def _fetch_rss_source(name: str, url: str, default_severity: str, extra_headers: dict | None = None) -> list[dict]:
+    """Generic RSS feed parser. ``extra_headers`` override defaults for
+    sources that need a different User-Agent (e.g. to bypass 403)."""
+    hdrs = {**HEADERS, **(extra_headers or {})}
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        resp = requests.get(url, headers=hdrs, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         feed = feedparser.parse(resp.text)
         items = []
@@ -987,7 +1012,7 @@ def _fetch_rss_source(name: str, url: str, default_severity: str) -> list[dict]:
 # ── MSRC Fetcher (RSS) ───────────────────────────────────────────────────────
 
 def fetch_msrc() -> list[dict]:
-    return _fetch_rss_source("MSRC", "https://msrc.microsoft.com/update-guide/rss", "high")
+    return _fetch_rss_source("MSRC", "https://api.msrc.microsoft.com/update-guide/rss", "high")
 
 # ── Fedora Bodhi Fetcher ────────────────────────────────────────────────────
 
@@ -1018,7 +1043,7 @@ def fetch_fedora() -> list[dict]:
 # ── Gentoo GLSA Fetcher (RSS) ──────────────────────────────────────────────
 
 def fetch_gentoo() -> list[dict]:
-    return _fetch_rss_source("Gentoo", "https://security.gentoo.org/glsa/rss/", "medium")
+    return _fetch_rss_source("Gentoo", "https://security.gentoo.org/glsa/feed.rss", "medium")
 
 # ── Arch Linux Security Fetcher ─────────────────────────────────────────────
 
@@ -1051,7 +1076,7 @@ def fetch_archlinux() -> list[dict]:
 # ── Oracle Linux Fetcher ───────────────────────────────────────────────────
 
 def fetch_oracle_linux() -> list[dict]:
-    return _fetch_rss_source("Oracle Linux", "https://linux.oracle.com/security/oval/", "medium")
+    return _fetch_rss_source("Oracle Linux", "https://linux.oracle.com/security/rss/", "medium")
 
 # ── Amazon Linux Fetcher ───────────────────────────────────────────────────
 
@@ -1059,22 +1084,27 @@ def fetch_amazon_linux() -> list[dict]:
     log.info("Fetching Amazon Linux advisories...")
     items = []
     try:
-        for alas_type in ["ALAS-2025", "ALAS2-2025"]:
-            resp = requests.get(f"https://alas.aws.amazon.com/alas/{alas_type}.xml", headers=HEADERS, timeout=REQUEST_TIMEOUT)
-            resp.raise_for_status()
-            feed = feedparser.parse(resp.text)
-            for entry in feed.entries[:MAX_ITEMS_PER_SOURCE // 2]:
-                title = entry.get("title", "Amazon Linux Advisory")
-                link = entry.get("link", "")
-                desc = clean_html(entry.get("summary", ""))[:400]
-                pub = parse_date(entry.get("published_parsed"))
-                items.append({
-                    "title": title, "description": desc, "url": link,
-                    "cve_id": extract_cve_id(title + " " + desc), "source": "Amazon Linux",
-                    "category": "advisory", "severity": infer_severity(title, "medium"),
-                    "cvss_score": None, "published": pub,
-                    "iocs": extract_iocs(desc),
-                })
+        for feed_url in ["https://alas.aws.amazon.com/alas.rss",
+                         "https://alas.aws.amazon.com/AL2/alas.rss",
+                         "https://alas.aws.amazon.com/AL2023/alas.rss"]:
+            try:
+                resp = requests.get(feed_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+                resp.raise_for_status()
+                feed = feedparser.parse(resp.text)
+                for entry in feed.entries[:MAX_ITEMS_PER_SOURCE // 2]:
+                    title = entry.get("title", "Amazon Linux Advisory")
+                    link = entry.get("link", "")
+                    desc = clean_html(entry.get("summary", ""))[:400]
+                    pub = parse_date(entry.get("published_parsed"))
+                    items.append({
+                        "title": title, "description": desc, "url": link,
+                        "cve_id": extract_cve_id(title + " " + desc), "source": "Amazon Linux",
+                        "category": "advisory", "severity": infer_severity(title, "medium"),
+                        "cvss_score": None, "published": pub,
+                        "iocs": extract_iocs(desc),
+                    })
+            except Exception:
+                continue  # try next Amazon Linux feed version
     except Exception as e:
         log.warning(f"Amazon Linux failed: {e}")
     log.info(f"  Got {len(items)} from Amazon Linux")
@@ -1083,12 +1113,38 @@ def fetch_amazon_linux() -> list[dict]:
 # ── CentOS Announce Fetcher ────────────────────────────────────────────────
 
 def fetch_centos() -> list[dict]:
-    return _fetch_rss_source("CentOS", "https://lists.centos.org/pipermail/centos-announce/", "medium")
+    return _fetch_rss_source("CentOS Stream", "https://blog.centos.org/feed/", "medium")
 
-# ── VMware Security Fetcher ───────────────────────────────────────────────
+# ── VMware / Broadcom Security Fetcher ────────────────────────────────────
 
 def fetch_vmware() -> list[dict]:
-    return _fetch_rss_source("VMware", "https://www.vmware.com/security/advisories/rss.xml", "high")
+    log.info("Fetching Broadcom (VMware) security advisories...")
+    items = []
+    try:
+        resp = requests.get(
+            "https://www.broadcom.com/support/security/advisories/json",
+            headers=HEADERS, timeout=REQUEST_TIMEOUT
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        for adv in (data if isinstance(data, list) else data.get("advisories", data.get("results", [])))[:MAX_ITEMS_PER_SOURCE]:
+            title = adv.get("title", adv.get("name", "VMware Advisory"))
+            desc = adv.get("description", adv.get("summary", ""))[:400]
+            cve_id = extract_cve_id(title + " " + desc)
+            pub = parse_date(adv.get("publishedDate", adv.get("date", "")))
+            items.append({
+                "title": f"VMware: {title[:150]}",
+                "description": desc,
+                "url": adv.get("url", adv.get("link", f"https://www.broadcom.com/support/security/advisories")),
+                "cve_id": cve_id, "source": "VMware",
+                "category": "advisory", "severity": infer_severity(title, "high"),
+                "cvss_score": None, "published": pub,
+                "iocs": extract_iocs(desc),
+            })
+    except Exception as e:
+        log.warning(f"VMware failed: {e}")
+    log.info(f"  Got {len(items)} from VMware")
+    return items
 
 # ── Mitre CWE Fetcher ─────────────────────────────────────────────────────
 
@@ -1096,7 +1152,7 @@ def fetch_mitre_cwe() -> list[dict]:
     log.info("Fetching Mitre CWE data...")
     items = []
     try:
-        data = make_request("https://cwe-api.mitre.org/api/v1/cwe/weaknesses?limit=10&offset=0")
+        data = make_request("https://cwe-api.mitre.org/api/v1/cwe/weakness?limit=10&offset=0")
         if data:
             for weakness in data.get("weaknesses", [])[:MAX_ITEMS_PER_SOURCE]:
                 cwe_id = weakness.get("id", "")
