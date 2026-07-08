@@ -24,9 +24,11 @@ Environment variables (see scripts/config.py):
 import argparse
 import json
 import os
+import smtplib
 import sys
 import time
 from datetime import datetime, timezone
+from email.mime.text import MIMEText
 from pathlib import Path
 
 import requests
@@ -128,6 +130,15 @@ def build_payload(items, webhook_type: str, total: int) -> dict:
             text += f"• *{(item.get('severity') or '').upper()}*{kev}: [{(item.get('title') or '')[:150]}]({item.get('url','')})\n"
         return {"text": text, "parse_mode": "Markdown", "disable_web_page_preview": True}
 
+    if webhook_type == "email":
+        body_lines = [f"🚨 CyberWatch Intel Update — {len(items)} new alert(s)"]
+        for item in items:
+            kev = " (KEV)" if item.get("cisa_kev") else ""
+            body_lines.append(f"\n• {(item.get('severity') or '').upper()}{kev}: {item.get('title','')[:200]}")
+            if item.get("url"):
+                body_lines.append(f"  {item['url']}")
+        return {"subject": f"CyberWatch: {len(items)} new threat(s)", "body": "\n".join(body_lines)}
+
     return {"type": webhook_type, "items": items, "total": total}
 
 
@@ -153,6 +164,39 @@ def _post_with_retry(url: str, payload: dict, retries: int = 3) -> bool:
     print("Webhook delivery failed after all retries.")
     return False
 
+
+# ── Email sender ───────────────────────────────────────────────────────────────
+
+def _send_email(config, items: list) -> bool:
+    """Send alert via SMTP. Expects env vars: SMTP_HOST, SMTP_PORT, SMTP_USER,
+    SMTP_PASS, SMTP_TO. Falls back to print() if not configured."""
+    host = os.environ.get("SMTP_HOST", "")
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    user = os.environ.get("SMTP_USER", "")
+    pwd  = os.environ.get("SMTP_PASS", "")
+    to   = os.environ.get("SMTP_TO", "")
+    frm  = os.environ.get("SMTP_FROM", user or "cyberwatch@localhost")
+    if not host or not to:
+        print("Email alerts requested but SMTP_HOST / SMTP_TO not set — printing instead.")
+        payload = build_payload(items, "email", 0)
+        print(payload["body"])
+        return True
+    payload = build_payload(items, "email", 0)
+    msg = MIMEText(payload["body"])
+    msg["Subject"] = payload["subject"]
+    msg["From"]    = frm
+    msg["To"]      = to
+    try:
+        with smtplib.SMTP(host, port) as s:
+            s.starttls()
+            if user and pwd:
+                s.login(user, pwd)
+            s.send_message(msg)
+        print(f"Email alert sent to {to} ({len(items)} items)")
+        return True
+    except Exception as e:
+        print(f"Email send failed: {e}")
+        return False
 
 # ── Pipeline entry point ──────────────────────────────────────────────────────
 
@@ -181,8 +225,11 @@ def send_alerts(output: dict, config) -> int:
         return 0
 
     to_send = fresh[:config.alert_max_items]
-    payload = build_payload(to_send, config.webhook_type, len(items))
-    ok = _post_with_retry(url, payload, config.alert_retry_count)
+    if config.webhook_type == "email":
+        ok = _send_email(config, to_send)
+    else:
+        payload = build_payload(to_send, config.webhook_type, len(items))
+        ok = _post_with_retry(url, payload, config.alert_retry_count)
 
     if ok:
         now_iso = datetime.now(timezone.utc).isoformat()

@@ -29,10 +29,11 @@ Fetches threat intelligence from multiple free sources:
 Output: data/intel.json  +  data/archive/YYYY-MM-DD.json
 """
 
-import json, os, re, sys, time, logging
+import json, os, re, sys, time, logging, threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import csv, io
 import requests
@@ -79,11 +80,20 @@ except Exception:
     send_alerts = None
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+class _StructuredAdapter(logging.LoggerAdapter):
+    """Minimal structured logging: extra kwargs become space-separated key=val."""
+    def process(self, msg, kwargs):
+        extra = kwargs.pop("extra", {})
+        if extra:
+            ctx = " ".join(f"{k}={v}" for k, v in sorted(extra.items()))
+            msg = f"{msg}  [{ctx}]"
+        return msg, kwargs
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S"
 )
-log = logging.getLogger("cyberwatch")
+log = _StructuredAdapter(logging.getLogger("cyberwatch"), {})
 
 # ── Configuration (see scripts/config.py; override via env vars) ──────────────
 PROJECT_ROOT         = CONFIG.project_root
@@ -798,30 +808,41 @@ OSV_ECOSYSTEMS = [
 
 def fetch_osv() -> list[dict]:
     log.info("Fetching OSV vulnerabilities...")
-    items = []
+    vuln_ids: list[tuple[str, str]] = []  # (ecosystem, vuln_id)
     for eco in OSV_ECOSYSTEMS:
         try:
             resp = requests.post(
                 "https://api.osv.dev/v1/query",
                 json={"ecosystem": eco, "page_size": 10},
-                headers=HEADERS, timeout=15
+                headers=HEADERS, timeout=REQUEST_TIMEOUT
             )
             resp.raise_for_status()
             data = resp.json()
-            for vuln_id in data.get("vulns", []):
-                try:
-                    detail = requests.get(f"https://api.osv.dev/v1/vulns/{vuln_id['id']}", headers=HEADERS, timeout=10)
-                    detail.raise_for_status()
-                    v = detail.json()
-                except:
-                    continue
-                title = v.get("summary", v.get("id", "Unknown"))
-                desc = v.get("details", "")[:500]
-                aliases = v.get("aliases", [])
-                cve_id = next((a for a in aliases if a.startswith("CVE-")), None)
-                severity = "medium"
-                if v.get("database_specific", {}).get("severity"):
-                    severity = v["database_specific"]["severity"].lower()
+            for vref in data.get("vulns", []):
+                vuln_ids.append((eco, vref["id"]))
+        except Exception as e:
+            log.warning(f"OSV ecosystem '{eco}' query failed: {e}")
+
+    # Parallel detail fetches.
+    items = []
+    _osv_lock = threading.Lock()
+
+    def _fetch_osv_detail(eco: str, vid: str) -> None:
+        try:
+            resp = requests.get(
+                f"https://api.osv.dev/v1/vulns/{vid}",
+                headers=HEADERS, timeout=REQUEST_TIMEOUT
+            )
+            resp.raise_for_status()
+            v = resp.json()
+            title = v.get("summary", v.get("id", "Unknown"))
+            desc = v.get("details", "")[:500]
+            aliases = v.get("aliases", [])
+            cve_id = next((a for a in aliases if a.startswith("CVE-")), None)
+            severity = "medium"
+            if v.get("database_specific", {}).get("severity"):
+                severity = v["database_specific"]["severity"].lower()
+            with _osv_lock:
                 items.append({
                     "title": f"[{eco}] {title[:150]}",
                     "description": clean_html(desc),
@@ -833,10 +854,15 @@ def fetch_osv() -> list[dict]:
                     "iocs": extract_iocs(title + " " + desc),
                     "ecosystem": eco,
                 })
-            time.sleep(0.5)
-        except Exception as e:
-            log.warning(f"OSV ecosystem '{eco}' failed: {e}")
-    log.info(f"  Got {len(items)} vulns from OSV ({len(OSV_ECOSYSTEMS)} ecosystems)")
+        except Exception:
+            pass  # individual vuln failure is non-fatal
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        fut_map = {pool.submit(_fetch_osv_detail, eco, vid): (eco, vid) for eco, vid in vuln_ids}
+        for fut in as_completed(fut_map):
+            pass
+
+    log.info(f"  Got {len(items)} vulns from OSV ({len(OSV_ECOSYSTEMS)} ecosystems, {len(vuln_ids)} vulns queried)")
     return items
 
 # ── MalwareBazaar Fetcher (keyless) ──────────────────────────────────────────
@@ -923,31 +949,45 @@ def fetch_threatfox() -> list[dict]:
     log.info(f"  Got {len(items)} IOCs from ThreatFox")
     return items
 
-# ── MSRC Fetcher (RSS) ───────────────────────────────────────────────────────
+# ── Generic RSS source fetcher ────────────────────────────────────────────────
 
-def fetch_msrc() -> list[dict]:
-    log.info("Fetching MSRC advisories...")
-    items = []
+_RSS_SOURCE_CONFIG: list[dict] = [
+    {"name": "MSRC",          "url": "https://msrc.microsoft.com/update-guide/rss",                                        "severity": "high"},
+    {"name": "Gentoo",        "url": "https://security.gentoo.org/glsa/rss/",                                             "severity": "medium"},
+    {"name": "Oracle Linux",  "url": "https://linux.oracle.com/security/oval/",                                           "severity": "medium"},
+    {"name": "CentOS",        "url": "https://lists.centos.org/pipermail/centos-announce/",                               "severity": "medium"},
+    {"name": "VMware",        "url": "https://www.vmware.com/security/advisories/rss.xml",                                "severity": "high"},
+]
+
+def _fetch_rss_source(name: str, url: str, default_severity: str) -> list[dict]:
+    """Generic RSS feed parser used by multiple Linux-vendor sources."""
     try:
-        resp = requests.get("https://msrc.microsoft.com/update-guide/rss", headers=HEADERS, timeout=15)
+        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         feed = feedparser.parse(resp.text)
+        items = []
         for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
-            title = entry.get("title", "MSRC Advisory")
+            title = entry.get("title", f"{name} Advisory")
             link = entry.get("link", "")
-            desc = clean_html(entry.get("summary", ""))[:500]
+            desc = clean_html(entry.get("summary", ""))[:400]
             pub = parse_date(entry.get("published_parsed"))
             items.append({
                 "title": title, "description": desc, "url": link,
-                "cve_id": extract_cve_id(title + " " + desc), "source": "MSRC",
-                "category": "advisory", "severity": infer_severity(title, "high"),
+                "cve_id": extract_cve_id(title + " " + desc),
+                "source": name, "category": "advisory",
+                "severity": infer_severity(title, default_severity),
                 "cvss_score": None, "published": pub,
-                "iocs": extract_iocs(title + " " + desc),
+                "iocs": extract_iocs(desc),
             })
+        return items
     except Exception as e:
-        log.warning(f"MSRC failed: {e}")
-    log.info(f"  Got {len(items)} from MSRC")
-    return items
+        log.warning(f"{name} failed: {e}")
+        return []
+
+# ── MSRC Fetcher (RSS) ───────────────────────────────────────────────────────
+
+def fetch_msrc() -> list[dict]:
+    return _fetch_rss_source("MSRC", "https://msrc.microsoft.com/update-guide/rss", "high")
 
 # ── Fedora Bodhi Fetcher ────────────────────────────────────────────────────
 
@@ -978,28 +1018,7 @@ def fetch_fedora() -> list[dict]:
 # ── Gentoo GLSA Fetcher (RSS) ──────────────────────────────────────────────
 
 def fetch_gentoo() -> list[dict]:
-    log.info("Fetching Gentoo GLSAs...")
-    items = []
-    try:
-        resp = requests.get("https://security.gentoo.org/glsa/rss/", headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        feed = feedparser.parse(resp.text)
-        for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
-            title = entry.get("title", "Gentoo GLSA")
-            link = entry.get("link", "")
-            desc = clean_html(entry.get("summary", ""))[:400]
-            pub = parse_date(entry.get("published_parsed"))
-            items.append({
-                "title": title, "description": desc, "url": link,
-                "cve_id": extract_cve_id(title + " " + desc), "source": "Gentoo",
-                "category": "advisory", "severity": infer_severity(title, "medium"),
-                "cvss_score": None, "published": pub,
-                "iocs": extract_iocs(desc),
-            })
-    except Exception as e:
-        log.warning(f"Gentoo failed: {e}")
-    log.info(f"  Got {len(items)} from Gentoo")
-    return items
+    return _fetch_rss_source("Gentoo", "https://security.gentoo.org/glsa/rss/", "medium")
 
 # ── Arch Linux Security Fetcher ─────────────────────────────────────────────
 
@@ -1032,28 +1051,7 @@ def fetch_archlinux() -> list[dict]:
 # ── Oracle Linux Fetcher ───────────────────────────────────────────────────
 
 def fetch_oracle_linux() -> list[dict]:
-    log.info("Fetching Oracle Linux advisories...")
-    items = []
-    try:
-        resp = requests.get("https://linux.oracle.com/security/oval/", headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        feed = feedparser.parse(resp.text)
-        for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
-            title = entry.get("title", "Oracle Advisory")
-            link = entry.get("link", "")
-            desc = clean_html(entry.get("summary", ""))[:400]
-            pub = parse_date(entry.get("published_parsed"))
-            items.append({
-                "title": title, "description": desc, "url": link,
-                "cve_id": extract_cve_id(title + " " + desc), "source": "Oracle Linux",
-                "category": "advisory", "severity": infer_severity(title, "medium"),
-                "cvss_score": None, "published": pub,
-                "iocs": extract_iocs(desc),
-            })
-    except Exception as e:
-        log.warning(f"Oracle Linux failed: {e}")
-    log.info(f"  Got {len(items)} from Oracle Linux")
-    return items
+    return _fetch_rss_source("Oracle Linux", "https://linux.oracle.com/security/oval/", "medium")
 
 # ── Amazon Linux Fetcher ───────────────────────────────────────────────────
 
@@ -1062,7 +1060,7 @@ def fetch_amazon_linux() -> list[dict]:
     items = []
     try:
         for alas_type in ["ALAS-2025", "ALAS2-2025"]:
-            resp = requests.get(f"https://alas.aws.amazon.com/alas/{alas_type}.xml", headers=HEADERS, timeout=15)
+            resp = requests.get(f"https://alas.aws.amazon.com/alas/{alas_type}.xml", headers=HEADERS, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
             feed = feedparser.parse(resp.text)
             for entry in feed.entries[:MAX_ITEMS_PER_SOURCE // 2]:
@@ -1085,54 +1083,12 @@ def fetch_amazon_linux() -> list[dict]:
 # ── CentOS Announce Fetcher ────────────────────────────────────────────────
 
 def fetch_centos() -> list[dict]:
-    log.info("Fetching CentOS announcements...")
-    items = []
-    try:
-        resp = requests.get("https://lists.centos.org/pipermail/centos-announce/", headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        feed = feedparser.parse(resp.text)
-        for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
-            title = entry.get("title", "CentOS Announce")
-            link = entry.get("link", "")
-            desc = clean_html(entry.get("summary", ""))[:400]
-            pub = parse_date(entry.get("published_parsed"))
-            items.append({
-                "title": title, "description": desc, "url": link,
-                "cve_id": extract_cve_id(title + " " + desc), "source": "CentOS",
-                "category": "advisory", "severity": infer_severity(title, "medium"),
-                "cvss_score": None, "published": pub,
-                "iocs": extract_iocs(desc),
-            })
-    except Exception as e:
-        log.warning(f"CentOS failed: {e}")
-    log.info(f"  Got {len(items)} from CentOS")
-    return items
+    return _fetch_rss_source("CentOS", "https://lists.centos.org/pipermail/centos-announce/", "medium")
 
 # ── VMware Security Fetcher ───────────────────────────────────────────────
 
 def fetch_vmware() -> list[dict]:
-    log.info("Fetching VMware security advisories...")
-    items = []
-    try:
-        resp = requests.get("https://www.vmware.com/security/advisories/rss.xml", headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        feed = feedparser.parse(resp.text)
-        for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
-            title = entry.get("title", "VMware Advisory")
-            link = entry.get("link", "")
-            desc = clean_html(entry.get("summary", ""))[:400]
-            pub = parse_date(entry.get("published_parsed"))
-            items.append({
-                "title": title, "description": desc, "url": link,
-                "cve_id": extract_cve_id(title + " " + desc), "source": "VMware",
-                "category": "advisory", "severity": infer_severity(title, "high"),
-                "cvss_score": None, "published": pub,
-                "iocs": extract_iocs(desc),
-            })
-    except Exception as e:
-        log.warning(f"VMware failed: {e}")
-    log.info(f"  Got {len(items)} from VMware")
-    return items
+    return _fetch_rss_source("VMware", "https://www.vmware.com/security/advisories/rss.xml", "high")
 
 # ── Mitre CWE Fetcher ─────────────────────────────────────────────────────
 
@@ -1160,12 +1116,57 @@ def fetch_mitre_cwe() -> list[dict]:
     log.info(f"  Got {len(items)} from Mitre CWE")
     return items
 
+# ── Cached external data ──────────────────────────────────────────────────────
+# EPSS scores and CISA KEV change at most daily. Cache them on disk so we don't
+# re-fetch the same ~200 KB payloads every single pipeline run.
+
+_CACHE_DIR = CONFIG.data_dir / ".cache"
+
+def _cache_path(name: str) -> Path:
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return _CACHE_DIR / name
+
+def _cached_fetch(name: str, ttl_hours: int, fetcher) -> str | None:
+    """Return cached content (decoded text) if fresh, else call ``fetcher()``
+    and cache the result. ``fetcher`` must return ``(content_str, None)`` on
+    success or ``(None, error_str)`` on failure."""
+    path = _cache_path(name)
+    # Check freshness.
+    if path.exists():
+        age = time.time() - path.stat().st_mtime
+        if age < ttl_hours * 3600:
+            log.info(f"  Cache HIT for {name} ({(age / 3600):.1f}h old)")
+            return path.read_text(encoding="utf-8")
+    # Fetch.
+    content, err = fetcher()
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
+        return content
+    # Fetch failed; try stale cache as fallback.
+    if path.exists():
+        log.warning(f"  Fetch failed for {name}, using stale cache: {err}")
+        return path.read_text(encoding="utf-8")
+    log.warning(f"  Fetch failed for {name} (no cache): {err}")
+    return None
+
 # ── EPSS Scoring ──────────────────────────────────────────────────────────────
 
 def fetch_epss_scores(cve_ids: list[str]) -> dict[str, float]:
     if not cve_ids:
         return {}
     log.info(f"Fetching EPSS scores for {len(cve_ids)} CVEs...")
+    cached = _cached_fetch("epss.json", 24, lambda: _fetch_epss_raw(cve_ids))
+    if cached is None:
+        return {}
+    try:
+        scores = json.loads(cached)
+        log.info(f"  Got EPSS scores for {len(scores)} CVEs")
+        return scores
+    except Exception as e:
+        log.warning(f"EPSS cache parse failed: {e}")
+        return {}
+
+def _fetch_epss_raw(cve_ids: list[str]) -> tuple[str | None, str | None]:
     try:
         cve_str = ",".join(cve_ids)
         resp = requests.get(
@@ -1179,32 +1180,36 @@ def fetch_epss_scores(cve_ids: list[str]) -> dict[str, float]:
             epss = entry.get("epss")
             if cve and epss is not None:
                 scores[cve.upper()] = float(epss)
-        log.info(f"  Got EPSS scores for {len(scores)} CVEs")
-        return scores
+        return json.dumps(scores), None
     except Exception as e:
-        log.warning(f"EPSS fetch failed: {e}")
-        return {}
+        return None, str(e)
 
 # ── CISA KEV ──────────────────────────────────────────────────────────────────
 
 def fetch_cisa_kev() -> set[str]:
     log.info("Fetching CISA KEV catalog...")
+    cached = _cached_fetch("cisa_kev.json", 24, _fetch_cisa_kev_raw)
+    if cached is None:
+        return set()
+    try:
+        cves = set(json.loads(cached))
+        log.info(f"  Got {len(cves)} CVEs in CISA KEV")
+        return cves
+    except Exception as e:
+        log.warning(f"CISA KEV cache parse failed: {e}")
+        return set()
+
+def _fetch_cisa_kev_raw() -> tuple[str | None, str | None]:
     try:
         resp = requests.get(
             "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
             timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
-        cves = set()
-        for vuln in data.get("vulnerabilities", []):
-            cve_id = vuln.get("cveID", "")
-            if cve_id:
-                cves.add(cve_id.upper())
-        log.info(f"  Got {len(cves)} CVEs in CISA KEV")
-        return cves
+        cves = [v.get("cveID", "").upper() for v in data.get("vulnerabilities", []) if v.get("cveID")]
+        return json.dumps(cves), None
     except Exception as e:
-        log.warning(f"CISA KEV fetch failed: {e}")
-        return set()
+        return None, str(e)
 
 # ── Threat Actor Detection ────────────────────────────────────────────────────
 
@@ -1549,16 +1554,43 @@ def main():
 
     all_items = []
     source_health: dict[str, dict] = {}
+    _lock = threading.Lock()
+
+    def _collect(name: str, fetcher) -> None:
+        items = run_source(name, fetcher, source_health)
+        with _lock:
+            all_items.extend(items)
 
     # 1. RSS feeds — each tracked individually by feed name.
-    for source in RSS_SOURCES:
-        all_items.extend(run_source(source["name"], lambda s=source: fetch_rss(s), source_health))
-        time.sleep(CONFIG.inter_source_sleep)
+    futures = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for source in RSS_SOURCES:
+            fut = pool.submit(_collect, source["name"], lambda s=source: fetch_rss(s))
+            futures.append(fut)
+        for fut in as_completed(futures):
+            pass  # exceptions handled inside run_source / _collect
+    log.info(f"RSS phase complete — {len(all_items)} items so far")
 
-    # 2. API / custom fetchers.
-    for name, fetcher in API_SOURCES:
-        all_items.extend(run_source(name, fetcher, source_health))
-        time.sleep(1)
+    # 2. API / custom fetchers (parallelized).
+    futures = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for name, fetcher in API_SOURCES:
+            fut = pool.submit(_collect, name, fetcher)
+            futures.append(fut)
+        for fut in as_completed(futures):
+            pass
+    log.info(f"API phase complete — {len(all_items)} items so far")
+
+    # ── Persist source health history ─────────────────────────────────────
+    try:
+        health_path = CONFIG.data_dir / "source_health_history.jsonl"
+        health_record = json.dumps({
+            "timestamp": now_utc(), "health": source_health,
+        })
+        with open(health_path, "a", encoding="utf-8") as f:
+            f.write(health_record + "\n")
+    except Exception as e:
+        log.warning(f"Could not write source health history: {e}")
 
     dead = [n for n, h in source_health.items() if h["status"] != "ok"]
     if dead:
@@ -1638,7 +1670,7 @@ def main():
     output = {
         "last_updated": now_utc(),
         "total_items": len(all_items),
-        "pipeline_version": "2.3.0",
+        "pipeline_version": "2.4.0",
         "sources_fetched": len(RSS_SOURCES) + len(API_SOURCES),
         "sources_ok": sum(1 for h in source_health.values() if h["status"] == "ok"),
         "ai_provider_configured": bool(GROQ_API_KEY) or bool(GEMINI_API_KEY),

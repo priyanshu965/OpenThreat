@@ -51,7 +51,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
       - name: Fetch threat intelligence
         env:
@@ -86,6 +86,21 @@ jobs:
             git push
             echo "Successfully pushed updated intel data."
           fi
+
+      - name: Notify on failure
+        if: failure()
+        uses: dacbd/create-issue-action@v2
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          title: "🚨 Pipeline failure — ${{ github.run_id }}"
+          body: |
+            The hourly intel pipeline **failed** on ${{ github.repository }}.
+
+            - **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            - **Branch:** ${{ github.ref_name }}
+            - **Commit:** ${{ github.sha }}
+
+            Check the logs above for details.
 
       - name: Print summary
         run: |

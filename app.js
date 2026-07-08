@@ -63,6 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initWatchlist();
   initSortToggle();
   initInfiniteScroll();
+  initDelegations();
   loadIntelData();
 });
 
@@ -288,7 +289,7 @@ function buildCard(item, index) {
   // Threat actor badges
   const threatActorHTML = (item.threat_actors && item.threat_actors.length > 0)
     ? item.threat_actors.slice(0, 2).map(actor => 
-        `<span class="threat-actor-badge" onclick="event.stopPropagation();filterByThreatActor('${escapeHTML(actor)}')" title="Filter by ${escapeHTML(actor)}">${escapeHTML(actor)}</span>`
+        `<span class="threat-actor-badge" data-actor="${escapeHTML(actor)}" title="Filter by ${escapeHTML(actor)}">${escapeHTML(actor)}</span>`
       ).join('')
     : '';
 
@@ -297,7 +298,7 @@ function buildCard(item, index) {
     ? `<span class="cisa-kev-badge" title="Known Exploited Vulnerability (CISA KEV)">KEV</span>`
     : '';
 
-  const cveIdHTML  = item.cve_id ? `<span class="cve-id" onclick="event.stopPropagation();openCveModal('${escapeHTML(item.cve_id)}')" title="Click for CVE details">${escapeHTML(item.cve_id)}</span> · ` : '';
+  const cveIdHTML  = item.cve_id ? `<span class="cve-id" data-cve="${escapeHTML(item.cve_id)}" title="Click for CVE details">${escapeHTML(item.cve_id)}</span> · ` : '';
   const descHTML   = item.description
     ? `<p class="card-description">${escapeHTML(item.description)}</p>` : '';
   const dateStr    = item.published ? timeAgo(new Date(item.published)) : '';
@@ -482,7 +483,7 @@ function renderCategoryList() {
   allItems.forEach(i => { const c = i.category || 'general'; counts[c] = (counts[c] || 0) + 1; });
   document.getElementById('cat-list').innerHTML =
     Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([cat, count]) => `
-      <div class="cat-item" onclick="filterByCategory('${cat}')">
+      <div class="cat-item" data-cat="${escapeHTML(cat)}">
         <span class="cat-name">${escapeHTML(cat)}</span>
         <span class="cat-count">${count}</span>
       </div>`).join('');
@@ -828,9 +829,9 @@ function renderMatrixGrid() {
       const intensity = data.count >= 3 ? 'high' : 'med';
       const tooltip   = `${data.count} item(s): ${data.items.slice(0,2).join(' | ')}${data.items.length>2?'...':''}`;
       return `
-        <div class="tech-cell active-${intensity}"
-             title="${escapeHTML(tooltip)}"
-             onclick="filterByTechnique('${techId}')">
+         <div class="tech-cell active-${intensity}"
+              title="${escapeHTML(tooltip)}"
+              data-tech="${escapeHTML(techId)}">
           <span class="tech-id">${escapeHTML(techId)}</span>
           <span class="tech-name">${escapeHTML(data.name)}</span>
           <span class="tech-count">${data.count}</span>
@@ -915,7 +916,7 @@ function renderWatchlist() {
     wrap.innerHTML = '<span class="watchlist-empty">Add keywords (e.g. Fortinet, npm, Citrix) to track your stack.</span>';
   } else {
     wrap.innerHTML = watchlist.map(kw =>
-      `<span class="watch-chip">${escapeHTML(kw)}<span class="watch-x" onclick="removeWatchKeyword('${escapeHTML(kw).replace(/'/g, "\\'")}')">×</span></span>`
+      `<span class="watch-chip">${escapeHTML(kw)}<span class="watch-x" data-keyword="${escapeHTML(kw)}">×</span></span>`
     ).join('');
   }
   const badge = document.getElementById('watchlist-match-count');
@@ -950,6 +951,48 @@ function initInfiniteScroll() {
     }
   }, { rootMargin: '600px' });
   io.observe(sentinel);
+}
+
+// ─── Delegated event listeners (replaces inline onclick for CSP compliance) ──
+function initDelegations() {
+  // Actor filter badges.
+  document.addEventListener('click', e => {
+    const actorBadge = e.target.closest('.threat-actor-badge');
+    if (actorBadge && actorBadge.dataset.actor) {
+      e.stopPropagation();
+      filterByThreatActor(actorBadge.dataset.actor);
+      return;
+    }
+    const cveSpan = e.target.closest('.cve-id');
+    if (cveSpan && cveSpan.dataset.cve) {
+      e.stopPropagation();
+      openCveModal(cveSpan.dataset.cve);
+      return;
+    }
+    const catItem = e.target.closest('.cat-item');
+    if (catItem && catItem.dataset.cat) {
+      filterByCategory(catItem.dataset.cat);
+      return;
+    }
+    const techCell = e.target.closest('.tech-cell');
+    if (techCell && techCell.dataset.tech) {
+      filterByTechnique(techCell.dataset.tech);
+      return;
+    }
+    const watchX = e.target.closest('.watch-x');
+    if (watchX && watchX.dataset.keyword) {
+      removeWatchKeyword(watchX.dataset.keyword);
+      return;
+    }
+    const trendCve = e.target.closest('.trending-cve');
+    if (trendCve && trendCve.dataset.cve) {
+      openCveModal(trendCve.dataset.cve);
+      return;
+    }
+    if (e.target.id === 'retry-btn') {
+      location.reload();
+    }
+  });
 }
 
 // ─── Source Health Panel ──────────────────────────────────────────────────────
@@ -1048,7 +1091,7 @@ function renderTrends(t) {
   const ttpBars = renderBarList((t.top_ttps || []).map(x => ({ name: `${x.id} ${x.name}`, count: x.count })), 'name', 'count', '#4da6ff');
 
   const trendingRows = (t.trending_cves || []).map(c => `
-    <div class="trending-cve" onclick="openCveModal('${escapeHTML(c.cve)}')">
+    <div class="trending-cve" data-cve="${escapeHTML(c.cve)}">
       <span class="tc-id">${escapeHTML(c.cve)}</span>
       ${c.kev ? '<span class="tc-kev">KEV</span>' : ''}
       <span class="tc-prio">P${Math.round(c.max_priority || 0)}</span>
@@ -1219,7 +1262,7 @@ window.onerror = function(msg, url, line, col, error) {
       <p class="error-icon">⚠</p>
       <p>An unexpected error occurred.</p>
       <p class="error-detail">${escapeHTML(msg)}</p>
-      <button onclick="location.reload()" class="retry-btn">Retry</button>
+      <button id="retry-btn" class="retry-btn">Retry</button>
     `;
     errorDiv.style.display = 'block';
   }
