@@ -61,7 +61,7 @@ class Config:
     max_items_per_source   = _int("MAX_ITEMS_PER_SOURCE", 10)
     nvd_lookback_days       = _int("NVD_LOOKBACK_DAYS", 10)
     request_timeout         = _int("REQUEST_TIMEOUT", 30)
-    ai_enrich_limit         = _int("AI_ENRICH_LIMIT", 15)
+    ai_enrich_limit         = _int("AI_ENRICH_LIMIT", 10)
     archive_retention_days  = _int("ARCHIVE_RETENTION_DAYS", 90)
     inter_source_sleep      = _float("INTER_SOURCE_SLEEP", 0.5)
 

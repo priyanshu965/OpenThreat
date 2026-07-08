@@ -370,48 +370,130 @@ def set_fallback(item: dict) -> None:
     item.setdefault("ai_provider", "none")
     item.setdefault("ai_model", "none")
 
+_RULE_GRAPHS = {
+    "cve": (
+        "graph LR\n"
+        "    A([Threat Actor]):::actor -->|CVE-Exploit| B[Initial Access]:::tactic\n"
+        "    B -->|Execution| C[Impact]:::tactic\n"
+        "    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8\n"
+        "    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8"
+    ),
+    "incident": (
+        "graph LR\n"
+        "    A([Threat Actor]):::actor -->|Attack| B[Intrusion]:::tactic\n"
+        "    B -->|Breach| C[Impact]:::tactic\n"
+        "    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8\n"
+        "    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8"
+    ),
+    "advisory": (
+        "graph LR\n"
+        "    A([Vendor]):::actor -->|Advisory| B[Patch]:::tactic\n"
+        "    B -->|Mitigation| C[Remediation]:::tactic\n"
+        "    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8\n"
+        "    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8"
+    ),
+}
+
+_SEVERITY_SCORE_MAP = {
+    "critical": 9.0,
+    "high": 7.5,
+    "medium": 5.0,
+    "low": 2.5,
+}
+
+def rule_based_enrich(item: dict) -> None:
+    """Fill summary, severity, and graph from the item's own fields — zero API cost."""
+    title = item.get("title", "") or ""
+    desc = item.get("description", "") or ""
+    iocs = item.get("iocs") or {}
+
+    # Summary: first ~3 sentences of description, or title fallback.
+    summary = ""
+    if desc:
+        sentences = re.split(r"(?<=[.!?])\s+", desc.strip())
+        summary = " ".join(sentences[:3])
+    if not summary:
+        summary = title[:300]
+    summary = (summary or "No description available")[:500]
+
+    # Append IOC counts.
+    ioc_counts = {k: len(v) for k, v in iocs.items() if v}
+    if ioc_counts:
+        ioc_str = "; ".join(f"{k}: {c}" for k, c in sorted(ioc_counts.items()))
+        summary += f" [IOCs: {ioc_str}]"
+
+    # Severity via keyword matching.
+    text = title + " " + desc
+    sev = infer_severity(text)
+    score = _SEVERITY_SCORE_MAP.get(sev, 5.0)
+
+    # Category-appropriate workflow graph.
+    cat = infer_category(text, "news")
+    graph = _RULE_GRAPHS.get(cat, DEFAULT_WORKFLOW_GRAPH)
+
+    item["ai_summary"] = summary
+    item["workflow_graph"] = graph
+    item["severity_score"] = score
+    item["severity"] = sev
+    item["ai_provider"] = "rule"
+    item["ai_model"] = "rule-based"
+
 def enrich_with_ai(items: list[dict]) -> list[dict]:
+    # Phase 1: rule-based pre-fill on EVERY item so the dashboard never shows
+    # empty summaries. AI will overwrite the highest-priority items in phase 2.
+    log.info("Applying rule-based enrichment to all items...")
+    for item in items:
+        rule_based_enrich(item)
+    log.info(f"  Rule-based summary set on {len(items)} items")
+
     if not GROQ_API_KEY and not GEMINI_API_KEY:
-        log.info("No AI keys set — skipping enrichment")
-        for item in items:
-            set_fallback(item)
+        log.info("No AI keys set — skipping AI enrichment")
         return items
+
     groq_available = bool(GROQ_API_KEY)
     gemini_available = bool(GEMINI_API_KEY)
-    log.info(f"AI enrichment: groq={groq_available} gemini={gemini_available}")
-    items_to_process = [item for item in items if item.get("ai_summary", "") in ("", "AI analysis pending")][:AI_ENRICH_LIMIT]
-    log.info(f"  Enriching {len(items_to_process)} items via AI...")
-    for i, item in enumerate(items_to_process):
+    log.info(f"AI enrichment: gemini={gemini_available} groq={groq_available}")
+
+    # Priority-sort: items with a priority_score get enriched first.
+    candidates = [item for item in items if item.get("ai_provider") == "rule"]
+    candidates.sort(key=lambda i: i.get("priority_score") or 0, reverse=True)
+    to_enrich = candidates[:AI_ENRICH_LIMIT]
+    log.info(f"  Enriching top {len(to_enrich)} priority items via AI...")
+
+    for i, item in enumerate(to_enrich):
         prompt = build_prompt(item)
         enriched = False
-        if groq_available:
-            raw, model = call_groq(prompt)
-            if raw:
-                try:
-                    parsed = parse_ai_response(raw)
-                    apply_parsed(item, parsed, "groq", model)
-                    log.info(f"  [{i+1}/{len(items_to_process)}] Groq ✓")
-                    enriched = True
-                except Exception as e:
-                    log.warning(f"Groq parse error: {e}")
-        if not enriched and gemini_available:
-            time.sleep(6)
+
+        # Try Gemini first (more generous free tier).
+        if gemini_available:
             raw, model = call_gemini(prompt)
             if raw:
                 try:
                     parsed = parse_ai_response(raw)
                     apply_parsed(item, parsed, "gemini", model)
-                    log.info(f"  [{i+1}/{len(items_to_process)}] Gemini ✓")
+                    log.info(f"  [{i+1}/{len(to_enrich)}] Gemini ✓")
                     enriched = True
                 except Exception as e:
                     log.warning(f"Gemini parse error: {e}")
+        if not enriched and groq_available:
+            time.sleep(3)
+            raw, model = call_groq(prompt)
+            if raw:
+                try:
+                    parsed = parse_ai_response(raw)
+                    apply_parsed(item, parsed, "groq", model)
+                    log.info(f"  [{i+1}/{len(to_enrich)}] Groq ✓")
+                    enriched = True
+                except Exception as e:
+                    log.warning(f"Groq parse error: {e}")
         if not enriched:
-            set_fallback(item)
-            log.warning(f"  [{i+1}/{len(items_to_process)}] AI failed — fallback")
-        if i < len(items_to_process) - 1:
+            log.info(f"  [{i+1}/{len(to_enrich)}] AI skipped — keeping rule-based summary")
+        if i < len(to_enrich) - 1:
             time.sleep(GROQ_SLEEP_SECS)
-    enriched_count = sum(1 for i in items_to_process if i.get("ai_provider") not in ("", "none"))
-    log.info(f"AI enrichment complete: {enriched_count}/{len(items_to_process)} enriched")
+
+    ai_count = sum(1 for i in to_enrich if i.get("ai_provider") not in ("rule", "none"))
+    log.info(f"AI enrichment complete: {ai_count}/{len(to_enrich)} overwritten by AI, "
+             f"{len(items) - ai_count} using rule-based")
     return items
 
 # ── RSS Fetcher ───────────────────────────────────────────────────────────────
