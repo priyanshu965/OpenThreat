@@ -2,29 +2,27 @@
 CYBERWATCH DASHBOARD — fetch_intel.py
 ======================================
 Fetches threat intelligence from multiple free sources:
-  - 16 RSS feeds          → News, advisories, incident reports
+  - 14 RSS feeds          → News, advisories, incident reports
   - NVD (NIST) CVE API    → Latest vulnerabilities
-  - Reddit r/netsec       → Community intel (public/403)
+  - Reddit r/netsec       → Community intel (RSS)
   - AlienVault OTX API    → Threat pulses (API key)
-  - URLhaus               → Malware URLs & payload hashes (keyless)
-  - Spamhaus DROP         → Malicious IP ranges (keyless)
-  - Feodo Tracker         → C2 server IPs (keyless)
+  - URLhaus               → Malware URLs & payload hashes
+  - Spamhaus DROP         → Malicious IP ranges
+  - Feodo Tracker         → C2 server IPs
   - AbuseIPDB             → IP blacklist (API key)
   - PhishTank             → Phishing URLs (API key)
-  - OSV (Open Source Vulns) → 25+ ecosystem databases (keyless)
-  - MalwareBazaar         → Malware samples (keyless)
-  - ThreatFox             → C2 IOCs (keyless)
+  - MalwareBazaar         → Malware samples (API key)
+  - ThreatFox             → C2 IOCs (API key)
   - MSRC                  → Microsoft advisories (RSS)
   - Fedora Bodhi          → Fedora security updates (API)
   - Gentoo GLSA           → Gentoo advisories (RSS)
   - Arch Linux            → Arch security issues (JSON)
-  - Oracle Linux          → Oracle advisories (RSS)
   - Amazon Linux          → ALAS advisories (RSS)
-  - CentOS                → CentOS announcements (RSS)
-  - VMware                → VMware security advisories (RSS)
+  - CentOS Stream         → CentOS blog (RSS)
+  - VMware                → Broadcom advisories (JSON API)
   - Mitre CWE             → CWE taxonomy (API)
   - IOC Extraction        → Regex-based from all item descriptions
-  - AI Enrichment         → Groq (primary) with Gemini fallback
+  - AI Enrichment         → Gemini (primary) with Groq fallback
 
 Output: data/intel.json  +  data/archive/YYYY-MM-DD.json
 """
@@ -133,7 +131,7 @@ DEFAULT_WORKFLOW_GRAPH = (
 
 # ── RSS Feed Sources (15 total) ───────────────────────────────────────────────
 RSS_SOURCES = [
-    {"name": "CISA",             "url": "https://www.cisa.gov/cybersecurity-advisories/all.xml",   "category": "advisory", "severity": "high"},
+    {"name": "CISA",             "url": "https://www.cisa.gov/cybersecurity-advisories/ics-advisories.xml", "category": "advisory", "severity": "high"},
     {"name": "The Hacker News",  "url": "https://feeds.feedburner.com/TheHackersNews",            "category": "news",     "severity": "medium"},
     {"name": "Bleeping Computer","url": "https://www.bleepingcomputer.com/feed/",                 "category": "news",     "severity": "medium"},
     {"name": "Krebs on Security","url": "https://krebsonsecurity.com/feed/",                      "category": "news",     "severity": "medium"},
@@ -147,7 +145,7 @@ RSS_SOURCES = [
     {"name": "Graham Cluley",    "url": "https://grahamcluley.com/feed/",                         "category": "news",     "severity": "medium"},
     {"name": "ESET WeLiveSecurity","url": "https://welivesecurity.com/feed/",                     "category": "news",     "severity": "medium"},
     {"name": "CyberSecurity News","url": "https://cybersecuritynews.com/feed/",                   "category": "news",     "severity": "medium"},
-    {"name": "GBHackers",        "url": "https://gbhackers.com/feed/",                            "category": "news",     "severity": "medium", "headers": {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}},
+    # GBHackers removed — feed returns 403 from all automated clients
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -803,84 +801,12 @@ def fetch_phishtank() -> list[dict]:
 
 # ── OSV Vulnerability Fetcher (covers 25+ sources) ───────────────────────────
 
-# OSV ecosystems that support listing without a specific package name.
-# Distro ecosystems (Debian, Ubuntu, …) require a version suffix or package
-# name and return 400 when queried bare — they're queried separately below.
-OSV_ECOSYSTEMS_BARE = [
-    "PyPI", "RubyGems", "crates.io", "Packagist", "Go", "npm",
-    "Maven", "NuGet", "GitHub Actions", "OSS-Fuzz", "Linux Kernel",
-    "Android", "Homebrew", "VSCode", "Haskell", "Hex", "Pub",
-]
-# Distro ecosystems with their specific version suffixes.
-OSV_ECOSYSTEMS_DISTRO = [
-    "Debian:12", "Debian:11",
-    "Ubuntu:24.04", "Ubuntu:22.04",
-    "Alpine:v3.21", "Alpine:v3.20",
-    "Red Hat", "SUSE", "Rocky Linux", "AlmaLinux",
-]
+# OSV removed — the API no longer supports listing vulnerabilities per
+# ecosystem without a specific package name, so it always returns 400.
 
 def fetch_osv() -> list[dict]:
-    log.info("Fetching OSV vulnerabilities...")
-    vuln_ids: list[tuple[str, str]] = []  # (ecosystem, vuln_id)
-    all_ecosystems = [
-        *[(eco, eco) for eco in OSV_ECOSYSTEMS_BARE],
-        *[(eco, eco.split(":")[0]) for eco in OSV_ECOSYSTEMS_DISTRO],
-    ]
-    for query_eco, display_eco in all_ecosystems:
-        try:
-            resp = requests.post(
-                "https://api.osv.dev/v1/query",
-                json={"ecosystem": query_eco, "page_size": 10},
-                headers=HEADERS, timeout=REQUEST_TIMEOUT
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            for vref in data.get("vulns", []):
-                vuln_ids.append((display_eco, vref["id"]))
-        except Exception as e:
-            log.warning(f"OSV ecosystem '{query_eco}' query failed: {e}")
-
-    # Parallel detail fetches.
-    items = []
-    _osv_lock = threading.Lock()
-
-    def _fetch_osv_detail(eco: str, vid: str) -> None:
-        try:
-            resp = requests.get(
-                f"https://api.osv.dev/v1/vulns/{vid}",
-                headers=HEADERS, timeout=REQUEST_TIMEOUT
-            )
-            resp.raise_for_status()
-            v = resp.json()
-            title = v.get("summary", v.get("id", "Unknown"))
-            desc = v.get("details", "")[:500]
-            aliases = v.get("aliases", [])
-            cve_id = next((a for a in aliases if a.startswith("CVE-")), None)
-            severity = "medium"
-            if v.get("database_specific", {}).get("severity"):
-                severity = v["database_specific"]["severity"].lower()
-            with _osv_lock:
-                items.append({
-                    "title": f"[{eco}] {title[:150]}",
-                    "description": clean_html(desc),
-                    "url": f"https://osv.dev/vulnerability/{v['id']}",
-                    "cve_id": cve_id, "source": "OSV",
-                    "category": "cve", "severity": severity,
-                    "cvss_score": None,
-                    "published": parse_date(v.get("published", "")),
-                    "iocs": extract_iocs(title + " " + desc),
-                    "ecosystem": eco,
-                })
-        except Exception:
-            pass  # individual vuln failure is non-fatal
-
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        fut_map = {pool.submit(_fetch_osv_detail, eco, vid): (eco, vid) for eco, vid in vuln_ids}
-        for fut in as_completed(fut_map):
-            pass
-
-    log.info(f"  Got {len(items)} vulns from OSV ({len(all_ecosystems)} ecosystems, {len(vuln_ids)} vulns queried)")
-    return items
+    log.info("OSV requires package names per ecosystem — no standalone listing API available, skipping.")
+    return []
 
 # ── MalwareBazaar Fetcher (keyless) ──────────────────────────────────────────
 
@@ -1076,7 +1002,8 @@ def fetch_archlinux() -> list[dict]:
 # ── Oracle Linux Fetcher ───────────────────────────────────────────────────
 
 def fetch_oracle_linux() -> list[dict]:
-    return _fetch_rss_source("Oracle Linux", "https://linux.oracle.com/security/rss/", "medium")
+    log.info("Oracle Linux no longer publishes a public RSS feed — skipping.")
+    return []
 
 # ── Amazon Linux Fetcher ───────────────────────────────────────────────────
 
@@ -1121,21 +1048,24 @@ def fetch_vmware() -> list[dict]:
     log.info("Fetching Broadcom (VMware) security advisories...")
     items = []
     try:
-        resp = requests.get(
-            "https://www.broadcom.com/support/security/advisories/json",
-            headers=HEADERS, timeout=REQUEST_TIMEOUT
+        resp = requests.post(
+            "https://support.broadcom.com/web/ecx/security-advisory/-/securityadvisory/getSecurityAdvisoryList",
+            json={"pageNumber": 0, "pageSize": MAX_ITEMS_PER_SOURCE, "searchVal": "",
+                  "segment": "VC", "sortInfo": {"column": "", "order": ""}},
+            headers={**HEADERS, "accept": "application/json", "content-type": "application/json"},
+            timeout=REQUEST_TIMEOUT
         )
         resp.raise_for_status()
         data = resp.json()
-        for adv in (data if isinstance(data, list) else data.get("advisories", data.get("results", [])))[:MAX_ITEMS_PER_SOURCE]:
+        for adv in (data.get("data", {}).get("list", []) if isinstance(data, dict) else data)[:MAX_ITEMS_PER_SOURCE]:
             title = adv.get("title", adv.get("name", "VMware Advisory"))
-            desc = adv.get("description", adv.get("summary", ""))[:400]
+            desc = adv.get("description", adv.get("synopsis", ""))[:400]
             cve_id = extract_cve_id(title + " " + desc)
-            pub = parse_date(adv.get("publishedDate", adv.get("date", "")))
+            pub = parse_date(adv.get("publishedDate", adv.get("releaseDate", "")))
             items.append({
                 "title": f"VMware: {title[:150]}",
                 "description": desc,
-                "url": adv.get("url", adv.get("link", f"https://www.broadcom.com/support/security/advisories")),
+                "url": adv.get("url", adv.get("link", f"https://support.broadcom.com/web/ecx/security-advisory?segment=VC")),
                 "cve_id": cve_id, "source": "VMware",
                 "category": "advisory", "severity": infer_severity(title, "high"),
                 "cvss_score": None, "published": pub,
@@ -1152,7 +1082,7 @@ def fetch_mitre_cwe() -> list[dict]:
     log.info("Fetching Mitre CWE data...")
     items = []
     try:
-        data = make_request("https://cwe-api.mitre.org/api/v1/cwe/weakness?limit=10&offset=0")
+        data = make_request("https://cwe-api.mitre.org/api/v1/cwe/cwe?limit=10&offset=0")
         if data:
             for weakness in data.get("weaknesses", [])[:MAX_ITEMS_PER_SOURCE]:
                 cwe_id = weakness.get("id", "")
