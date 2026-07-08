@@ -1,0 +1,59 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CYBERWATCH — .github/workflows/source-health.yml
+#
+# Daily URL validation for every external source the pipeline depends on.
+# Catches "the API changed / went behind a PoW wall / started 403ing" breakage
+# BEFORE the dashboard data goes stale, and files a GitHub issue when it does.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: Source Health Check
+
+on:
+  schedule:
+    - cron: '30 5 * * *'    # Daily at 05:30 UTC (before peak pipeline hours)
+  workflow_dispatch:
+
+jobs:
+  validate-sources:
+    name: Validate source URLs
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run live source checks
+        id: livecheck
+        env:
+          RUN_LIVE_TESTS: "1"
+        run: |
+          python -m unittest tests/test_integration.py -v 2>&1 | tee live-check.log
+
+      - name: File issue on broken source
+        if: failure()
+        uses: dacbd/create-issue-action@v2
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          title: "📡 Source health check failed — ${{ github.run_id }}"
+          body: |
+            The daily **source URL validation** failed — one or more external
+            feeds/APIs the pipeline depends on is broken or has changed.
+
+            - **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Check the run log to see which source(s) failed, then update the
+            URL(s) in `scripts/fetch_intel.py`.

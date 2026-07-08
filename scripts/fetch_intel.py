@@ -965,7 +965,22 @@ def fetch_fedora() -> list[dict]:
                     "iocs": extract_iocs(desc),
                 })
     except Exception as e:
-        log.warning(f"Fedora failed: {e}")
+        log.warning(f"Fedora Bodhi failed: {e}")
+
+    # Fallback: Bodhi is behind Anubis PoW and may block us at any time.
+    # The HyperKitty package-announce list still ships plain RSS.
+    if not items:
+        log.info("  Bodhi returned nothing — falling back to package-announce RSS")
+        fallback = _fetch_rss_source(
+            "Fedora",
+            "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/feed/",
+            "medium",
+        )
+        # Prefer security-looking entries; take the rest only if needed.
+        sec = [i for i in fallback if "security" in (i["title"] + i["description"]).lower()
+               or i.get("cve_id")]
+        items = (sec + [i for i in fallback if i not in sec])[:MAX_ITEMS_PER_SOURCE]
+
     log.info(f"  Got {len(items)} from Fedora")
     return items
 

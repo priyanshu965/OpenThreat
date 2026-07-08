@@ -39,21 +39,31 @@ if (typeof mermaid !== 'undefined') {
 }
 
 // ─── State ────────────────────────────────────────────────────────────────────
-let allItems     = [];
-let filteredItems = [];
-let activeFilter  = 'all';
-let activeSeverity = null;
-let searchQuery   = '';
-let mermaidSeq    = 0;   // unique ID counter for each mermaid diagram
-let sortMode     = 'latest';   // 'latest' | 'priority'
-let renderLimit  = 40;         // pagination window; grows on scroll / "load more"
-const PAGE_SIZE  = 40;
-let trendsData   = null;       // lazily fetched data/trends.json
+let allItems       = [];
+let filteredItems   = [];
+let activeFilter    = localStorage.getItem('cw_filter') || 'all';
+let activeSeverity  = localStorage.getItem('cw_severity') || null;
+let searchQuery     = '';
+let mermaidSeq      = 0;   // unique ID counter for each mermaid diagram
+let sortMode       = localStorage.getItem('cw_sort') || 'latest';   // 'latest' | 'priority'
+let renderLimit    = 40;         // pagination window; grows on scroll / "load more"
+const PAGE_SIZE    = 40;
+let trendsData     = null;       // lazily fetched data/trends.json
 
 // Watchlist: user-pinned keywords (their vendors / stack). Persisted locally.
 let watchlist = [];
-try { watchlist = JSON.parse(localStorage.getItem('cw_watchlist') || '[]'); } catch (_) { watchlist = []; }
 let watchlistOnly = false;     // when true, feed shows only items matching watchlist
+try { watchlist = JSON.parse(localStorage.getItem('cw_watchlist') || '[]'); } catch (_) { watchlist = []; }
+try { watchlistOnly = localStorage.getItem('cw_watchlistOnly') === 'true'; } catch (_) {}
+
+function saveState() {
+  try {
+    localStorage.setItem('cw_filter', activeFilter);
+    localStorage.setItem('cw_severity', activeSeverity || '');
+    localStorage.setItem('cw_sort', sortMode);
+    localStorage.setItem('cw_watchlistOnly', watchlistOnly ? 'true' : 'false');
+  } catch (_) {}
+}
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -64,8 +74,36 @@ document.addEventListener('DOMContentLoaded', () => {
   initSortToggle();
   initInfiniteScroll();
   initDelegations();
+  restoreUIState();
   loadIntelData();
 });
+
+// Re-apply persisted state (filter tab, severity pill, sort label, watchlist
+// toggle) to the DOM so a refresh doesn't reset the user's view.
+function restoreUIState() {
+  if (activeSeverity === '') activeSeverity = null;
+
+  // Filter tab
+  document.querySelectorAll('.filter-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.filter === activeFilter));
+
+  // Severity pill
+  if (activeSeverity) {
+    const pill = document.getElementById(`stat-${activeSeverity}`);
+    if (pill) pill.classList.add('active');
+  }
+
+  // Sort toggle label
+  const sortBtn = document.getElementById('sort-toggle');
+  if (sortBtn) sortBtn.textContent = sortMode === 'priority' ? '⚑ TOP PRIORITY' : '↓ LATEST FIRST';
+
+  // Watchlist-only toggle
+  const wlBtn = document.getElementById('watchlist-only-btn');
+  if (wlBtn && watchlistOnly) {
+    wlBtn.classList.add('active');
+    wlBtn.textContent = '★ SHOWING WATCHLIST';
+  }
+}
 
 // ─── Load Data ────────────────────────────────────────────────────────────────
 async function loadIntelData() {
@@ -103,6 +141,7 @@ async function loadIntelData() {
 
     trendsData = null;   // force refetch on next Trends view
     renderSidebar();
+    await loadSourceHealthHistory();
     renderSourceHealth(data.source_health);
     renderWatchlist();
     renderDailySummary();
@@ -169,6 +208,7 @@ function initFilters() {
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     activeFilter = btn.dataset.filter;
+    saveState();
     applyFilters();
   });
 }
@@ -203,6 +243,7 @@ function initSeverityFilters() {
           pill.classList.add('active');
         }
       }
+      saveState();
       applyFilters();
     });
   });
@@ -614,6 +655,19 @@ window.toggleMobileSidebar = function() {
 };
 
 // ─── CVE Deep-Dive Modal ─────────────────────────────────────────────────────
+// Cross-reference links for a CVE: NVD, EPSS (FIRST), CISA KEV, cve.org.
+function buildCveXrefLinks(cveId, isKev) {
+  const id = encodeURIComponent(cveId);
+  return `
+    <div class="modal-xref-links">
+      <a class="xref-link" href="https://nvd.nist.gov/vuln/detail/${id}" target="_blank" rel="noopener">NVD ↗</a>
+      <a class="xref-link" href="https://www.cve.org/CVERecord?id=${id}" target="_blank" rel="noopener">CVE.org ↗</a>
+      <a class="xref-link" href="https://api.first.org/data/v1/epss?cve=${id}" target="_blank" rel="noopener">EPSS ↗</a>
+      <a class="xref-link ${isKev ? 'xref-kev' : ''}" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=${id}" target="_blank" rel="noopener">${isKev ? '⚠ CISA KEV ↗' : 'CISA KEV ↗'}</a>
+      <a class="xref-link" href="https://www.exploit-db.com/search?cve=${id}" target="_blank" rel="noopener">ExploitDB ↗</a>
+    </div>`;
+}
+
 window.openCveModal = function(cveId) {
   const modal = document.getElementById('cve-modal');
   const modalTitle = document.getElementById('modal-cve-id');
@@ -621,8 +675,12 @@ window.openCveModal = function(cveId) {
   
   if (!modal || !modalTitle || !modalBody) return;
   
+  const item = allItems.find(i => i.cve_id?.toUpperCase() === cveId.toUpperCase());
+  const xrefs = buildCveXrefLinks(cveId, !!item?.cisa_kev);
+
   modalTitle.textContent = cveId;
   modalBody.innerHTML = `
+    ${xrefs}
     <div class="modal-loading">
       <div class="loader-ring"></div>
       <span>Fetching NVD details...</span>
@@ -706,6 +764,7 @@ async function fetchCveDetails(cveId) {
       const severityClass = severity.toLowerCase();
       
       modalBody.innerHTML = `
+        ${buildCveXrefLinks(cveId, !!item?.cisa_kev)}
         <div class="modal-section">
           <div class="modal-section-title">Overview</div>
           <div class="modal-grid">
@@ -781,8 +840,11 @@ async function fetchCveDetails(cveId) {
     }
   }
   
-  // All retries failed
-  modalBody.innerHTML = `<div class="modal-error">Failed to load CVE details: ${escapeHTML(lastError?.message || 'Unknown error')}</div>`;
+  // All retries failed — still show cross-reference links so the user can
+  // check NVD / EPSS / KEV manually.
+  modalBody.innerHTML = `
+    ${buildCveXrefLinks(cveId, false)}
+    <div class="modal-error">Failed to load CVE details: ${escapeHTML(lastError?.message || 'Unknown error')}</div>`;
 }
 
 // ─── MITRE ATT&CK Matrix ─────────────────────────────────────────────────────
@@ -895,6 +957,7 @@ function initWatchlist() {
       watchlistOnly = !watchlistOnly;
       toggle.classList.toggle('active', watchlistOnly);
       toggle.textContent = watchlistOnly ? '★ SHOWING WATCHLIST' : '☆ WATCHLIST ONLY';
+      saveState();
       applyFilters();
     });
   }
@@ -932,6 +995,7 @@ function initSortToggle() {
   btn.addEventListener('click', () => {
     sortMode = sortMode === 'latest' ? 'priority' : 'latest';
     btn.textContent = sortMode === 'priority' ? '⚑ TOP PRIORITY' : '↓ LATEST FIRST';
+    saveState();
     renderLimit = PAGE_SIZE;
     renderCards();
   });
@@ -996,6 +1060,43 @@ function initDelegations() {
 }
 
 // ─── Source Health Panel ──────────────────────────────────────────────────────
+// Staleness map computed from data/source_health_history.jsonl:
+// source name → hours since it last returned data ("ok" with count > 0).
+let sourceStaleness = {};
+
+async function loadSourceHealthHistory() {
+  if (window.location.protocol === 'file:') return;
+  try {
+    const r = await fetch(`data/source_health_history.jsonl?v=${Date.now()}`);
+    if (!r.ok) return;
+    const text = await r.text();
+    const lastOk = {};   // name → most recent timestamp with data
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let rec;
+      try { rec = JSON.parse(line); } catch (_) { continue; }
+      const ts = new Date(rec.timestamp).getTime();
+      if (isNaN(ts)) continue;
+      for (const [name, h] of Object.entries(rec.health || {})) {
+        if (h.status === 'ok' && h.count > 0 && (!lastOk[name] || ts > lastOk[name])) {
+          lastOk[name] = ts;
+        }
+      }
+    }
+    const now = Date.now();
+    sourceStaleness = {};
+    for (const [name, ts] of Object.entries(lastOk)) {
+      sourceStaleness[name] = (now - ts) / 3600000;   // hours
+    }
+  } catch (_) { /* staleness is best-effort */ }
+}
+
+function staleLabel(hours) {
+  if (hours < 48) return null;                       // <2 days = fresh
+  const days = Math.floor(hours / 24);
+  return `${days}d silent`;
+}
+
 function renderSourceHealth(health) {
   const wrap = document.getElementById('source-health');
   if (!wrap) return;
@@ -1011,10 +1112,13 @@ function renderSourceHealth(health) {
   document.getElementById('source-health-summary').textContent = `${okCount}/${entries.length} live`;
   wrap.innerHTML = entries.map(([name, h]) => {
     const dot = h.status === 'ok' ? 'ok' : h.status === 'empty' ? 'empty' : 'err';
+    const stale = h.status !== 'ok' ? staleLabel(sourceStaleness[name] ?? 0) : null;
     const detail = h.status === 'error' ? (h.error || 'error') : `${h.count} item${h.count !== 1 ? 's' : ''}`;
-    return `<div class="health-item" title="${escapeHTML(detail)}">
+    const staleTip = stale ? ` — no data for ${stale.replace(' silent', ' days')}` : '';
+    return `<div class="health-item ${stale ? 'stale' : ''}" title="${escapeHTML(detail + staleTip)}">
       <span class="health-dot ${dot}"></span>
       <span class="health-name">${escapeHTML(name)}</span>
+      ${stale ? `<span class="health-stale-badge">${escapeHTML(stale)}</span>` : ''}
       <span class="health-count">${h.status === 'error' ? '!' : h.count}</span>
     </div>`;
   }).join('');
