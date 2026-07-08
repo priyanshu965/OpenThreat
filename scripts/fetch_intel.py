@@ -38,6 +38,18 @@ import csv, io
 import requests
 import feedparser
 
+# ── Local modules (support both `python scripts/x.py` and package import) ─────
+try:
+    from config import CONFIG
+except ImportError:
+    import importlib.util
+    _cspec = importlib.util.spec_from_file_location(
+        "config", Path(__file__).parent / "config.py"
+    )
+    _cmod = importlib.util.module_from_spec(_cspec)
+    _cspec.loader.exec_module(_cmod)
+    CONFIG = _cmod.CONFIG
+
 # ── MITRE ATT&CK full database ────────────────────────────────────────────────
 try:
     from mitre_ttps import MITRE_TECHNIQUES, TACTIC_ORDER, map_ttps
@@ -52,6 +64,20 @@ except ImportError:
     TACTIC_ORDER     = _mod.TACTIC_ORDER
     map_ttps         = _mod.map_ttps
 
+# ── Trends + alerting helpers (optional; degrade gracefully if missing) ───────
+try:
+    from trends import build_trends
+except Exception:
+    build_trends = None
+try:
+    from exports import write_exports
+except Exception:
+    write_exports = None
+try:
+    from webhook_post import send_alerts
+except Exception:
+    send_alerts = None
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
@@ -59,30 +85,30 @@ logging.basicConfig(
 )
 log = logging.getLogger("cyberwatch")
 
-# ── Configuration ─────────────────────────────────────────────────────────────
-PROJECT_ROOT         = Path(__file__).resolve().parent.parent
-OUTPUT_PATH          = PROJECT_ROOT / "data/intel.json"
-ARCHIVE_DIR          = PROJECT_ROOT / "data/archive"
-MAX_ITEMS_PER_SOURCE = 10
-NVD_LOOKBACK_DAYS    = 10
-REQUEST_TIMEOUT      = 30
-AI_ENRICH_LIMIT      = 15
-ARCHIVE_RETENTION_DAYS = 90
+# ── Configuration (see scripts/config.py; override via env vars) ──────────────
+PROJECT_ROOT         = CONFIG.project_root
+OUTPUT_PATH          = CONFIG.output_path
+ARCHIVE_DIR          = CONFIG.archive_dir
+MAX_ITEMS_PER_SOURCE = CONFIG.max_items_per_source
+NVD_LOOKBACK_DAYS    = CONFIG.nvd_lookback_days
+REQUEST_TIMEOUT      = CONFIG.request_timeout
+AI_ENRICH_LIMIT      = CONFIG.ai_enrich_limit
+ARCHIVE_RETENTION_DAYS = CONFIG.archive_retention_days
 
 # API keys (set as environment variables)
-OTX_API_KEY      = os.environ.get("OTX_API_KEY", "")
-GROQ_API_KEY     = os.environ.get("GROQ_API_KEY", "")
-GEMINI_API_KEY   = os.environ.get("GEMINI_API_KEY", "")
-ABUSEIPDB_KEY    = os.environ.get("ABUSEIPDB_API_KEY", "")
-PHISHTANK_KEY    = os.environ.get("PHISHTANK_API_KEY", "")
+OTX_API_KEY      = CONFIG.otx_api_key
+GROQ_API_KEY     = CONFIG.groq_api_key
+GEMINI_API_KEY   = CONFIG.gemini_api_key
+ABUSEIPDB_KEY    = CONFIG.abuseipdb_api_key
+PHISHTANK_KEY    = CONFIG.phishtank_api_key
 
-GROQ_MODEL_PRIMARY  = "llama-3.3-70b-versatile"
-GROQ_MODEL_FALLBACK = "llama-3.1-8b-instant"
-GEMINI_MODEL        = "gemini-2.5-flash-lite"
-GROQ_SLEEP_SECS     = 3
-GEMINI_SLEEP_SECS   = 6
+GROQ_MODEL_PRIMARY  = CONFIG.groq_model_primary
+GROQ_MODEL_FALLBACK = CONFIG.groq_model_fallback
+GEMINI_MODEL        = CONFIG.gemini_model
+GROQ_SLEEP_SECS     = CONFIG.groq_sleep_secs
+GEMINI_SLEEP_SECS   = CONFIG.gemini_sleep_secs
 
-HEADERS = {"User-Agent": "CyberWatch/2.0 (macOS dashboard)"}
+HEADERS = {"User-Agent": CONFIG.http_user_agent}
 
 DEFAULT_WORKFLOW_GRAPH = (
     "graph LR\n"
@@ -200,14 +226,67 @@ CVSS Score: {item.get('cvss_score') or 'N/A'}"""
 # ── AI Response Parser ────────────────────────────────────────────────────────
 
 def parse_ai_response(raw: str) -> dict:
-    raw = raw.strip()
-    raw = re.sub(r"^```(?:json)?\s*\n?", "", raw, flags=re.MULTILINE)
-    raw = re.sub(r"\n?```\s*$", "", raw, flags=re.MULTILINE)
-    raw = raw.strip()
-    json_match = re.search(r'\{.*\}', raw, re.DOTALL)
-    if json_match:
-        raw = json_match.group(0)
-    return json.loads(raw)
+    """
+    Best-effort parse of an LLM's JSON reply.
+
+    LLMs frequently wrap JSON in code fences, add a preamble, emit trailing
+    commas, or leave the object unterminated when truncated by max_tokens. We
+    try progressively harder to recover a dict and only raise ``ValueError`` if
+    nothing usable survives — that signals the caller to fall back to the next
+    provider rather than accepting a half-empty enrichment.
+    """
+    if not raw or not raw.strip():
+        raise ValueError("empty AI response")
+
+    text = raw.strip()
+    # Strip ```json ... ``` fences.
+    text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n?```\s*$", "", text, flags=re.MULTILINE)
+    text = text.strip()
+
+    # Narrow to the outermost {...} span.
+    start = text.find("{")
+    end   = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start:end + 1]
+    else:
+        candidate = text
+
+    # 1) Straight parse.
+    try:
+        return json.loads(candidate)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # 2) Repair common issues: control chars + trailing commas.
+    repaired = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", candidate)
+    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+    try:
+        return json.loads(repaired)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # 3) Truncated object (ran out of tokens): balance braces and retry.
+    if candidate.count("{") > candidate.count("}"):
+        balanced = repaired + "}" * (candidate.count("{") - candidate.count("}"))
+        try:
+            return json.loads(balanced)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # 4) Last resort: pull individual fields out with regex so we still get the
+    #    human-readable summary even when the graph JSON is malformed.
+    salvaged = {}
+    m = re.search(r'"ai_summary"\s*:\s*"((?:[^"\\]|\\.)*)"', candidate, re.DOTALL)
+    if m:
+        salvaged["ai_summary"] = m.group(1).encode().decode("unicode_escape", "ignore")
+    m = re.search(r'"severity_score"\s*:\s*([0-9]+(?:\.[0-9]+)?)', candidate)
+    if m:
+        salvaged["severity_score"] = float(m.group(1))
+    if salvaged:
+        return salvaged
+
+    raise ValueError("could not parse AI response as JSON")
 
 def postprocess_graph(raw_graph: str) -> str:
     if not raw_graph or not raw_graph.strip():
@@ -1072,15 +1151,25 @@ THREAT_ACTORS = {
     "Salt Typhoon": ["salt typhoon"],
 }
 
+# Pre-compile a word-boundary regex per alias so "apt" no longer matches
+# "adapter"/"adapt" and "clop" no longer matches "develop". Aliases with their
+# own separators (spaces, digits, "cl0p") still match as whole tokens because
+# \b sits at the alnum/non-alnum transition on each end.
+_ACTOR_PATTERNS = {
+    actor: [re.compile(r"(?<![0-9A-Za-z])" + re.escape(kw) + r"(?![0-9A-Za-z])", re.IGNORECASE)
+            for kw in keywords]
+    for actor, keywords in THREAT_ACTORS.items()
+}
+
 def detect_threat_actors(text: str) -> list[str]:
-    text_lower = text.lower()
+    if not text:
+        return []
     actors = []
-    for actor, keywords in THREAT_ACTORS.items():
-        for kw in keywords:
-            if kw in text_lower:
-                actors.append(actor)
-                break
-    return list(set(actors))
+    for actor, patterns in _ACTOR_PATTERNS.items():
+        if any(p.search(text) for p in patterns):
+            actors.append(actor)
+    # Preserve THREAT_ACTORS declaration order, no dupes.
+    return actors
 
 # ── Intel Inference Helpers ───────────────────────────────────────────────────
 
@@ -1090,6 +1179,65 @@ def cvss_to_severity(score) -> str:
     if score >= 7.0: return "high"
     if score >= 4.0: return "medium"
     return "low"
+
+# ── CVE Prioritization Score ──────────────────────────────────────────────────
+
+def compute_priority(item: dict) -> dict | None:
+    """
+    Blend CVSS (impact), EPSS (probability of exploitation) and CISA KEV
+    (confirmed in-the-wild exploitation) into a single 0–100 "act on this first"
+    score. Returns a small dict the frontend can badge/sort on, or None when the
+    item has no CVE signal at all (so we don't score plain news items).
+
+        score = cvss_weight * (cvss/10)
+              + epss_weight * epss
+              + kev_bonus       (only if CISA KEV)
+
+    KEV items are additionally floored at 90 — a vuln CISA has confirmed is being
+    exploited should always sort to the top regardless of its CVSS/EPSS.
+    """
+    cvss = item.get("cvss_score")
+    epss = item.get("epss_score")
+    kev  = bool(item.get("cisa_kev"))
+
+    if cvss is None and epss is None and not kev:
+        return None
+
+    try:
+        cvss_val = float(cvss) if cvss is not None else 0.0
+    except (TypeError, ValueError):
+        cvss_val = 0.0
+    try:
+        epss_val = float(epss) if epss is not None else 0.0
+    except (TypeError, ValueError):
+        epss_val = 0.0
+
+    cvss_val = max(0.0, min(10.0, cvss_val))
+    epss_val = max(0.0, min(1.0, epss_val))
+
+    score = (CONFIG.priority_cvss_weight * (cvss_val / 10.0)
+             + CONFIG.priority_epss_weight * epss_val)
+    if kev:
+        score += CONFIG.priority_kev_bonus
+        score = max(score, 90.0)
+
+    score = round(max(0.0, min(100.0, score)), 1)
+
+    if score >= 90:   label = "urgent"
+    elif score >= 70: label = "elevated"
+    elif score >= 40: label = "moderate"
+    else:             label = "low"
+
+    # Human-readable driver of the score, shown in a tooltip.
+    reasons = []
+    if kev:
+        reasons.append("CISA KEV (actively exploited)")
+    if epss is not None:
+        reasons.append(f"EPSS {epss_val * 100:.1f}%")
+    if cvss is not None:
+        reasons.append(f"CVSS {cvss_val:.1f}")
+
+    return {"score": score, "label": label, "rationale": " · ".join(reasons)}
 
 def infer_severity(text: str, default: str = "medium") -> str:
     t = text.lower()
@@ -1153,173 +1301,191 @@ def extract_iocs(text: str) -> dict[str, list[str]]:
         result[ioc_type] = unique
     return result
 
+_STOPWORDS = {
+    "the", "a", "an", "of", "to", "in", "on", "for", "and", "with", "via",
+    "new", "critical", "high", "cve", "vulnerability", "flaw", "bug", "attack",
+}
+
+def _normalize_title(title: str) -> str:
+    """
+    Collapse a title to a comparable fingerprint: lowercase, drop punctuation,
+    strip common filler words, sort the remaining tokens. This makes near-dupes
+    like "New Critical RCE in Foo" and "Foo RCE Vulnerability (Critical)" hash
+    to the same key while keeping genuinely different stories apart.
+    """
+    t = re.sub(r"[^a-z0-9 ]+", " ", (title or "").lower())
+    tokens = [w for w in t.split() if w and w not in _STOPWORDS]
+    if not tokens:
+        tokens = t.split()
+    return " ".join(sorted(set(tokens)))[:120]
+
+def _canonical_url(url: str) -> str:
+    """Strip scheme, www, tracking params and trailing slash for URL dedup."""
+    if not url:
+        return ""
+    u = url.strip().lower()
+    u = re.sub(r"^https?://", "", u)
+    u = re.sub(r"^www\.", "", u)
+    u = u.split("?")[0].split("#")[0].rstrip("/")
+    return u
+
 def deduplicate(items: list[dict]) -> list[dict]:
-    seen, unique = set(), []
+    """
+    Drop duplicates by (a) same CVE from the same source, (b) identical
+    canonical URL, or (c) fuzzy-normalized title. First occurrence wins, so the
+    published-desc sort upstream keeps the newest copy.
+    """
+    seen_titles, seen_urls, seen_cve_src = set(), set(), set()
+    unique = []
     for item in items:
-        key = item["title"].lower().strip()[:80]
-        if key not in seen:
-            seen.add(key)
-            unique.append(item)
+        title_key = _normalize_title(item.get("title", ""))
+        url_key   = _canonical_url(item.get("url", ""))
+        cve       = (item.get("cve_id") or "").upper()
+        src       = item.get("source", "")
+        cve_src_key = f"{cve}|{src}" if cve else None
+
+        if title_key and title_key in seen_titles:
+            continue
+        if url_key and url_key in seen_urls:
+            continue
+        if cve_src_key and cve_src_key in seen_cve_src:
+            continue
+
+        if title_key:
+            seen_titles.add(title_key)
+        if url_key:
+            seen_urls.add(url_key)
+        if cve_src_key:
+            seen_cve_src.add(cve_src_key)
+        unique.append(item)
     return unique
+
+
+def item_key(item: dict) -> str:
+    """Stable identity for an item across runs — prefers CVE, then URL, then title."""
+    cve = (item.get("cve_id") or "").upper()
+    if cve:
+        return f"cve:{cve}"
+    url = _canonical_url(item.get("url", ""))
+    if url:
+        return f"url:{url}"
+    return f"title:{_normalize_title(item.get('title', ''))}"
+
+
+def _load_previous_keys() -> set:
+    """Keys present in the most recent archive snapshot (excluding today's)."""
+    if not ARCHIVE_DIR.exists():
+        return set()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    snapshots = sorted(
+        (f for f in ARCHIVE_DIR.glob("*.json") if f.stem != today),
+        key=lambda f: f.stem, reverse=True,
+    )
+    if not snapshots:
+        return set()
+    try:
+        with open(snapshots[0], encoding="utf-8") as f:
+            prev = json.load(f)
+        return {item_key(i) for i in prev.get("items", [])}
+    except Exception as e:
+        log.warning(f"Could not read previous archive for diff: {e}")
+        return set()
+
+
+def mark_new_since_last(items: list[dict]) -> int:
+    """
+    Set ``item["is_new"] = True`` for items whose key was absent from the
+    previous archive snapshot. This is a real "new since yesterday" signal,
+    independent of the item's own (often stale) published timestamp.
+    """
+    previous = _load_previous_keys()
+    # First ever run (no prior snapshot): don't flood every card with NEW.
+    if not previous:
+        for item in items:
+            item["is_new"] = False
+        return 0
+    count = 0
+    for item in items:
+        is_new = item_key(item) not in previous
+        item["is_new"] = is_new
+        if is_new:
+            count += 1
+    return count
 
 # ── Main Pipeline ────────────────────────────────────────────────────────────
 
+# ── Source orchestration ──────────────────────────────────────────────────────
+
+# Non-RSS fetchers, run in order. Each entry is (display-name, callable).
+API_SOURCES = [
+    ("NVD",            fetch_nvd_cves),
+    ("Reddit/netsec",  fetch_reddit_netsec),
+    ("AlienVault OTX", fetch_otx_pulse),
+    ("URLhaus",        fetch_urlhaus),
+    ("Spamhaus",       fetch_spamhaus_drop),
+    ("Feodo Tracker",  fetch_feodo),
+    ("AbuseIPDB",      fetch_abuseipdb),
+    ("PhishTank",      fetch_phishtank),
+    ("OSV",            fetch_osv),
+    ("MalwareBazaar",  fetch_malwarebazaar),
+    ("ThreatFox",      fetch_threatfox),
+    ("MSRC",           fetch_msrc),
+    ("Fedora",         fetch_fedora),
+    ("Gentoo",         fetch_gentoo),
+    ("Arch Linux",     fetch_archlinux),
+    ("Oracle Linux",   fetch_oracle_linux),
+    ("Amazon Linux",   fetch_amazon_linux),
+    ("CentOS",         fetch_centos),
+    ("Mitre CWE",      fetch_mitre_cwe),
+    ("VMware",         fetch_vmware),
+]
+
+def run_source(name: str, fetcher, health: dict) -> list[dict]:
+    """
+    Invoke a single fetcher, capturing timing + outcome into ``health`` so a
+    silently-dead feed (0 items or an exception) becomes visible in the output
+    instead of just vanishing. Never raises — a broken source can't abort the run.
+    """
+    started = time.monotonic()
+    try:
+        items = fetcher() or []
+        elapsed = round(time.monotonic() - started, 2)
+        status = "ok" if items else "empty"
+        health[name] = {"status": status, "count": len(items), "elapsed_s": elapsed, "error": None}
+        return items
+    except Exception as e:
+        elapsed = round(time.monotonic() - started, 2)
+        log.error(f"Source '{name}' failed: {e}")
+        health[name] = {"status": "error", "count": 0, "elapsed_s": elapsed, "error": str(e)[:200]}
+        return []
+
+
 def main():
     log.info("═" * 60)
-    log.info("CYBERWATCH v2.2 — Starting intel pipeline (16 RSS + 19 API sources)")
+    log.info("CYBERWATCH v2.3 — Starting intel pipeline")
     log.info("═" * 60)
 
     all_items = []
+    source_health: dict[str, dict] = {}
 
-    # 1. RSS feeds (15 sources)
+    # 1. RSS feeds — each tracked individually by feed name.
     for source in RSS_SOURCES:
-        try:
-            all_items.extend(fetch_rss(source))
-        except Exception as e:
-            log.error(f"Failed {source['name']}: {e}")
-        time.sleep(0.5)
+        all_items.extend(run_source(source["name"], lambda s=source: fetch_rss(s), source_health))
+        time.sleep(CONFIG.inter_source_sleep)
 
-    # 2. NVD CVE API
-    try:
-        all_items.extend(fetch_nvd_cves())
-    except Exception as e:
-        log.error(f"NVD failed: {e}")
-    time.sleep(1)
+    # 2. API / custom fetchers.
+    for name, fetcher in API_SOURCES:
+        all_items.extend(run_source(name, fetcher, source_health))
+        time.sleep(1)
 
-    # 3. Reddit r/netsec
-    try:
-        all_items.extend(fetch_reddit_netsec())
-    except Exception as e:
-        log.error(f"Reddit failed: {e}")
-    time.sleep(1)
-
-    # 4. AlienVault OTX
-    try:
-        all_items.extend(fetch_otx_pulse())
-    except Exception as e:
-        log.error(f"OTX failed: {e}")
-    time.sleep(1)
-
-    # 5. URLhaus (keyless)
-    try:
-        all_items.extend(fetch_urlhaus())
-    except Exception as e:
-        log.error(f"URLhaus failed: {e}")
-    time.sleep(1)
-
-    # 6. Spamhaus DROP (keyless)
-    try:
-        all_items.extend(fetch_spamhaus_drop())
-    except Exception as e:
-        log.error(f"Spamhaus failed: {e}")
-    time.sleep(1)
-
-    # 7. Feodo Tracker (keyless)
-    try:
-        all_items.extend(fetch_feodo())
-    except Exception as e:
-        log.error(f"Feodo failed: {e}")
-    time.sleep(1)
-
-    # 8. AbuseIPDB (API key)
-    try:
-        all_items.extend(fetch_abuseipdb())
-    except Exception as e:
-        log.error(f"AbuseIPDB failed: {e}")
-    time.sleep(1)
-
-    # 9. PhishTank (API key)
-    try:
-        all_items.extend(fetch_phishtank())
-    except Exception as e:
-        log.error(f"PhishTank failed: {e}")
-
-    # 10. OSV (covers 25+ ecosystems)
-    try:
-        all_items.extend(fetch_osv())
-    except Exception as e:
-        log.error(f"OSV failed: {e}")
-    time.sleep(1)
-
-    # 11. MalwareBazaar
-    try:
-        all_items.extend(fetch_malwarebazaar())
-    except Exception as e:
-        log.error(f"MalwareBazaar failed: {e}")
-    time.sleep(1)
-
-    # 12. ThreatFox
-    try:
-        all_items.extend(fetch_threatfox())
-    except Exception as e:
-        log.error(f"ThreatFox failed: {e}")
-    time.sleep(1)
-
-    # 13. MSRC
-    try:
-        all_items.extend(fetch_msrc())
-    except Exception as e:
-        log.error(f"MSRC failed: {e}")
-    time.sleep(1)
-
-    # 14. Fedora
-    try:
-        all_items.extend(fetch_fedora())
-    except Exception as e:
-        log.error(f"Fedora failed: {e}")
-    time.sleep(1)
-
-    # 15. Gentoo
-    try:
-        all_items.extend(fetch_gentoo())
-    except Exception as e:
-        log.error(f"Gentoo failed: {e}")
-    time.sleep(1)
-
-    # 16. Arch Linux
-    try:
-        all_items.extend(fetch_archlinux())
-    except Exception as e:
-        log.error(f"Arch Linux failed: {e}")
-    time.sleep(1)
-
-    # 17. Oracle Linux
-    try:
-        all_items.extend(fetch_oracle_linux())
-    except Exception as e:
-        log.error(f"Oracle Linux failed: {e}")
-    time.sleep(1)
-
-    # 18. Amazon Linux
-    try:
-        all_items.extend(fetch_amazon_linux())
-    except Exception as e:
-        log.error(f"Amazon Linux failed: {e}")
-    time.sleep(1)
-
-    # 19. CentOS
-    try:
-        all_items.extend(fetch_centos())
-    except Exception as e:
-        log.error(f"CentOS failed: {e}")
-    time.sleep(1)
-
-    # 20. VMware
-    try:
-        all_items.extend(fetch_vmware())
-    except Exception as e:
-        log.error(f"VMware failed: {e}")
-    time.sleep(1)
-
-    # 21. Mitre CWE
-    try:
-        all_items.extend(fetch_mitre_cwe())
-    except Exception as e:
-        log.error(f"Mitre CWE failed: {e}")
-    time.sleep(1)
+    dead = [n for n, h in source_health.items() if h["status"] != "ok"]
+    if dead:
+        log.warning(f"Sources with no data this run: {', '.join(dead)}")
 
     # ── Deduplicate + sort ──────────────────────────────────────────────────
+    before_dedup = len(all_items)
     all_items = deduplicate(all_items)
+    log.info(f"Deduplicated {before_dedup} → {len(all_items)} items")
     all_items.sort(key=lambda x: x.get("published", ""), reverse=True)
     log.info(f"Total raw items after dedup: {len(all_items)}")
 
@@ -1360,6 +1526,21 @@ def main():
             actor_count += 1
     log.info(f"  Detected threat actors in {actor_count} items")
 
+    # ── CVE prioritization score (blend of CVSS + EPSS + CISA KEV) ─────────
+    prioritized = 0
+    for item in all_items:
+        priority = compute_priority(item)
+        if priority:
+            item["priority_score"] = priority["score"]
+            item["priority_label"] = priority["label"]
+            item["priority_rationale"] = priority["rationale"]
+            prioritized += 1
+    log.info(f"  Scored priority for {prioritized} items")
+
+    # ── Flag items not seen in the previous run (accurate "NEW") ───────────
+    new_count = mark_new_since_last(all_items)
+    log.info(f"  Flagged {new_count} items as new since last run")
+
     # ── AI Enrichment ──────────────────────────────────────────────────────
     try:
         all_items = enrich_with_ai(all_items)
@@ -1375,10 +1556,12 @@ def main():
     output = {
         "last_updated": now_utc(),
         "total_items": len(all_items),
-        "pipeline_version": "2.2.0",
-        "sources_fetched": len(RSS_SOURCES) + 7 + 12,
+        "pipeline_version": "2.3.0",
+        "sources_fetched": len(RSS_SOURCES) + len(API_SOURCES),
+        "sources_ok": sum(1 for h in source_health.values() if h["status"] == "ok"),
         "ai_provider_configured": bool(GROQ_API_KEY) or bool(GEMINI_API_KEY),
         "source_breakdown": dict(source_counter.most_common()),
+        "source_health": source_health,
         "items": all_items,
     }
 
@@ -1408,6 +1591,30 @@ def main():
                 continue
         if pruned:
             log.info(f"  Pruned {pruned} old archives (> {ARCHIVE_RETENTION_DAYS} days)")
+
+    # ── Machine-readable exports (STIX / CSV / JSON IOCs + RSS feed) ────────
+    if write_exports:
+        try:
+            written = write_exports(output, CONFIG.export_dir)
+            log.info(f"✓ Wrote exports: {', '.join(written)}")
+        except Exception as e:
+            log.error(f"Export generation failed: {e}")
+
+    # ── Historical trends (aggregated from the archive) ────────────────────
+    if build_trends:
+        try:
+            trends = build_trends(ARCHIVE_DIR, CONFIG.trends_path)
+            log.info(f"✓ Wrote trends over {trends.get('days_covered', 0)} days")
+        except Exception as e:
+            log.error(f"Trends build failed: {e}")
+
+    # ── Alerting (critical / KEV items, deduped against prior alerts) ───────
+    if send_alerts and CONFIG.webhook_url:
+        try:
+            sent = send_alerts(output, CONFIG)
+            log.info(f"✓ Dispatched {sent} new alert(s)")
+        except Exception as e:
+            log.error(f"Alert dispatch failed: {e}")
 
     log.info("═" * 60)
     log.info(f"CYBERWATCH — Complete. {len(all_items)} items from {len(source_counter)} sources.")

@@ -75,7 +75,7 @@
       <button class="filter-btn" data-filter="incident">INCIDENTS</button>
       <button class="filter-btn" data-filter="iocs">IOCs</button>
       <button class="filter-btn matrix-btn" data-filter="matrix">⬛ ATT&CK MATRIX</button>
-      
+      <button class="filter-btn trends-btn" data-filter="trends">📈 TRENDS</button>
     </div>
   </section>
 
@@ -143,6 +143,25 @@
       </div>
 
       <div class="sidebar-card">
+        <div class="sidebar-title">
+          <span>WATCHLIST</span>
+          <span id="watchlist-match-count" class="sidebar-title-badge"></span>
+        </div>
+        <input type="text" id="watchlist-input" class="watchlist-input"
+               placeholder="+ add keyword (e.g. Fortinet)" autocomplete="off" />
+        <div class="watchlist-chips" id="watchlist-chips"><!-- filled by JS --></div>
+        <button class="watchlist-only-btn" id="watchlist-only-btn" style="display:none;">☆ WATCHLIST ONLY</button>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-title">
+          <span>SOURCE HEALTH</span>
+          <span id="source-health-summary" class="sidebar-title-badge"></span>
+        </div>
+        <div class="source-health" id="source-health"><!-- filled by JS --></div>
+      </div>
+
+      <div class="sidebar-card">
         <div class="sidebar-title">CONNECT</div>
         <div class="linkedin-badge-wrap">
           <div class="badge-base LI-profile-badge" data-locale="en_US" data-size="medium" data-theme="dark" data-type="VERTICAL" data-vanity="priyanshu12" data-version="v1"></div>
@@ -155,7 +174,7 @@
     <section class="feed">
       <div class="feed-header">
         <span id="feed-count">Loading intelligence feed...</span>
-        <span class="feed-sort">↓ LATEST FIRST</span>
+        <button class="feed-sort" id="sort-toggle" title="Toggle sort order">↓ LATEST FIRST</button>
       </div>
 
       <!-- Loading state -->
@@ -184,12 +203,16 @@
         <div class="matrix-grid" id="matrix-grid"><!-- Populated by JS --></div>
       </div>
 
-      
+      <!-- Trends View -->
+      <div id="trends-view" class="trends-view" style="display:none;"><!-- Populated by JS --></div>
 
       <!-- No results -->
       <div id="no-results" class="no-results" style="display:none;">
         <p>No results match your search.</p>
       </div>
+
+      <!-- Infinite-scroll sentinel -->
+      <div id="scroll-sentinel" aria-hidden="true"></div>
     </section>
 
   </main>

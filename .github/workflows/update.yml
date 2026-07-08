@@ -49,13 +49,19 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install requests feedparser google-generativeai
+          pip install -r requirements.txt
 
       - name: Fetch threat intelligence
         env:
           GROQ_API_KEY:   ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OTX_API_KEY:    ${{ secrets.OTX_API_KEY }}
+          ABUSEIPDB_API_KEY: ${{ secrets.ABUSEIPDB_API_KEY }}
+          PHISHTANK_API_KEY: ${{ secrets.PHISHTANK_API_KEY }}
+          # Alerting (optional — leave WEBHOOK_URL unset to disable):
+          WEBHOOK_URL:  ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_TYPE: ${{ vars.WEBHOOK_TYPE }}
+          ALERT_SEVERITIES: ${{ vars.ALERT_SEVERITIES }}
         run: |
           python scripts/fetch_intel.py
 
@@ -65,7 +71,10 @@ jobs:
           git config user.email "cyberwatch-bot@users.noreply.github.com"
 
           git add data/intel.json
-          git add data/archive/ || true
+          git add data/archive/    || true
+          git add data/exports/    || true
+          git add data/trends.json || true
+          git add -f data/.alert_state.json || true   # persist alert dedup memory
 
           if git diff --staged --quiet; then
             echo "No changes detected — skipping commit."

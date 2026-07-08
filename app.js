@@ -15,7 +15,10 @@ if (typeof mermaid !== 'undefined') {
   mermaid.initialize({
     startOnLoad:   false,
     theme:         'dark',
-    securityLevel: 'loose',
+    // 'strict' HTML-encodes node labels and disables click-binding, closing the
+    // XSS surface of rendering AI/source-controlled graph source. htmlLabels is
+    // already off, so arrow/TTP labels still render fine.
+    securityLevel: 'strict',
     themeVariables: {
       background:          '#080b0f',
       mainBkg:             '#0d1117',
@@ -42,12 +45,24 @@ let activeFilter  = 'all';
 let activeSeverity = null;
 let searchQuery   = '';
 let mermaidSeq    = 0;   // unique ID counter for each mermaid diagram
+let sortMode     = 'latest';   // 'latest' | 'priority'
+let renderLimit  = 40;         // pagination window; grows on scroll / "load more"
+const PAGE_SIZE  = 40;
+let trendsData   = null;       // lazily fetched data/trends.json
+
+// Watchlist: user-pinned keywords (their vendors / stack). Persisted locally.
+let watchlist = [];
+try { watchlist = JSON.parse(localStorage.getItem('cw_watchlist') || '[]'); } catch (_) { watchlist = []; }
+let watchlistOnly = false;     // when true, feed shows only items matching watchlist
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initFilters();
   initSearch();
   initSeverityFilters();
+  initWatchlist();
+  initSortToggle();
+  initInfiniteScroll();
   loadIntelData();
 });
 
@@ -85,7 +100,10 @@ async function loadIntelData() {
         `Last updated: ${utc} | IST: ${ist}`;
     }
 
+    trendsData = null;   // force refetch on next Trends view
     renderSidebar();
+    renderSourceHealth(data.source_health);
+    renderWatchlist();
     renderDailySummary();
     applyFilters();
     showContent();
@@ -102,19 +120,25 @@ function applyFilters() {
     showMatrixView();
     return;
   }
-  
+  if (activeFilter === 'trends') {
+    showTrendsView();
+    return;
+  }
 
   filteredItems = allItems.filter(item => {
     if (activeFilter === 'iocs') {
       const iocs = item.iocs;
-      return iocs && Object.values(iocs).some(v => v && v.length > 0);
+      if (!(iocs && Object.values(iocs).some(v => v && v.length > 0))) return false;
+    } else {
+      const catMatch = activeFilter === 'all' || item.category === activeFilter;
+      if (!catMatch) return false;
     }
-    const catMatch = activeFilter === 'all' || item.category === activeFilter;
-    if (!catMatch) return false;
 
     if (activeSeverity && (item.severity||'').toLowerCase() !== activeSeverity) {
       return false;
     }
+
+    if (watchlistOnly && !matchesWatchlist(item)) return false;
 
     const q = searchQuery.toLowerCase();
     if (!q) return true;
@@ -130,6 +154,7 @@ function applyFilters() {
     );
   });
 
+  renderLimit = PAGE_SIZE;   // reset pagination window on every filter change
   showContent();
   renderCards();
   updateHeaderStats();
@@ -197,13 +222,32 @@ function renderCards() {
   }
 
   noResults.style.display = 'none';
-  feedCount.textContent = `${filteredItems.length} item${filteredItems.length !== 1 ? 's' : ''} in feed`;
 
-  const sorted = [...filteredItems].sort(
-    (a, b) => new Date(b.published || 0) - new Date(a.published || 0)
-  );
+  const sorted = [...filteredItems].sort((a, b) => {
+    if (sortMode === 'priority') {
+      const pa = a.priority_score ?? -1, pb = b.priority_score ?? -1;
+      if (pb !== pa) return pb - pa;
+    }
+    return new Date(b.published || 0) - new Date(a.published || 0);
+  });
 
-  sorted.forEach((item, index) => container.appendChild(buildCard(item, index)));
+  const shown = sorted.slice(0, renderLimit);
+  feedCount.textContent =
+    `${shown.length} of ${filteredItems.length} item${filteredItems.length !== 1 ? 's' : ''}` +
+    (sortMode === 'priority' ? ' · by priority' : '');
+
+  const frag = document.createDocumentFragment();
+  shown.forEach((item, index) => frag.appendChild(buildCard(item, index)));
+  container.appendChild(frag);
+
+  // "Load more" affordance when the window is smaller than the result set.
+  if (sorted.length > renderLimit) {
+    const more = document.createElement('button');
+    more.className = 'load-more-btn';
+    more.textContent = `▼ LOAD MORE (${sorted.length - renderLimit} remaining)`;
+    more.addEventListener('click', () => { renderLimit += PAGE_SIZE; renderCards(); });
+    container.appendChild(more);
+  }
 }
 
 // ─── Build Card ───────────────────────────────────────────────────────────────
@@ -211,11 +255,15 @@ function buildCard(item, index) {
   const card  = document.createElement('div');
   const mySeq = ++mermaidSeq;
 
-  const isNew = item.published &&
-    (Date.now() - new Date(item.published)) < 86_400_000;
+  // Prefer the pipeline's accurate "new since last run" flag; fall back to the
+  // published-within-24h heuristic for older data that predates the field.
+  const isNew = (item.is_new === true) ||
+    (item.is_new === undefined && item.published &&
+     (Date.now() - new Date(item.published)) < 86_400_000);
 
   card.className = 'intel-card';
   if (isNew) card.classList.add('new-item');
+  if (matchesWatchlist(item)) card.classList.add('watchlist-hit');
 
   // ── FIX: was item.aisummary (wrong) → now item.ai_summary (correct) ────────
   const hasAI = item.ai_summary &&
@@ -261,6 +309,10 @@ function buildCard(item, index) {
 
   const epssHTML = (item.epss_score != null)
     ? `<span class="meta-tag meta-epss" title="EPSS: ${(item.epss_score * 100).toFixed(2)}% probability of exploit in 30 days">✦ EPSS ${(item.epss_score * 100).toFixed(1)}%</span>`
+    : '';
+
+  const priorityHTML = (item.priority_score != null)
+    ? `<span class="meta-tag meta-priority prio-${escapeHTML(item.priority_label || 'low')}" title="Prioritization score (CVSS+EPSS+KEV): ${escapeHTML(item.priority_rationale || '')}">⚑ P${item.priority_score.toFixed(0)}</span>`
     : '';
 
   // IOC indicators
@@ -313,7 +365,7 @@ function buildCard(item, index) {
       ${cveIdHTML}
       <span class="meta-tag meta-source">${escapeHTML(item.source || 'unknown')}</span>
       <span class="meta-tag meta-cat">${escapeHTML(item.category || 'general')}</span>
-      ${cvssHTML}${aiScoreHTML}${epssHTML}
+      ${priorityHTML}${cvssHTML}${aiScoreHTML}${epssHTML}
       <span class="meta-date">${dateStr}</span>
     </div>
     ${iocHTML}
@@ -472,6 +524,7 @@ function showContent() {
   document.getElementById('loading-state').style.display   = 'none';
   document.getElementById('error-state').style.display     = 'none';
   document.getElementById('matrix-view').style.display     = 'none';
+  const tv = document.getElementById('trends-view'); if (tv) tv.style.display = 'none';
   document.getElementById('cards-container').style.display = 'flex';
 }
 
@@ -489,6 +542,7 @@ function showMatrixView() {
   document.getElementById('error-state').style.display     = 'none';
   document.getElementById('cards-container').style.display = 'none';
   document.getElementById('no-results').style.display      = 'none';
+  const tv = document.getElementById('trends-view'); if (tv) tv.style.display = 'none';
   document.getElementById('matrix-view').style.display     = 'block';
   renderMatrixGrid();
   document.getElementById('feed-count').textContent =
@@ -807,6 +861,241 @@ window.filterByTechnique = function(techId) {
   applyFilters();
 };
 
+// ─── Watchlist (saved searches) ───────────────────────────────────────────────
+function matchesWatchlist(item) {
+  if (!watchlist.length) return false;
+  const hay = `${item.title || ''} ${item.description || ''} ${item.cve_id || ''} ${item.source || ''}`.toLowerCase();
+  return watchlist.some(kw => hay.includes(kw.toLowerCase()));
+}
+
+function saveWatchlist() {
+  try { localStorage.setItem('cw_watchlist', JSON.stringify(watchlist)); } catch (_) {}
+}
+
+function initWatchlist() {
+  const input = document.getElementById('watchlist-input');
+  if (input) {
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        const val = input.value.trim();
+        if (val && !watchlist.includes(val)) {
+          watchlist.push(val);
+          saveWatchlist();
+          renderWatchlist();
+          applyFilters();
+        }
+        input.value = '';
+      }
+    });
+  }
+  const toggle = document.getElementById('watchlist-only-btn');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      watchlistOnly = !watchlistOnly;
+      toggle.classList.toggle('active', watchlistOnly);
+      toggle.textContent = watchlistOnly ? '★ SHOWING WATCHLIST' : '☆ WATCHLIST ONLY';
+      applyFilters();
+    });
+  }
+  renderWatchlist();
+}
+
+window.removeWatchKeyword = function(kw) {
+  watchlist = watchlist.filter(w => w !== kw);
+  saveWatchlist();
+  renderWatchlist();
+  applyFilters();
+};
+
+function renderWatchlist() {
+  const wrap = document.getElementById('watchlist-chips');
+  if (!wrap) return;
+  const matchCount = allItems.filter(matchesWatchlist).length;
+  if (!watchlist.length) {
+    wrap.innerHTML = '<span class="watchlist-empty">Add keywords (e.g. Fortinet, npm, Citrix) to track your stack.</span>';
+  } else {
+    wrap.innerHTML = watchlist.map(kw =>
+      `<span class="watch-chip">${escapeHTML(kw)}<span class="watch-x" onclick="removeWatchKeyword('${escapeHTML(kw).replace(/'/g, "\\'")}')">×</span></span>`
+    ).join('');
+  }
+  const badge = document.getElementById('watchlist-match-count');
+  if (badge) badge.textContent = watchlist.length ? `${matchCount} match${matchCount !== 1 ? 'es' : ''}` : '';
+  const toggle = document.getElementById('watchlist-only-btn');
+  if (toggle) toggle.style.display = watchlist.length ? 'block' : 'none';
+}
+
+// ─── Sort toggle (latest vs priority) ─────────────────────────────────────────
+function initSortToggle() {
+  const btn = document.getElementById('sort-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    sortMode = sortMode === 'latest' ? 'priority' : 'latest';
+    btn.textContent = sortMode === 'priority' ? '⚑ TOP PRIORITY' : '↓ LATEST FIRST';
+    renderLimit = PAGE_SIZE;
+    renderCards();
+  });
+}
+
+// ─── Infinite scroll (lazy pagination) ────────────────────────────────────────
+function initInfiniteScroll() {
+  const sentinel = document.getElementById('scroll-sentinel');
+  if (!sentinel || !('IntersectionObserver' in window)) return;
+  const io = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (entry.isIntersecting && filteredItems.length > renderLimit &&
+          activeFilter !== 'matrix' && activeFilter !== 'trends') {
+        renderLimit += PAGE_SIZE;
+        renderCards();
+      }
+    }
+  }, { rootMargin: '600px' });
+  io.observe(sentinel);
+}
+
+// ─── Source Health Panel ──────────────────────────────────────────────────────
+function renderSourceHealth(health) {
+  const wrap = document.getElementById('source-health');
+  if (!wrap) return;
+  if (!health || !Object.keys(health).length) {
+    wrap.closest('.sidebar-card').style.display = 'none';
+    return;
+  }
+  const entries = Object.entries(health).sort((a, b) => {
+    const rank = s => (s === 'error' ? 0 : s === 'empty' ? 1 : 2);
+    return rank(a[1].status) - rank(b[1].status);
+  });
+  const okCount = entries.filter(([, h]) => h.status === 'ok').length;
+  document.getElementById('source-health-summary').textContent = `${okCount}/${entries.length} live`;
+  wrap.innerHTML = entries.map(([name, h]) => {
+    const dot = h.status === 'ok' ? 'ok' : h.status === 'empty' ? 'empty' : 'err';
+    const detail = h.status === 'error' ? (h.error || 'error') : `${h.count} item${h.count !== 1 ? 's' : ''}`;
+    return `<div class="health-item" title="${escapeHTML(detail)}">
+      <span class="health-dot ${dot}"></span>
+      <span class="health-name">${escapeHTML(name)}</span>
+      <span class="health-count">${h.status === 'error' ? '!' : h.count}</span>
+    </div>`;
+  }).join('');
+}
+
+// ─── Trends View ──────────────────────────────────────────────────────────────
+async function showTrendsView() {
+  document.getElementById('loading-state').style.display   = 'none';
+  document.getElementById('error-state').style.display     = 'none';
+  document.getElementById('cards-container').style.display = 'none';
+  document.getElementById('no-results').style.display      = 'none';
+  document.getElementById('matrix-view').style.display     = 'none';
+  const view = document.getElementById('trends-view');
+  view.style.display = 'block';
+  document.getElementById('feed-count').textContent = 'Threat trends over time';
+
+  if (!trendsData) {
+    view.innerHTML = '<div class="loading-state"><div class="loader-ring"></div><p>Loading trends…</p></div>';
+    try {
+      if (window.location.protocol !== 'file:') {
+        const r = await fetch(`data/trends.json?v=${Date.now()}`);
+        if (r.ok) trendsData = await r.json();
+      }
+    } catch (_) { /* fall through */ }
+    if (!trendsData) { trendsData = buildTrendsFromItems(); }
+  }
+  renderTrends(trendsData);
+}
+
+// Fallback: derive a minimal single-day trends object from current items when
+// data/trends.json isn't reachable (e.g. file:// preview).
+function buildTrendsFromItems() {
+  const sev = { critical: 0, high: 0, medium: 0, low: 0 };
+  const actors = {}, sources = {};
+  allItems.forEach(i => {
+    const s = (i.severity || 'medium').toLowerCase(); if (s in sev) sev[s]++;
+    (i.threat_actors || []).forEach(a => actors[a] = (actors[a] || 0) + 1);
+    if (i.source) sources[i.source] = (sources[i.source] || 0) + 1;
+  });
+  const toArr = o => Object.entries(o).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  return {
+    days_covered: 1,
+    daily: [{ date: 'today', total: allItems.length, ...sev }],
+    severity_totals: sev,
+    top_actors: toArr(actors).slice(0, 10),
+    top_sources: toArr(sources).slice(0, 12),
+    top_ttps: [],
+    trending_cves: allItems.filter(i => i.priority_score != null)
+      .sort((a, b) => b.priority_score - a.priority_score).slice(0, 15)
+      .map(i => ({ cve: i.cve_id, max_priority: i.priority_score, kev: !!i.cisa_kev,
+                   days_seen: 1, last_seen: 'today', title: i.title })),
+  };
+}
+
+function renderTrends(t) {
+  const view = document.getElementById('trends-view');
+  const daily = t.daily || [];
+  const maxTotal = Math.max(1, ...daily.map(d => d.total));
+
+  // Stacked volume bars over time.
+  const volBars = daily.map(d => {
+    const h = pct => `${(pct / maxTotal) * 100}%`;
+    const seg = (cls, n) => n > 0 ? `<span class="tb-seg ${cls}" style="height:${h(n)}" title="${d.date}: ${n} ${cls}"></span>` : '';
+    return `<div class="trend-bar-col" title="${escapeHTML(d.date)}: ${d.total} items">
+      <div class="trend-bar-stack">
+        ${seg('critical', d.critical)}${seg('high', d.high)}${seg('medium', d.medium)}${seg('low', d.low)}
+      </div>
+      <span class="trend-bar-x">${escapeHTML((d.date || '').slice(5))}</span>
+    </div>`;
+  }).join('');
+
+  const actorBars = renderBarList(t.top_actors, 'name', 'count', '#a78bfa');
+  const sourceBars = renderBarList(t.top_sources, 'name', 'count', 'var(--accent-cyan)');
+  const ttpBars = renderBarList((t.top_ttps || []).map(x => ({ name: `${x.id} ${x.name}`, count: x.count })), 'name', 'count', '#4da6ff');
+
+  const trendingRows = (t.trending_cves || []).map(c => `
+    <div class="trending-cve" onclick="openCveModal('${escapeHTML(c.cve)}')">
+      <span class="tc-id">${escapeHTML(c.cve)}</span>
+      ${c.kev ? '<span class="tc-kev">KEV</span>' : ''}
+      <span class="tc-prio">P${Math.round(c.max_priority || 0)}</span>
+      <span class="tc-title">${escapeHTML((c.title || '').slice(0, 70))}</span>
+      <span class="tc-days">${c.days_seen}d</span>
+    </div>`).join('');
+
+  view.innerHTML = `
+    <div class="trends-grid">
+      <div class="trend-card trend-wide">
+        <div class="trend-title">THREAT VOLUME — last ${daily.length} day${daily.length !== 1 ? 's' : ''}</div>
+        <div class="trend-vol-chart">${volBars || '<span class="trend-empty">No history yet.</span>'}</div>
+        <div class="trend-legend">
+          <span><i class="dot critical"></i>Critical</span><span><i class="dot high"></i>High</span>
+          <span><i class="dot medium"></i>Medium</span><span><i class="dot low"></i>Low</span>
+        </div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-title">MOST ACTIVE THREAT ACTORS</div>
+        ${actorBars || '<span class="trend-empty">None detected in window.</span>'}
+      </div>
+      <div class="trend-card">
+        <div class="trend-title">TRENDING CVEs</div>
+        <div class="trending-list">${trendingRows || '<span class="trend-empty">None.</span>'}</div>
+      </div>
+      <div class="trend-card">
+        <div class="trend-title">TOP TECHNIQUES</div>
+        ${ttpBars || '<span class="trend-empty">None.</span>'}
+      </div>
+      <div class="trend-card">
+        <div class="trend-title">SOURCE ACTIVITY</div>
+        ${sourceBars || '<span class="trend-empty">None.</span>'}
+      </div>
+    </div>`;
+}
+
+function renderBarList(arr, nameKey, valKey, color) {
+  if (!arr || !arr.length) return '';
+  const max = Math.max(1, ...arr.map(x => x[valKey]));
+  return `<div class="bar-list">` + arr.map(x => `
+    <div class="bar-row">
+      <span class="bar-label" title="${escapeHTML(String(x[nameKey]))}">${escapeHTML(String(x[nameKey]))}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${(x[valKey] / max) * 100}%;background:${color}"></span></span>
+      <span class="bar-val">${x[valKey]}</span>
+    </div>`).join('') + `</div>`;
+}
+
 // ─── Utilities ────────────────────────────────────────────────────────────────
 function timeAgo(date) {
   const diff  = Date.now() - date;
@@ -912,7 +1201,12 @@ document.addEventListener('keydown', e => {
       document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'matrix'));
       applyFilters();
       break;
-    
+    case 't':
+      activeFilter = 'trends';
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'trends'));
+      applyFilters();
+      break;
+
   }
 });
 
