@@ -478,6 +478,7 @@ function buildCard(item, index) {
   // CISA KEV badge
   const cisaKevHTML = item.cisa_kev
     ? `<span class="cisa-kev-badge" title="Known Exploited Vulnerability (CISA KEV)">KEV</span>`
+    : '';
 
   const cveIdHTML  = item.cve_id ? `<span class="cve-id" data-cve="${escapeHTML(item.cve_id)}" title="Click for CVE details">${escapeHTML(item.cve_id)}</span> · ` : '';
   const descHTML   = item.description
