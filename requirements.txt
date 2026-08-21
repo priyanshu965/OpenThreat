@@ -2,4 +2,8 @@
 # Bump via Dependabot PRs (.github/dependabot.yml).
 requests==2.32.3
 feedparser==6.0.11
-google-generativeai==0.8.3
+
+# Gemini. `google-genai` is the current SDK; `google-generativeai` is the
+# deprecated package this project shipped with. fetch_intel imports the new one
+# first and falls back to the old one, so both work during migration.
+google-genai==1.29.0

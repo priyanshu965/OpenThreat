@@ -42,12 +42,27 @@ _STIX_PATTERN = {
 _EXPORT_TYPES = ["ipv4", "domain", "url", "sha256", "sha1", "md5", "email", "cidr"]
 
 
+# Only sources that actually publish indicators are exported. Without this the
+# bundle shipped gmail.com, redhat.com, cern.ch and two named maintainers' work
+# email addresses as `indicator_types: malicious-activity` — a public STIX file
+# that was both useless and a PII leak. Kept in sync with fetch_intel.IOC_SOURCES.
+_IOC_SOURCES = {
+    "URLhaus", "ThreatFox", "Feodo Tracker", "Spamhaus", "MalwareBazaar",
+    "AbuseIPDB", "PhishTank", "AlienVault OTX",
+}
+
+
 def _iter_iocs(items):
-    """Yield (type, value, source, title, cve, published) for every IOC, deduped."""
+    """Yield (type, value, source, title, cve, published) for every IOC, deduped.
+
+    Restricted to indicator feeds — prose from a news article is not a threat feed.
+    """
     seen = set()
     for item in items:
-        iocs = item.get("iocs") or {}
         src = item.get("source", "")
+        if src not in _IOC_SOURCES:
+            continue
+        iocs = item.get("iocs") or {}
         title = item.get("title", "")
         cve = item.get("cve_id") or ""
         published = item.get("published", "")
@@ -183,7 +198,60 @@ def write_exports(output: dict, export_dir: Path) -> list[str]:
     _write_stix(rows, export_dir / "stix.json", generated)
     _write_rss(output, export_dir / "feed.xml")
 
-    return ["iocs.csv", "iocs.json", "stix.json", "feed.xml"]
+    # Static JSON "API" endpoints, generated at build time. This is what
+    # rest_api.py was reaching for, minus the runtime, the open port and the
+    # unvalidated int() parsing that returned 500s with a traceback.
+    api_dir = export_dir.parent / "api"
+    api_dir.mkdir(parents=True, exist_ok=True)
+    _write_static_api(output, api_dir)
+
+    return ["iocs.csv", "iocs.json", "stix.json", "feed.xml", "api/*.json"]
+
+
+def _write_static_api(output: dict, api_dir: Path) -> None:
+    """Pre-rendered query results: cacheable on a CDN, zero attack surface."""
+    items = output.get("items", [])
+    generated = output.get("last_updated", "")
+
+    def dump(name: str, payload: dict) -> None:
+        (api_dir / name).write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    dump("stats.json", {
+        "generated": generated,
+        "total_items": len(items),
+        "pipeline_version": output.get("pipeline_version"),
+        "severity": _count_by(items, "severity"),
+        "category": _count_by(items, "category"),
+        "source": _count_by(items, "source"),
+        "priority_label": _count_by(items, "priority_label"),
+        "kev": sum(1 for i in items if i.get("cisa_kev")),
+        "with_poc": sum(1 for i in items if i.get("has_poc")),
+        "ssvc_active": sum(1 for i in items if i.get("ssvc_exploitation") == "active"),
+        "ai_enriched": output.get("ai_enriched_count", 0),
+        "sources_ok": output.get("sources_ok"),
+        "sources_stale": output.get("sources_stale"),
+    })
+
+    urgent = [i for i in items if i.get("priority_label") in ("urgent", "elevated")]
+    dump("urgent.json", {"generated": generated, "count": len(urgent), "items": urgent})
+
+    kev = [i for i in items if i.get("cisa_kev") or i.get("ssvc_exploitation") == "active"]
+    dump("exploited.json", {"generated": generated, "count": len(kev), "items": kev})
+
+    if output.get("brief"):
+        dump("brief.json", output["brief"])
+
+    dump("health.json", {"generated": generated, "sources": output.get("source_health", {})})
+
+
+def _count_by(items, field: str) -> dict:
+    counts: dict[str, int] = {}
+    for item in items:
+        key = item.get(field)
+        if key:
+            counts[str(key)] = counts.get(str(key), 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
 
 
 if __name__ == "__main__":

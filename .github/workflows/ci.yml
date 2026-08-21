@@ -1,0 +1,109 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CYBERWATCH — .github/workflows/ci.yml
+#
+# Runs the unit suite on every push and pull request. Previously NO workflow
+# executed tests/test_pipeline.py at all, and the tests themselves re-implemented
+# the functions they claimed to cover — so 30 green tests exercised zero lines of
+# production code.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Byte-compile all sources
+        run: python -m compileall -q scripts tests
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install linters
+        run: pip install ruff
+
+      - name: Ruff
+        run: ruff check scripts tests --output-format=github
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject committed API keys
+        run: |
+          # Cheap, targeted guard for the key shapes this project actually uses.
+          # A leaked key in a public repo is scraped within minutes.
+          PATTERNS='vulncheck_[a-f0-9]{40,}|AIza[0-9A-Za-z_-]{30,}|gsk_[A-Za-z0-9]{40,}|xoxb-[0-9A-Za-z-]{20,}'
+          if grep -rInE "$PATTERNS" --include='*.py' --include='*.js' --include='*.yml' \
+               --include='*.yaml' --include='*.json' --include='*.md' . ; then
+            echo "::error::A credential appears to be committed. Rotate it, then remove it from the tree."
+            exit 1
+          fi
+          echo "No committed credentials found."
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Syntax-check JavaScript
+        run: |
+          node --check app.js
+          node --check service-worker.js
+
+      - name: Reject inline event handlers
+        run: |
+          # The CSP sets script-src without 'unsafe-inline', so any onclick=
+          # attribute is silently dead code in the browser.
+          if grep -nE '\son[a-z]+="' index.html app.js; then
+            echo "::error::Inline event handler found — blocked by the page CSP. Use delegated listeners."
+            exit 1
+          fi
+          echo "No inline handlers."

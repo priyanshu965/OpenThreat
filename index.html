@@ -3,31 +3,43 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://platform.linkedin.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://media.licdn.com https://media.licdn.demdex.net; connect-src 'self' https://services.nvd.nist.gov; worker-src 'self'; frame-src https://platform.linkedin.com;" />
-  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
-  <meta http-equiv="X-Frame-Options" content="DENY" />
+  <!--
+    CSP. Note what is NOT here: 'unsafe-inline' in script-src. The previous page
+    shipped three inline event-handler attributes and an inline script block under
+    exactly this policy, so all four were silently blocked by the browser. Every
+    handler is now delegated from app.js.
+    Framing protection is NOT here: both X-Frame-Options and frame-ancestors are
+    ignored when delivered via a meta tag, so the old X-Frame-Options meta was
+    doing nothing. It is set as a real header in nginx.conf for the Docker path.
+    GitHub Pages cannot send custom headers, so a Pages deployment has no framing
+    protection — that is a platform limit, not something a meta tag can fix.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://services.nvd.nist.gov; worker-src 'self'; base-uri 'self'; form-action 'none'; object-src 'none'" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <meta name="theme-color" content="#0d1117" />
+  <meta name="description" content="Self-updating cybersecurity threat intelligence dashboard — CVEs, advisories, incidents and IOCs, prioritised by CVSS, EPSS, CISA KEV and SSVC." />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%23080b0f'/%3E%3Ctext x='96' y='140' text-anchor='middle' font-family='monospace' font-size='120' font-weight='bold' fill='%2300ffe1'%3E%5B%5D%3C/text%3E%3C/svg%3E" type="image/svg+xml" />
-  <title>CyberWatch</title>
-  <link rel="stylesheet" href="style.css?v=2.4.0" />
-  <!-- JetBrains Mono for terminal feel, Syne for headings -->
+  <title>CyberWatch — Threat Intelligence</title>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="style.css?v=3.0.0" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
-  <!-- Mermaid.js for AI-generated attack flow diagrams -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.3/dist/mermaid.min.js"></script>
-  <!-- LinkedIn Profile Badge -->
-  <script src="https://platform.linkedin.com/badges/js/profile.js" async defer></script>
+  <script src="app.js?v=3.0.0" defer></script>
 </head>
 <body>
 
-  <!-- Animated background grid -->
-  <div class="bg-grid"></div>
-  <div class="scan-line"></div>
+  <a class="skip-link" href="#cards-container">Skip to feed</a>
 
-  <!-- ═══════════════════════════ HEADER ═══════════════════════════ -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="scan-line" aria-hidden="true"></div>
+
+  <!-- Live-update notifications land here -->
+  <div id="toast-host" class="toast-host" role="status" aria-live="polite"></div>
+
+  <!-- ═══════════════════════ HEADER ═══════════════════════ -->
   <header class="site-header">
     <div class="header-left">
       <div class="logo">
@@ -36,116 +48,80 @@
         <span class="logo-bracket">]</span>
       </div>
       <div class="header-meta">
-        <span class="status-dot"></span>
-        <span id="last-updated">Initializing feed...</span>
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="last-updated">Initializing feed…</span>
       </div>
     </div>
     <div class="header-right">
-      <div class="stat-pill" id="stat-critical">
+      <div class="stat-pill" id="stat-urgent">
+        <span class="stat-label">URGENT</span>
+        <span class="stat-value" id="count-urgent">—</span>
+      </div>
+      <div class="stat-pill">
         <span class="stat-label">CRITICAL</span>
         <span class="stat-value" id="count-critical">—</span>
       </div>
-      <div class="stat-pill" id="stat-high">
+      <div class="stat-pill">
         <span class="stat-label">HIGH</span>
         <span class="stat-value" id="count-high">—</span>
       </div>
-      <div class="stat-pill" id="stat-medium">
-        <span class="stat-label">MEDIUM</span>
-        <span class="stat-value" id="count-medium">—</span>
-      </div>
-      <div class="stat-pill" id="stat-items">
+      <div class="stat-pill">
         <span class="stat-label">TOTAL</span>
         <span class="stat-value" id="count-total">—</span>
       </div>
+      <button class="icon-btn" id="palette-open" title="Command palette (Ctrl/Cmd-K)" aria-label="Open command palette">⌘K</button>
     </div>
   </header>
 
-  <!-- ═══════════════════════════ CONTROLS ═══════════════════════════ -->
+  <!-- ═══════════════════════ CONTROLS ═══════════════════════ -->
   <section class="controls-bar">
     <div class="search-wrapper">
-      <span class="search-icon">⌕</span>
-        <input
-          type="text"
-          id="search-input"
-          class="search-input"
-          placeholder="Search threats, CVEs, keywords..."
-          autocomplete="off"
-          aria-label="Search threats"
-        />
+      <span class="search-icon" aria-hidden="true">⌕</span>
+      <input type="text" id="search-input" class="search-input"
+             placeholder="Search threats, CVEs, vendors…  (press /)"
+             autocomplete="off" aria-label="Search threats" />
     </div>
-    <div class="filter-tabs" id="filter-tabs">
+    <div class="filter-tabs" id="filter-tabs" role="tablist">
       <button class="filter-btn active" data-filter="all">ALL</button>
+      <button class="filter-btn" data-filter="exploited">🔥 EXPLOITED</button>
+      <button class="filter-btn" data-filter="stack">⚙ MY STACK</button>
       <button class="filter-btn" data-filter="cve">CVEs</button>
-      <button class="filter-btn" data-filter="news">NEWS</button>
-      <button class="filter-btn" data-filter="advisory">ADVISORIES</button>
       <button class="filter-btn" data-filter="incident">INCIDENTS</button>
+      <button class="filter-btn" data-filter="advisory">ADVISORIES</button>
+      <button class="filter-btn" data-filter="news">NEWS</button>
       <button class="filter-btn" data-filter="iocs">IOCs</button>
-      <button class="filter-btn matrix-btn" data-filter="matrix">⬛ ATT&CK MATRIX</button>
+      <button class="filter-btn" data-filter="starred">★ STARRED</button>
+      <button class="filter-btn matrix-btn" data-filter="matrix">⬛ ATT&amp;CK</button>
       <button class="filter-btn trends-btn" data-filter="trends">📈 TRENDS</button>
     </div>
   </section>
 
-  <!-- ═══════════════════════════ DAILY SUMMARY ═══════════════════════════ -->
-  <div id="daily-summary" class="daily-summary" style="display:none;">
-    <div class="summary-inner">
-      <span class="summary-label">📋 TODAY'S BRIEF</span>
-      <div class="summary-stats" id="summary-stats"><!-- filled by JS --></div>
-      <span class="summary-divider">|</span>
-      <span class="summary-top" id="summary-top-threat"><!-- filled by JS --></span>
-    </div>
+  <!-- ═══════════════════════ DAILY BRIEF ═══════════════════════ -->
+  <section id="daily-brief" class="daily-brief" style="display:none;" aria-label="Today's brief"></section>
+
+  <div class="mobile-stats-toggle">
+    <button class="toggle-btn" id="toggle-sidebar-btn">▼ STATS &amp; FILTERS</button>
   </div>
 
-  <!-- Mobile sidebar toggle -->
-  <div class="mobile-stats-toggle" id="mobile-stats-toggle" style="display:none;">
-    <button class="toggle-btn" id="toggle-sidebar-btn">
-      <span id="toggle-label">▼ SHOW STATS</span>
-    </button>
-  </div>
-
-  <!-- ═══════════════════════════ MAIN CONTENT ═══════════════════════════ -->
+  <!-- ═══════════════════════ MAIN ═══════════════════════ -->
   <main class="dashboard">
 
-    <!-- Sidebar: Stats + Sources -->
     <aside class="sidebar">
 
       <div class="sidebar-card">
-        <div class="sidebar-title">SEVERITY BREAKDOWN</div>
-        <div class="severity-chart" id="severity-chart">
-          <div class="sev-row">
-            <span class="sev-label critical">CRITICAL</span>
-            <div class="sev-bar-wrap"><div class="sev-bar critical" id="bar-critical"></div></div>
-            <span class="sev-count" id="sev-count-critical">0</span>
-          </div>
-          <div class="sev-row">
-            <span class="sev-label high">HIGH</span>
-            <div class="sev-bar-wrap"><div class="sev-bar high" id="bar-high"></div></div>
-            <span class="sev-count" id="sev-count-high">0</span>
-          </div>
-          <div class="sev-row">
-            <span class="sev-label medium">MEDIUM</span>
-            <div class="sev-bar-wrap"><div class="sev-bar medium" id="bar-medium"></div></div>
-            <span class="sev-count" id="sev-count-medium">0</span>
-          </div>
-          <div class="sev-row">
-            <span class="sev-label low">LOW</span>
-            <div class="sev-bar-wrap"><div class="sev-bar low" id="bar-low"></div></div>
-            <span class="sev-count" id="sev-count-low">0</span>
-          </div>
-        </div>
+        <div class="sidebar-title">SEVERITY <span class="sidebar-hint">click to filter</span></div>
+        <div class="severity-chart" id="severity-chart"></div>
       </div>
 
       <div class="sidebar-card">
-        <div class="sidebar-title">ACTIVE SOURCES</div>
-        <div class="source-list" id="source-list">
-          <!-- Populated by JS -->
+        <div class="sidebar-title">
+          <span>MY STACK</span>
+          <span id="stack-match-count" class="sidebar-title-badge"></span>
         </div>
-      </div>
-
-      <div class="sidebar-card">
-        <div class="sidebar-title">CATEGORY BREAKDOWN</div>
-        <div class="cat-list" id="cat-list">
-          <!-- Populated by JS -->
-        </div>
+        <input type="text" id="stack-input" class="watchlist-input"
+               placeholder="+ vendor or product (e.g. fortinet)" autocomplete="off"
+               aria-label="Add a product to your stack" />
+        <div class="stack-chips" id="stack-chips"></div>
       </div>
 
       <div class="sidebar-card">
@@ -154,20 +130,20 @@
           <span id="watchlist-match-count" class="sidebar-title-badge"></span>
         </div>
         <input type="text" id="watchlist-input" class="watchlist-input"
-               placeholder="+ add keyword (e.g. Fortinet)" autocomplete="off" />
-        <div class="watchlist-chips" id="watchlist-chips"><!-- filled by JS --></div>
+               placeholder="+ keyword (e.g. ransomware)" autocomplete="off"
+               aria-label="Add a watchlist keyword" />
+        <div class="watchlist-chips" id="watchlist-chips"></div>
         <button class="watchlist-only-btn" id="watchlist-only-btn" style="display:none;">☆ WATCHLIST ONLY</button>
       </div>
 
       <div class="sidebar-card">
-        <div class="sidebar-title">
-          <span>MY STACK</span>
-          <span id="stack-match-count" class="sidebar-title-badge"></span>
-        </div>
-        <input type="text" id="stack-input" class="watchlist-input" list="stack-suggestions"
-               placeholder="+ vendor/product (e.g. fortinet/fortios)" autocomplete="off" />
-        <datalist id="stack-suggestions"></datalist>
-        <div class="stack-chips" id="stack-chips"><!-- filled by JS --></div>
+        <div class="sidebar-title">SOURCES <span class="sidebar-hint">click to filter</span></div>
+        <div class="source-list" id="source-list"></div>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-title">CATEGORIES</div>
+        <div class="cat-list" id="cat-list"></div>
       </div>
 
       <div class="sidebar-card">
@@ -175,104 +151,97 @@
           <span>SOURCE HEALTH</span>
           <span id="source-health-summary" class="sidebar-title-badge"></span>
         </div>
-        <div class="source-health" id="source-health"><!-- filled by JS --></div>
-      </div>
-
-      <div class="sidebar-card">
-        <div class="sidebar-title">CONNECT</div>
-        <div class="linkedin-badge-wrap">
-          <div class="badge-base LI-profile-badge" data-locale="en_US" data-size="medium" data-theme="dark" data-type="VERTICAL" data-vanity="priyanshu12" data-version="v1"></div>
-        </div>
+        <div class="source-health" id="source-health"></div>
       </div>
 
     </aside>
 
-    <!-- Main Feed -->
     <section class="feed">
       <div class="feed-header">
-        <span id="feed-count">Loading intelligence feed...</span>
-        <button class="feed-sort" id="sort-toggle" title="Toggle sort order">↓ LATEST FIRST</button>
+        <span id="feed-count">Loading intelligence feed…</span>
+        <div class="feed-controls">
+          <button class="feed-sort" id="density-toggle" title="Toggle row density">▥ COMFORTABLE</button>
+          <button class="feed-sort" id="sort-toggle" title="Toggle sort order">⚑ TOP PRIORITY</button>
+        </div>
       </div>
 
-      <!-- Loading state -->
       <div id="loading-state" class="loading-state">
-        <div class="loader-ring"></div>
-        <p>Fetching threat intelligence...</p>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
       </div>
 
-      <!-- Error state -->
       <div id="error-state" class="error-state" style="display:none;">
         <p class="error-icon">⚠</p>
-        <p>Failed to load intel feed. Check that <code>data/intel.json</code> exists.</p>
+        <p>Failed to load the intel feed.</p>
+        <p class="error-detail"></p>
       </div>
 
-      <!-- Cards container -->
       <div id="cards-container" class="cards-container" style="display:none;" role="feed" aria-busy="true"></div>
 
-      <!-- MITRE ATT&CK Matrix View -->
       <div id="matrix-view" class="matrix-view" style="display:none;">
         <div class="matrix-legend">
-          <div class="legend-item"><span class="legend-dot active-high"></span> High activity (3+)</div>
-          <div class="legend-item"><span class="legend-dot active-med"></span> Seen in feed</div>
-          <div class="legend-item"><span class="legend-dot inactive"></span> Not observed</div>
-          <div class="matrix-hint">Click any technique to filter the feed → switch to ALL view</div>
+          <span class="legend-item"><span class="legend-dot active-high"></span> High activity (3+)</span>
+          <span class="legend-item"><span class="legend-dot active-med"></span> Seen in feed</span>
+          <span class="matrix-hint">Click a technique to filter the feed</span>
         </div>
-        <div class="matrix-grid" id="matrix-grid"><!-- Populated by JS --></div>
+        <div class="matrix-grid" id="matrix-grid"></div>
       </div>
 
-      <!-- Trends View -->
-      <div id="trends-view" class="trends-view" style="display:none;"><!-- Populated by JS --></div>
+      <div id="trends-view" class="trends-view" style="display:none;"></div>
 
-      <!-- No results -->
       <div id="no-results" class="no-results" style="display:none;">
-        <p>No results match your search.</p>
+        <p>No results match your filters.</p>
       </div>
 
-      <!-- Infinite-scroll sentinel -->
       <div id="scroll-sentinel" aria-hidden="true"></div>
     </section>
 
   </main>
 
-  <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
-<footer class="site-footer">
-      <span>CYBERWATCH</span>
-      <span>Updates every hour</span>
-    </footer>
+  <footer class="site-footer">
+    <span>CYBERWATCH</span>
+    <span>Updates hourly · <kbd>?</kbd> for shortcuts</span>
+  </footer>
 
-    <!-- CVE Detail Modal -->
-    <div id="cve-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="modal-cve-id">
-      <div class="modal-content">
-        <div class="modal-header">
-          <span class="modal-title" id="modal-cve-id">CVE-XXXX-XXXXX</span>
-          <button class="modal-close" onclick="closeCveModal()" aria-label="Close">&times;</button>
-        </div>
-        <div class="modal-body" id="modal-body">
-          <div class="modal-loading">
-            <div class="loader-ring"></div>
-            <span>Fetching NVD details...</span>
-          </div>
-        </div>
-      </div>
+  <!-- ═══════════════════════ COMMAND PALETTE ═══════════════════════ -->
+  <div id="palette" class="palette-overlay" style="display:none;" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="palette-box">
+      <input type="text" id="palette-input" class="palette-input"
+             placeholder="Type a command or a CVE…" autocomplete="off" />
+      <div id="palette-list" class="palette-list"></div>
+      <div class="palette-footer"><kbd>↑</kbd><kbd>↓</kbd> navigate · <kbd>↵</kbd> run · <kbd>esc</kbd> close</div>
     </div>
+  </div>
 
-  <!--
-    ═══════════════════════════════════════════════════════════════
-    EMBEDDED FALLBACK DATA
-    This data is used when the dashboard is opened directly as a
-    file (file:// protocol). On GitHub Pages the live intel.json
-    is fetched instead and this is ignored.
+  <!-- ═══════════════════════ SHORTCUTS ═══════════════════════ -->
+  <div id="shortcuts" class="palette-overlay" style="display:none;" role="dialog" aria-label="Keyboard shortcuts">
+    <div class="palette-box">
+      <div class="shortcuts-title">Keyboard shortcuts</div>
+      <dl class="shortcuts-list">
+        <dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Next / previous item</dd>
+        <dt><kbd>e</kbd></dt><dd>Expand or collapse</dd>
+        <dt><kbd>x</kbd></dt><dd>Dismiss (triage it away)</dd>
+        <dt><kbd>s</kbd></dt><dd>Star</dd>
+        <dt><kbd>w</kbd></dt><dd>Copy as markdown for a ticket</dd>
+        <dt><kbd>o</kbd></dt><dd>Open the source link</dd>
+        <dt><kbd>/</kbd></dt><dd>Focus search</dd>
+        <dt><kbd>ctrl</kbd>+<kbd>k</kbd></dt><dd>Command palette</dd>
+        <dt><kbd>esc</kbd></dt><dd>Close overlays</dd>
+      </dl>
+    </div>
+  </div>
 
-    ➜ HOW TO UPDATE THIS:
-       After running `python scripts/fetch_intel.py`, copy the
-       contents of data/intel.json and paste it below.
-       But on GitHub Pages you never need to — it updates itself!
-     ═══════════════════════════════════════════════════════════════
-   -->
-  <script>
-    window.INTEL_DATA = null;
-  </script>
+  <!-- ═══════════════════════ CVE MODAL ═══════════════════════ -->
+  <div id="cve-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="modal-cve-id">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title" id="modal-cve-id">CVE</span>
+        <button class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
 
-  <script src="app.js?v=2.4.0"></script>
 </body>
 </html>

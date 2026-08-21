@@ -1,1613 +1,1711 @@
 /**
  * CYBERWATCH DASHBOARD — app.js
  *
- * Loading strategy:
- *  1. fetch('data/intel.json') — GitHub Pages / local server
- *  2. window.INTEL_DATA fallback — file:// protocol
+ * Architecture notes (this replaced a 1,612-line render-everything-on-load file):
  *
- * AI Features:
- *  - Cards expand on click → AI analysis panel (summary + severity + graph)
- *  - Mermaid attack-flow diagram lazily rendered via mermaid.render()
+ *  - A tiny pub/sub store replaces manual DOM syncing, so live merges and filter
+ *    changes go through one render path instead of ad-hoc mutations.
+ *  - NO inline event handlers anywhere. The page CSP sets script-src without
+ *    'unsafe-inline', so every inline handler attribute in the old markup
+ *    was silently dead code in the browser.
+ *  - URLs are scheme-checked before they reach an href. escapeHTML() neutralises
+ *    <>"'& but NOT `javascript:`, so a feed item could previously ship a working
+ *    payload behind a card title.
+ *  - Attack-flow graphs come from document-level templates, not 251 duplicated
+ *    copies of the same four strings.
  */
 
-// ─── Mermaid Config (dark terminal theme) ─────────────────────────────────────
-if (typeof mermaid !== 'undefined') {
-  mermaid.initialize({
-    startOnLoad:   false,
-    theme:         'dark',
-    // 'strict' HTML-encodes node labels and disables click-binding, closing the
-    // XSS surface of rendering AI/source-controlled graph source. htmlLabels is
-    // already off, so arrow/TTP labels still render fine.
-    securityLevel: 'strict',
-    themeVariables: {
-      background:          '#080b0f',
-      mainBkg:             '#0d1117',
-      primaryColor:        '#0d2038',
-      primaryTextColor:    '#c9d8e8',
-      primaryBorderColor:  '#1e4d73',
-      lineColor:           '#4da6ff',
-      secondaryColor:      '#111820',
-      tertiaryColor:       '#080b0f',
-      edgeLabelBackground: '#080b0f',
-      fontFamily:          "'JetBrains Mono', 'Courier New', monospace",
-      fontSize:            '12px',
-      nodeBorder:          '#1e2d3d',
-      clusterBkg:          '#0d1117',
-    },
-    flowchart: { htmlLabels: false, curve: 'Linear', padding: 24 },
-  });
-}
+'use strict';
 
-// ─── State ────────────────────────────────────────────────────────────────────
-let allItems       = [];
-let filteredItems   = [];
-let activeFilter    = localStorage.getItem('cw_filter') || 'all';
-let activeSeverity  = localStorage.getItem('cw_severity') || null;
-let searchQuery     = '';
-let mermaidSeq      = 0;   // unique ID counter for each mermaid diagram
-let sortMode       = localStorage.getItem('cw_sort') || 'latest';   // 'latest' | 'priority'
-let renderLimit    = 40;         // pagination window; grows on scroll / "load more"
-const PAGE_SIZE    = 40;
-let trendsData     = null;       // lazily fetched data/trends.json
+// ─── Constants ────────────────────────────────────────────────────────────────
+const DATA_URL      = 'data/intel.json';
+const HEALTH_URL    = 'data/source_health_summary.json';
+const TRENDS_URL    = 'data/trends.json';
+const POLL_INTERVAL = 120000;
+const PAGE_SIZE     = 40;
 
-// Watchlist: user-pinned keywords (their vendors / stack). Persisted locally.
-let watchlist = [];
-let watchlistOnly = false;     // when true, feed shows only items matching watchlist
-try { watchlist = JSON.parse(localStorage.getItem('cw_watchlist') || '[]'); } catch (_) { watchlist = []; }
-try { watchlistOnly = localStorage.getItem('cw_watchlistOnly') === 'true'; } catch (_) {}
-
-function saveState() {
-  try {
-    localStorage.setItem('cw_filter', activeFilter);
-    localStorage.setItem('cw_severity', activeSeverity || '');
-    localStorage.setItem('cw_sort', sortMode);
-    localStorage.setItem('cw_watchlistOnly', watchlistOnly ? 'true' : 'false');
-  } catch (_) {}
-}
-
-// ─── Entry Point ──────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  initFilters();
-  initSearch();
-  initSeverityFilters();
-  initWatchlist();
-  initStack();
-  initSortToggle();
-  initInfiniteScroll();
-  initDelegations();
-  restoreUIState();
-  initHashRouting();
-  loadIntelData();
-});
-
-// Re-apply persisted state (filter tab, severity pill, sort label, watchlist
-// toggle) to the DOM so a refresh doesn't reset the user's view.
-function restoreUIState() {
-  if (activeSeverity === '') activeSeverity = null;
-
-  // Filter tab
-  document.querySelectorAll('.filter-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.filter === activeFilter));
-
-  // Severity pill
-  if (activeSeverity) {
-    const pill = document.getElementById(`stat-${activeSeverity}`);
-    if (pill) pill.classList.add('active');
-  }
-
-  // Sort toggle label
-  const sortBtn = document.getElementById('sort-toggle');
-  if (sortBtn) sortBtn.textContent = sortMode === 'priority' ? '⚑ TOP PRIORITY' : '↓ LATEST FIRST';
-
-  // Watchlist-only toggle
-  const wlBtn = document.getElementById('watchlist-only-btn');
-  if (wlBtn && watchlistOnly) {
-    wlBtn.classList.add('active');
-    wlBtn.textContent = '★ SHOWING WATCHLIST';
-  }
-}
-
-// ─── Deep Link Routing ─────────────────────────────────────────────────────────
-// Supports #cve-CVE-2024-XXXXX and #item-<index> hash patterns.
-function initHashRouting() {
-  window.addEventListener('hashchange', handleHash);
-  if (location.hash) setTimeout(handleHash, 500);
-}
-function handleHash() {
-  const h = location.hash.slice(1);
-  if (!h) return;
-  const cveMatch = h.match(/^cve-(CVE-\d{4}-\d{4,7})$/i);
-  if (cveMatch) {
-    openCveModal(cveMatch[1].toUpperCase());
-    return;
-  }
-  const idxMatch = h.match(/^item-(\d+)$/);
-  if (idxMatch) {
-    const idx = parseInt(idxMatch[1]);
-    const item = allItems[idx];
-    if (item) {
-      jumpToItem(item.cve_id || item.title?.slice(0, 60));
-    }
-  }
-}
-window.navigateTo = function(hash) {
-  location.hash = hash;
+const LS = {
+  filter: 'cw_filter', severity: 'cw_severity', sort: 'cw_sort',
+  watchlist: 'cw_watchlist', watchlistOnly: 'cw_watchlistOnly',
+  stack: 'cw_stack', dismissed: 'cw_dismissed', starred: 'cw_starred',
+  density: 'cw_density', lastVisit: 'cw_lastVisit',
 };
 
-// ─── "Seen CVEs" tracking for first-view NEW badge ────────────────────────────
-// Persisted in localStorage so returning users see what's truly new.
-let seenCves = new Set();
-const SEEN_KEY = 'cw_seen_cves';
-try {
-  const raw = localStorage.getItem(SEEN_KEY);
-  if (raw) seenCves = new Set(JSON.parse(raw));
-} catch (_) {}
+// Severity is ORDINAL (low -> critical), so it takes a one-hue sequential ramp
+// rather than four categorical hues. The previous four-hue set failed the
+// normal-vision separation floor: #f5c518 (medium) against #ff8c42 (high) sat at
+// deltaE 14.4, below the 15 threshold — hard to tell apart even with full colour
+// vision. This ramp passes all four ordinal checks against the #0d1117 surface
+// (monotone lightness, deltaL gaps >= 0.06, light-end contrast, 9-degree hue
+// spread). Severity is never encoded by colour alone: every mark carries a text
+// label or a legend entry.
+const SEVERITY_RAMP = {
+  low: '#8c4a5c', medium: '#b9455f', high: '#e04365', critical: '#ff7a91',
+};
+const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
 
-function markAsSeen(cveId) {
-  if (!cveId) return;
-  if (!seenCves.has(cveId)) {
-    seenCves.add(cveId);
-    try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seenCves])); } catch (_) {}
-  }
+// Nominal categorical bars (sources, actors) are ONE series, so every bar takes
+// the same slot-1 hue. Colouring nominal bars by their value would spend the
+// identity channel re-encoding what bar length already shows.
+const SERIES_1 = '#3987e5';
+
+const CATEGORIES = ['cve', 'incident', 'advisory', 'news'];
+
+// ─── Store ────────────────────────────────────────────────────────────────────
+const store = {
+  items: [], filtered: [], meta: {}, templates: {}, brief: null,
+  health: {}, staleness: {}, trends: null,
+  filter: 'all', severity: null, query: '', sort: 'priority',
+  renderLimit: PAGE_SIZE, cursor: -1, density: 'comfortable',
+  watchlist: [], watchlistOnly: false, stack: [],
+  dismissed: new Set(), starred: new Set(), showDismissed: false,
+  lastVisit: null, stamp: null,
+};
+
+// ─── Safe DOM helpers ─────────────────────────────────────────────────────────
+function escapeHTML(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
-// ─── "My Stack" (CPE/product matching) ────────────────────────────────────────
-// User-defined vendor/product pairs that get highlighted when an item's
-// affected_products field matches. Persisted in localStorage.
-let myStack = [];
-const STACK_KEY = 'cw_my_stack';
-try { myStack = JSON.parse(localStorage.getItem(STACK_KEY) || '[]'); } catch (_) { myStack = []; }
+/**
+ * Scheme allowlist for anything that reaches an href.
+ *
+ * escapeHTML alone does NOT stop `javascript:alert(1)`, and item URLs come from
+ * third-party feeds (Reddit posts, OTX pulses) that anyone can submit to. The
+ * control-character strip matters because "java\tscript:" is parsed as
+ * javascript: by some engines.
+ */
+function safeUrl(url) {
+  if (!url) return '';
+  const trimmed = String(url).trim();
+  const normalised = trimmed.replace(/[\u0000-\u0020]/g, '').toLowerCase();
+  return /^https?:\/\//.test(normalised) ? trimmed : '';
+}
 
-function saveStack() { try { localStorage.setItem(STACK_KEY, JSON.stringify(myStack)); } catch (_) {} }
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function $(id) { return document.getElementById(id); }
+
+function readLS(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch (_) { return fallback; }
+}
+
+function writeLS(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) {}
+}
+
+// ─── Item helpers ─────────────────────────────────────────────────────────────
+function canonicalUrl(url) {
+  return String(url || '').toLowerCase()
+    .replace(/^https?:\/\//, '').replace(/^www\./, '')
+    .split('?')[0].split('#')[0].replace(/\/$/, '');
+}
+
+function itemKey(item) {
+  if (item.cve_id) return `cve:${item.cve_id.toUpperCase()}`;
+  const url = canonicalUrl(item.url);
+  if (url) return `url:${url}`;
+  return `title:${(item.title || '').toLowerCase().slice(0, 100)}`;
+}
+
+/**
+ * Display summary. Rule-based items no longer ship an `ai_summary` — 246 of 248
+ * were a prefix of `description`, which is already in the same object, so the
+ * payload carried the same prose twice.
+ */
+function displaySummary(item) {
+  if (item.ai_summary) return item.ai_summary;
+  const desc = item.description || '';
+  return desc.split(/(?<=[.!?])\s+/).slice(0, 3).join(' ') || item.title || '';
+}
+
+function graphFor(item) {
+  return item.workflow_graph
+    || store.templates[item.graph_template]
+    || store.templates.default || '';
+}
 
 function matchesStack(item) {
-  if (!myStack.length) return false;
-  const prods = (item.affected_products || []).map(p => p.toLowerCase());
-  return myStack.some(sp => prods.some(p => p.includes(sp.toLowerCase())));
+  if (!store.stack.length) return false;
+  const hay = [item.title, item.description,
+    ...(item.vendors || []), ...(item.products || []),
+    ...(item.affected_products || [])].join(' ').toLowerCase();
+  return store.stack.some((term) => hay.includes(term.toLowerCase()));
 }
 
-function initStack() {
-  const input = document.getElementById('stack-input');
-  if (!input) return;
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      const val = input.value.trim();
-      if (val && !myStack.includes(val)) {
-        myStack.push(val);
-        saveStack();
-        renderStack();
-        applyFilters();
-      }
-      input.value = '';
-    }
-  });
-  // Suggest from affected_products on all loaded items.
-  input.addEventListener('focus', () => {
-    const suggestions = new Set();
-    allItems.forEach(i => (i.affected_products || []).forEach(p => {
-      const short = p.split('/').slice(-2).join('/');
-      if (short && !myStack.includes(short)) suggestions.add(short);
-    }));
-    const datalist = document.getElementById('stack-suggestions');
-    if (datalist && suggestions.size) {
-      datalist.innerHTML = [...suggestions].sort().slice(0, 20).map(s => `<option value="${escapeHTML(s)}">`).join('');
-    }
-  });
-  renderStack();
+function matchesWatchlist(item) {
+  if (!store.watchlist.length) return false;
+  const hay = `${item.title} ${item.description} ${item.cve_id || ''}`.toLowerCase();
+  return store.watchlist.some((term) => hay.includes(term.toLowerCase()));
 }
 
-function renderStack() {
-  const wrap = document.getElementById('stack-chips');
-  if (!wrap) return;
-  const matchCount = allItems.filter(matchesStack).length;
-  if (!myStack.length) {
-    wrap.innerHTML = '<span class="watchlist-empty">Add vendor/product to track your stack (e.g. fortinet/fortios, apache/log4j, microsoft/exchange)</span>';
-  } else {
-    wrap.innerHTML = myStack.map(kw =>
-      `<span class="stack-chip">${escapeHTML(kw)}<span class="stack-x" data-stack="${escapeHTML(kw)}">×</span></span>`
-    ).join('');
-  }
-  const badge = document.getElementById('stack-match-count');
-  if (badge) badge.textContent = myStack.length ? `${matchCount} match${matchCount !== 1 ? 'es' : ''}` : '';
+function timeAgo(date) {
+  const diff = Date.now() - date;
+  if (Number.isNaN(diff)) return '';
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-window.removeStackKeyword = function(kw) {
-  myStack = myStack.filter(w => w !== kw);
-  saveStack();
-  renderStack();
-  applyFilters();
-};
-
-// ─── Trend Direction Indicator ────────────────────────────────────────────────
-function trendArrow(current, previous) {
-  if (previous == null) return '';
-  if (current > previous) return '<span class="trend-up">▲</span>';
-  if (current < previous) return '<span class="trend-down">▼</span>';
-  return '<span class="trend-flat">─</span>';
+// ─── URL state (shareable views) ──────────────────────────────────────────────
+function readUrlState() {
+  const hash = location.hash.slice(1);
+  if (!hash || hash.startsWith('cve-')) return;
+  const params = new URLSearchParams(hash);
+  if (params.get('filter')) store.filter = params.get('filter');
+  if (params.get('severity')) store.severity = params.get('severity');
+  if (params.get('q')) store.query = params.get('q');
+  if (params.get('sort')) store.sort = params.get('sort');
 }
 
-// ─── Combined intel.json + trends.json output flag ──────────────────────────
-// If the pipeline produced a combined file (intel_combined.json) with embedded
-// trends, we load that instead of fetching two files.
-let _combinedData = null;
+function writeUrlState() {
+  const params = new URLSearchParams();
+  if (store.filter && store.filter !== 'all') params.set('filter', store.filter);
+  if (store.severity) params.set('severity', store.severity);
+  if (store.query) params.set('q', store.query);
+  if (store.sort !== 'priority') params.set('sort', store.sort);
+  const next = params.toString();
+  history.replaceState(null, '', next ? `#${next}` : location.pathname + location.search);
+}
 
-// ─── Load Data ────────────────────────────────────────────────────────────────
+// ─── Data loading ─────────────────────────────────────────────────────────────
+function ingest(data) {
+  store.items = data.items || [];
+  store.meta = data;
+  store.templates = data.graph_templates || {};
+  store.brief = data.brief || null;
+  store.health = data.source_health || {};
+  store.items.forEach((item) => { item._key = itemKey(item); });
+}
+
 async function loadIntelData() {
   try {
-    let data;
-
-    if (window.location.protocol !== 'file:') {
-      const response = await fetch(`data/intel.json?v=${Date.now()}`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      data = await response.json();
-    } else {
-      if (window.INTEL_DATA) {
-        data = window.INTEL_DATA;
-        const meta = document.getElementById('last-updated');
-        if (meta) {
-          meta.textContent = '⚠ Preview mode (open via server for live data)';
-          meta.style.color = '#f5c518';
-        }
-      } else {
-        throw new Error('No data — open via a server or GitHub Pages');
-      }
-    }
-
-    allItems = data.items || [];
-
-    if (data.last_updated) {
-      const date = new Date(data.last_updated);
-      const utc  = date.toUTCString();
-      const ist  = date.toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'medium'
-      });
-      document.getElementById('last-updated').textContent =
-        `Last updated: ${utc} | IST: ${ist}`;
-    }
-
-    trendsData = null;   // force refetch on next Trends view
-    renderSidebar();
-    await loadSourceHealthHistory();
-    renderSourceHealth(data.source_health);
-    renderWatchlist();
-    renderDailySummary();
+    const resp = await fetch(`${DATA_URL}?v=${Date.now()}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    store.stamp = resp.headers.get('etag') || resp.headers.get('last-modified');
+    ingest(await resp.json());
+    await loadHealthSummary();
     applyFilters();
     showContent();
-
+    renderAll();
+    return true;
   } catch (err) {
-    console.error('Failed to load intel.json:', err);
-    showError();
+    console.error('Failed to load intel:', err);
+    showError(err.message);
+    return false;
   }
 }
 
-// ─── Filter & Search Logic ────────────────────────────────────────────────────
-function applyFilters() {
-  if (activeFilter === 'matrix') {
-    showMatrixView();
-    return;
-  }
-  if (activeFilter === 'trends') {
-    showTrendsView();
-    return;
-  }
-
-  filteredItems = allItems.filter(item => {
-    if (activeFilter === 'iocs') {
-      const iocs = item.iocs;
-      if (!(iocs && Object.values(iocs).some(v => v && v.length > 0))) return false;
-    } else {
-      const catMatch = activeFilter === 'all' || item.category === activeFilter;
-      if (!catMatch) return false;
-    }
-
-    if (activeSeverity && (item.severity||'').toLowerCase() !== activeSeverity) {
-      return false;
-    }
-
-    if (watchlistOnly && !matchesWatchlist(item)) return false;
-
-    const q = searchQuery.toLowerCase();
-    if (!q) return true;
-    return (
-      (item.title       && item.title.toLowerCase().includes(q))       ||
-      (item.description && item.description.toLowerCase().includes(q)) ||
-      (item.cve_id      && item.cve_id.toLowerCase().includes(q))      ||
-      (item.source      && item.source.toLowerCase().includes(q))      ||
-      (item.ai_summary  && item.ai_summary.toLowerCase().includes(q))  ||
-      (item.ttps && item.ttps.some(t =>
-        t.id.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)
-      )) ||
-      (item.affected_products && item.affected_products.some(p =>
-        p.toLowerCase().includes(q)
-      ))
-    );
-  });
-
-  renderLimit = PAGE_SIZE;   // reset pagination window on every filter change
-  showContent();
-  renderCards();
-  updateHeaderStats();
-}
-
-// ─── Event Listeners ──────────────────────────────────────────────────────────
-function initFilters() {
-  document.getElementById('filter-tabs').addEventListener('click', e => {
-    const btn = e.target.closest('.filter-btn');
-    if (!btn) return;
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    activeFilter = btn.dataset.filter;
-    saveState();
-    applyFilters();
-  });
-}
-
-function initSearch() {
-  const input = document.getElementById('search-input');
-  let timer;
-  input.addEventListener('input', () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      searchQuery = input.value.trim();
-      applyFilters();
-    }, 250);
-  });
-}
-
-function initSeverityFilters() {
-  document.querySelectorAll('.stat-pill').forEach(pill => {
-    pill.style.cursor = 'pointer';
-    pill.addEventListener('click', () => {
-      const sev = pill.id.replace('stat-', '');
-      if (sev === 'items') {
-        activeSeverity = null;
-        document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
-      } else {
-        if (activeSeverity === sev) {
-          activeSeverity = null;
-          pill.classList.remove('active');
-        } else {
-          activeSeverity = sev;
-          document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
-          pill.classList.add('active');
-        }
-      }
-      saveState();
-      applyFilters();
-    });
-  });
-}
-
-// ─── Render Cards ─────────────────────────────────────────────────────────────
-function renderCards() {
-  const container = document.getElementById('cards-container');
-  const noResults = document.getElementById('no-results');
-  const feedCount = document.getElementById('feed-count');
-
-  container.innerHTML = '';
-
-  if (filteredItems.length === 0) {
-    noResults.style.display = 'block';
-    feedCount.textContent   = 'No items found';
-    return;
-  }
-
-  noResults.style.display = 'none';
-
-  const sorted = [...filteredItems].sort((a, b) => {
-    if (sortMode === 'priority') {
-      const pa = a.priority_score ?? -1, pb = b.priority_score ?? -1;
-      if (pb !== pa) return pb - pa;
-    }
-    return new Date(b.published || 0) - new Date(a.published || 0);
-  });
-
-  const shown = sorted.slice(0, renderLimit);
-  feedCount.textContent =
-    `${shown.length} of ${filteredItems.length} item${filteredItems.length !== 1 ? 's' : ''}` +
-    (sortMode === 'priority' ? ' · by priority' : '');
-
-  const frag = document.createDocumentFragment();
-  shown.forEach((item, index) => frag.appendChild(buildCard(item, index)));
-  container.appendChild(frag);
-
-  // "Load more" affordance when the window is smaller than the result set.
-  if (sorted.length > renderLimit) {
-    const more = document.createElement('button');
-    more.className = 'load-more-btn';
-    more.textContent = `▼ LOAD MORE (${sorted.length - renderLimit} remaining)`;
-    more.addEventListener('click', () => { renderLimit += PAGE_SIZE; renderCards(); });
-    container.appendChild(more);
-  }
-}
-
-// ─── Build Card ───────────────────────────────────────────────────────────────
-function buildCard(item, index) {
-  const card  = document.createElement('div');
-  const mySeq = ++mermaidSeq;
-
-  // Prefer the pipeline's accurate "new since last run" flag; fall back to the
-  // published-within-24h heuristic for older data that predates the field.
-  const isNew = (item.is_new === true) ||
-    (item.is_new === undefined && item.published &&
-     (Date.now() - new Date(item.published)) < 86_400_000);
-
-  card.className = 'intel-card';
-  if (isNew) card.classList.add('new-item');
-  if (matchesWatchlist(item)) card.classList.add('watchlist-hit');
-
-  // ── FIX: was item.aisummary (wrong) → now item.ai_summary (correct) ────────
-  const hasAI = item.ai_summary &&
-                item.ai_summary !== 'AI analysis pending' &&
-                item.ai_summary !== '';
-
-  if (hasAI) card.classList.add('ai-enriched');
-
-  card.dataset.category = item.category || 'news';
-  card.style.animationDelay = `${index * 0.04}s`;
-
-  const severity       = (item.severity || 'medium').toLowerCase();
-  const providerLabel  = (item.ai_provider || 'AI').toUpperCase();
-  const modelLabel     = item.ai_model || item.ai_provider || 'AI';
-
-  const badgeHTML    = `<span class="badge ${severity}">${severity.toUpperCase()}</span>`;
-  const newBadgeHTML = isNew ? `<span class="new-item-badge">NEW</span>` : '';
-  const aiBadgeHTML  = hasAI
-    ? `<span class="ai-badge" title="Enriched by ${escapeHTML(providerLabel)}: ${escapeHTML(modelLabel)}">${escapeHTML(providerLabel)}</span>`
-    : '';
-
-  // Threat actor badges
-  const threatActorHTML = (item.threat_actors && item.threat_actors.length > 0)
-    ? item.threat_actors.slice(0, 2).map(actor => 
-        `<span class="threat-actor-badge" data-actor="${escapeHTML(actor)}" title="Filter by ${escapeHTML(actor)}">${escapeHTML(actor)}</span>`
-      ).join('')
-    : '';
-
-  // Public PoC badge
-  const pocBadgeHTML = item.has_poc
-    ? `<span class="poc-badge" title="Public PoC on GitHub${item.poc_url ? ': ' + item.poc_url : ''}"><a href="${escapeHTML(item.poc_url || '#')}" target="_blank" rel="noopener" onclick="event.stopPropagation()">💥 PoC</a></span>`
-    : '';
-
-  // Stack match badge
-  const stackMatch = matchesStack(item);
-  const stackBadgeHTML = stackMatch ? `<span class="stack-badge" title="Matches your monitored stack">⚙ STACK</span>` : '';
-
-  // Mark this CVE as seen (local NEW tracking)
-  if (item.cve_id) markAsSeen(item.cve_id);
-
-  // CISA KEV badge
-  const cisaKevHTML = item.cisa_kev
-    ? `<span class="cisa-kev-badge" title="Known Exploited Vulnerability (CISA KEV)">KEV</span>`
-    : '';
-
-  const cveIdHTML  = item.cve_id ? `<span class="cve-id" data-cve="${escapeHTML(item.cve_id)}" title="Click for CVE details">${escapeHTML(item.cve_id)}</span> · ` : '';
-  const descHTML   = item.description
-    ? `<p class="card-description">${escapeHTML(item.description)}</p>` : '';
-  const dateStr    = item.published ? timeAgo(new Date(item.published)) : '';
-  const cvssHTML   = item.cvss_score
-    ? `<span class="meta-tag meta-cvss">CVSS ${item.cvss_score.toFixed(1)}</span>` : '';
-  const aiScoreHTML = (item.severity_score != null)
-    ? `<span class="meta-tag meta-ai-score" title="AI severity score: ${escapeHTML(modelLabel)}">✦ AI ${item.severity_score.toFixed(1)}</span>`
-    : '';
-
-  const epssHTML = (item.epss_score != null)
-    ? `<span class="meta-tag meta-epss" title="EPSS: ${(item.epss_score * 100).toFixed(2)}% probability of exploit in 30 days">✦ EPSS ${(item.epss_score * 100).toFixed(1)}%</span>`
-    : '';
-
-  const priorityHTML = (item.priority_score != null)
-    ? `<span class="meta-tag meta-priority prio-${escapeHTML(item.priority_label || 'low')}" title="Prioritization score (CVSS+EPSS+KEV): ${escapeHTML(item.priority_rationale || '')}">⚑ P${item.priority_score.toFixed(0)}</span>`
-    : '';
-
-  // IOC indicators
-  const iocHTML = buildIOCSection(item);
-
-  // Analysis section — graph source is unescaped for Mermaid
-  const graphSource    = (item.workflow_graph || '').replace(/\\n/g, '\n');
-  const aiSummaryText  = item.ai_summary || '';
-
-  const analysisHTML = `
-    <div class="analysis-section" id="analysis-${mySeq}">
-      <div class="analysis-header">
-        <span class="analysis-label">AI THREAT ANALYSIS</span>
-        <span class="analysis-model">${escapeHTML(modelLabel)}</span>
-      </div>
-      <p class="analysis-summary">${escapeHTML(aiSummaryText)}</p>
-      ${graphSource ? `
-      <div class="analysis-graph-wrap">
-        <div class="analysis-graph-label">ATTACK FLOW</div>
-        <div class="mermaid-container" id="mermaid-${mySeq}" data-graph="${escapeHTML(graphSource)}" data-rendered="false">
-          <div class="mermaid-spinner">
-            <div class="mermaid-spinner-ring"></div>
-            <span>Rendering diagram…</span>
-          </div>
-        </div>
-      </div>` : ''}
-    </div>
-  `;
-
-  const expandHintHTML = `
-    <div class="card-expand-hint">
-      ${hasAI ? '▼ EXPAND AI ANALYSIS' : '▼ EXPAND'}
-    </div>`;
-
-  card.innerHTML = `
-    <div class="card-top">
-      <p class="card-title">
-        ${item.url
-          ? `<a href="${escapeHTML(item.url)}" target="_blank" rel="noopener"
-               onclick="event.stopPropagation()">${escapeHTML(item.title)}</a>`
-          : escapeHTML(item.title)
-        }
-        ${newBadgeHTML}${aiBadgeHTML}${cisaKevHTML}${pocBadgeHTML}${stackBadgeHTML}
-      </p>
-      ${badgeHTML}
-    </div>
-    ${threatActorHTML ? `<div class="card-actors">${threatActorHTML}</div>` : ''}
-    ${descHTML}
-    <div class="card-meta">
-      ${cveIdHTML}
-      <span class="meta-tag meta-source">${escapeHTML(item.source || 'unknown')}</span>
-      <span class="meta-tag meta-cat">${escapeHTML(item.category || 'general')}</span>
-      ${priorityHTML}${cvssHTML}${aiScoreHTML}${epssHTML}
-      <span class="meta-date">${dateStr}</span>
-    </div>
-    ${iocHTML}
-    ${analysisHTML}
-    ${expandHintHTML}
-  `;
-
-  // ── Card click → toggle expand + lazy-render Mermaid ────────────────────────
-  card.addEventListener('click', e => {
-    if (e.target.closest('a')) return;
-
-    const wasExpanded = card.classList.contains('expanded');
-    card.classList.toggle('expanded');
-
-    if (!wasExpanded && graphSource) {
-      const container = card.querySelector(`#mermaid-${mySeq}`);
-      if (container && container.dataset.rendered === 'false') {
-        container.dataset.rendered = 'true';
-        renderMermaidAsync(container, graphSource, mySeq, item);
-      }
-    }
-  });
-
-  return card;
-}
-
-// ─── Mermaid Async Renderer ───────────────────────────────────────────────────
-async function renderMermaidAsync(container, graphSource, seqId, item) {
-  if (typeof mermaid === 'undefined') {
-    container.innerHTML = '<p class="mermaid-error">Mermaid.js not loaded</p>';
-    return;
-  }
+/**
+ * Per-source last-seen data, for the staleness badges.
+ *
+ * This used to fetch data/source_health_history.jsonl — an append-only file that
+ * had reached 1.8 MB and was downloaded IN FULL on every page load, purely to
+ * compute one timestamp per source. The pipeline now rolls it up server-side.
+ */
+async function loadHealthSummary() {
   try {
-    const diagramId = `mermaid-diagram-${seqId}`;
-    const { svg }   = await mermaid.render(diagramId, graphSource);
-
-    container.innerHTML = svg;
-
-    const svgEl = container.querySelector('svg');
-    if (svgEl) {
-      svgEl.style.maxWidth  = '100%';
-      svgEl.style.height    = 'auto';
-      svgEl.style.display   = 'block';
-      svgEl.removeAttribute('width');
-      svgEl.removeAttribute('height');
-    }
-
-  } catch (err) {
-    console.warn('Mermaid render error:', err);
-    // Show cleaned graph source as readable fallback
-    const pre  = document.createElement('pre');
-    pre.className   = 'mermaid-raw-fallback';
-    pre.textContent = graphSource;
-    container.innerHTML = '';
-    container.appendChild(pre);
-  }
-}
-
-// Jump to a card in the feed by title fragment
-window.jumpToItem = function(titleFrag) {
-  activeFilter = 'all';
-  searchQuery  = titleFrag;
-  document.querySelectorAll('.filter-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.filter === 'all')
-  );
-  const si = document.getElementById('search-input');
-  if (si) si.value = titleFrag;
-  showContent();
-  applyFilters();
-  // Briefly highlight the first result
-  setTimeout(() => {
-    const first = document.querySelector('.intel-card');
-    if (first) {
-      first.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      first.style.outline = '2px solid var(--accent-cyan)';
-      setTimeout(() => { if (first) first.style.outline = ''; }, 2500);
-    }
-  }, 150);
-};
-
-// ─── Render Sidebar ───────────────────────────────────────────────────────────
-function renderSidebar() {
-  renderSeverityBars();
-  renderSourceList();
-  renderCategoryList();
-}
-
-function renderSeverityBars() {
-  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
-  allItems.forEach(i => {
-    const s = (i.severity || '').toLowerCase();
-    if (s in counts) counts[s]++;
-  });
-  const max = Math.max(...Object.values(counts), 1);
-  Object.entries(counts).forEach(([sev, count]) => {
-    document.getElementById(`bar-${sev}`).style.width = `${(count / max) * 100}%`;
-    document.getElementById(`sev-count-${sev}`).textContent = count;
-  });
-}
-
-function renderSourceList() {
-  const counts = {};
-  allItems.forEach(i => { const s = i.source || 'unknown'; counts[s] = (counts[s] || 0) + 1; });
-  document.getElementById('source-list').innerHTML =
-    Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([name, count]) => `
-      <div class="source-item">
-        <span class="source-name">${escapeHTML(name)}</span>
-        <span class="source-badge">${count}</span>
-      </div>`).join('');
-}
-
-function renderCategoryList() {
-  const counts = {};
-  allItems.forEach(i => { const c = i.category || 'general'; counts[c] = (counts[c] || 0) + 1; });
-  document.getElementById('cat-list').innerHTML =
-    Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([cat, count]) => `
-      <div class="cat-item" data-cat="${escapeHTML(cat)}">
-        <span class="cat-name">${escapeHTML(cat)}</span>
-        <span class="cat-count">${count}</span>
-      </div>`).join('');
-}
-
-window.filterByCategory = function(cat) {
-  activeFilter = cat;
-  document.querySelectorAll('.filter-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.filter === cat)
-  );
-  applyFilters();
-};
-
-window.filterByThreatActor = function(actor) {
-  activeFilter = 'all';
-  searchQuery = actor;
-  document.querySelectorAll('.filter-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.filter === 'all')
-  );
-  const si = document.getElementById('search-input');
-  if (si) si.value = actor;
-  showContent();
-  applyFilters();
-};
-
-// ─── Header Stats ─────────────────────────────────────────────────────────────
-function updateHeaderStats() {
-  const critical = filteredItems.filter(i => (i.severity||'').toLowerCase() === 'critical').length;
-  const high     = filteredItems.filter(i => (i.severity||'').toLowerCase() === 'high').length;
-  const medium   = filteredItems.filter(i => (i.severity||'').toLowerCase() === 'medium').length;
-  document.getElementById('count-critical').textContent = critical;
-  document.getElementById('count-high').textContent     = high;
-  document.getElementById('count-medium').textContent   = medium;
-  document.getElementById('count-total').textContent    = filteredItems.length;
-}
-
-// ─── UI State Transitions ─────────────────────────────────────────────────────
-function showContent() {
-  document.getElementById('loading-state').style.display   = 'none';
-  document.getElementById('error-state').style.display     = 'none';
-  document.getElementById('matrix-view').style.display     = 'none';
-  const tv = document.getElementById('trends-view'); if (tv) tv.style.display = 'none';
-  document.getElementById('cards-container').style.display = 'flex';
-}
-
-function showError() {
-  document.getElementById('loading-state').style.display = 'none';
-  document.getElementById('error-state').style.display   = 'block';
-}
-
-function showMatrixView() {
-  if (allItems.length === 0) {
-    document.getElementById('loading-state').style.display = 'flex';
-    return;
-  }
-  document.getElementById('loading-state').style.display   = 'none';
-  document.getElementById('error-state').style.display     = 'none';
-  document.getElementById('cards-container').style.display = 'none';
-  document.getElementById('no-results').style.display      = 'none';
-  const tv = document.getElementById('trends-view'); if (tv) tv.style.display = 'none';
-  document.getElementById('matrix-view').style.display     = 'block';
-  renderMatrixGrid();
-  document.getElementById('feed-count').textContent =
-    'MITRE ATT&CK Coverage Map — click any technique to filter feed';
-}
-
-// ─── Daily Summary Bar ────────────────────────────────────────────────────────
-function renderDailySummary() {
-  const bar   = document.getElementById('daily-summary');
-  const stats = document.getElementById('summary-stats');
-  const top   = document.getElementById('summary-top-threat');
-  if (!bar || !stats) return;
-
-  const critical   = allItems.filter(i => i.severity === 'critical').length;
-  const high       = allItems.filter(i => i.severity === 'high').length;
-  const medium     = allItems.filter(i => i.severity === 'medium').length;
-  const newItems   = allItems.filter(i => i.published && Date.now()-new Date(i.published)<86400000).length;
-  const kevItems   = allItems.filter(i => i.cisa_kev).length;
-  const pocItems   = allItems.filter(i => i.has_poc).length;
-  const stackItems = allItems.filter(matchesStack).length;
-  const incidents  = allItems.filter(i => i.category === 'incident').length;
-  const cves       = allItems.filter(i => i.category === 'cve').length;
-  const advisories = allItems.filter(i => i.category === 'advisory').length;
-  // ── FIX: was item.aisummary (wrong) → now item.ai_summary (correct) ────────
-  const aiEnriched = allItems.filter(i =>
-    i.ai_summary && i.ai_summary !== 'AI analysis pending' && i.ai_summary !== ''
-  ).length;
-
-  stats.innerHTML = `
-    <span class="summary-stat"><span class="summary-stat-val c">${critical}</span><span class="summary-stat-lbl">CRITICAL</span></span>
-    <span class="summary-stat"><span class="summary-stat-val h">${high}</span><span class="summary-stat-lbl">HIGH</span></span>
-    <span class="summary-stat"><span class="summary-stat-val m">${medium}</span><span class="summary-stat-lbl">MEDIUM</span></span>
-    <span class="summary-divider">·</span>
-    <span class="summary-stat"><span class="summary-stat-val n">${cves}</span><span class="summary-stat-lbl">CVEs</span></span>
-    <span class="summary-stat"><span class="summary-stat-val n">${incidents}</span><span class="summary-stat-lbl">INCIDENTS</span></span>
-    <span class="summary-stat"><span class="summary-stat-val n">${advisories}</span><span class="summary-stat-lbl">ADVISORIES</span></span>
-    <span class="summary-divider">·</span>
-    <span class="summary-stat"><span class="summary-stat-val" style="color:var(--critical)">${kevItems}</span><span class="summary-stat-lbl">KEV</span></span>
-    <span class="summary-stat"><span class="summary-stat-val" style="color:var(--high)">${pocItems}</span><span class="summary-stat-lbl">PoC</span></span>
-    <span class="summary-divider">·</span>
-    <span class="summary-stat"><span class="summary-stat-val" style="color:var(--accent-cyan)">${newItems}</span><span class="summary-stat-lbl">NEW TODAY</span></span>
-    <span class="summary-stat"><span class="summary-stat-val" style="color:#a78bfa">${aiEnriched}</span><span class="summary-stat-lbl">AI ENRICHED</span></span>
-    ${stackItems ? `<span class="summary-stat"><span class="summary-stat-val" style="color:#ff8c42">${stackItems}</span><span class="summary-stat-lbl">STACK HITS</span></span>` : ''}
-  `;
-
-  const topThreat = allItems.find(i => i.severity === 'critical') ||
-                    allItems.find(i => i.severity === 'high');
-  if (top && topThreat) {
-    top.innerHTML = `🔴 Top threat: <strong>${escapeHTML(topThreat.title.substring(0,80))}${topThreat.title.length>80?'…':''}</strong>`;
-    top.style.cursor = 'pointer';
-    top.onclick = () => {
-      activeFilter = 'all';
-      searchQuery = '';
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'all'));
-      applyFilters();
-      setTimeout(() => {
-        const firstCard = document.querySelector('.intel-card');
-        if (firstCard) {
-          firstCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          firstCard.classList.add('expanded');
-        }
-      }, 100);
-    };
-  }
-  bar.style.display = 'block';
-}
-
-// ─── Mobile Sidebar Toggle ────────────────────────────────────────────────────
-(function initMobileToggle() {
-  const btn = document.getElementById('toggle-sidebar-btn');
-  if (!btn) return;
-  btn.addEventListener('click', () => {
-    const sidebar = document.querySelector('.sidebar');
-    const label   = document.getElementById('toggle-label');
-    if (!sidebar) return;
-    const isOpen = sidebar.classList.toggle('mobile-open');
-    if (label) label.textContent = isOpen ? '▲ HIDE STATS' : '▼ SHOW STATS';
-  });
-})();
-
-// ─── CVE Deep-Dive Modal ─────────────────────────────────────────────────────
-// Cross-reference links for a CVE: NVD, EPSS (FIRST), CISA KEV, cve.org.
-function buildCveXrefLinks(cveId, isKev, pocUrl) {
-  const id = encodeURIComponent(cveId);
-  const pocLink = pocUrl
-    ? `<a class="xref-link xref-poc" href="${escapeHTML(pocUrl)}" target="_blank" rel="noopener">💥 PoC ↗</a>`
-    : '';
-  return `
-    <div class="modal-xref-links">
-      <a class="xref-link" href="https://nvd.nist.gov/vuln/detail/${id}" target="_blank" rel="noopener">NVD ↗</a>
-      <a class="xref-link" href="https://www.cve.org/CVERecord?id=${id}" target="_blank" rel="noopener">CVE.org ↗</a>
-      <a class="xref-link" href="https://api.first.org/data/v1/epss?cve=${id}" target="_blank" rel="noopener">EPSS ↗</a>
-      <a class="xref-link ${isKev ? 'xref-kev' : ''}" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=${id}" target="_blank" rel="noopener">${isKev ? '⚠ CISA KEV ↗' : 'CISA KEV ↗'}</a>
-      <a class="xref-link" href="https://www.exploit-db.com/search?cve=${id}" target="_blank" rel="noopener">ExploitDB ↗</a>
-      ${pocLink}
-    </div>`;
-}
-
-window.openCveModal = function(cveId) {
-  const modal = document.getElementById('cve-modal');
-  const modalTitle = document.getElementById('modal-cve-id');
-  const modalBody = document.getElementById('modal-body');
-  
-  if (!modal || !modalTitle || !modalBody) return;
-  
-  const item = allItems.find(i => i.cve_id?.toUpperCase() === cveId.toUpperCase());
-  const xrefs = buildCveXrefLinks(cveId, !!item?.cisa_kev, item?.poc_url);
-
-  modalTitle.textContent = cveId;
-  modalBody.innerHTML = `
-    ${xrefs}
-    <div class="modal-loading">
-      <div class="loader-ring"></div>
-      <span>Fetching NVD details...</span>
-    </div>
-  `;
-  modal.style.display = 'flex';
-  
-  fetchCveDetails(cveId);
-};
-
-window.closeCveModal = function() {
-  const modal = document.getElementById('cve-modal');
-  if (modal) modal.style.display = 'none';
-};
-
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeCveModal();
-});
-
-document.getElementById('cve-modal')?.addEventListener('click', e => {
-  if (e.target.classList.contains('modal-overlay')) closeCveModal();
-});
-
-async function fetchCveDetails(cveId) {
-  const modalBody = document.getElementById('modal-body');
-  if (!modalBody) return;
-  
-  // Validate CVE ID format
-  if (!/^CVE-\d{4}-\d{4,7}$/i.test(cveId)) {
-    modalBody.innerHTML = '<div class="modal-error">Invalid CVE ID format</div>';
-    return;
-  }
-  
-  // Rate limiting: retry with exponential backoff
-  const maxRetries = 3;
-  let lastError = null;
-  
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const resp = await fetch(`https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId)}`);
-      
-      if (resp.status === 429) {
-        // Rate limited - wait and retry
-        const waitTime = Math.pow(2, attempt) * 1000;
-        console.warn(`Rate limited, retrying in ${waitTime}ms...`);
-        await new Promise(r => setTimeout(r, waitTime));
-        continue;
-      }
-      
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      
-      const vuln = data?.vulnerabilities?.[0]?.cve;
-      if (!vuln) throw new Error('CVE not found');
-      
-      const descriptions = vuln.descriptions || [];
-      const description = descriptions.find(d => d.lang === 'en')?.value || 'No description available.';
-      
-      let cvssScore = null, cvssVector = null, severity = 'UNKNOWN';
-      for (const metric of ['cvssMetricV31', 'cvssMetricV30', 'cvssMetricV2']) {
-        const m = vuln.metrics?.[metric];
-        if (m?.length) {
-          cvssScore = m[0].cvssData?.baseScore;
-          cvssVector = m[0].cvssData?.vectorString;
-          severity = m[0].cvssData?.baseSeverity || severity;
-          break;
-        }
-      }
-      
-      const references = (vuln.references || []).slice(0, 8).map(ref => 
-        `<a class="modal-ref-link" href="${escapeHTML(ref.url)}" target="_blank" rel="noopener">${escapeHTML(ref.url)}</a>`
-      ).join('');
-      
-      const published = vuln.published ? new Date(vuln.published).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A';
-      const lastModified = vuln.lastModified ? new Date(vuln.lastModified).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A';
-      
-      const item = allItems.find(i => i.cve_id?.toUpperCase() === cveId.toUpperCase());
-      const epssScore = item?.epss_score != null ? item.epss_score : null;
-      const epssPercentile = epssScore != null ? (epssScore * 100).toFixed(2) : 'N/A';
-      
-      const severityClass = severity.toLowerCase();
-      
-      modalBody.innerHTML = `
-        ${buildCveXrefLinks(cveId, !!item?.cisa_kev, item?.poc_url)}
-        <div class="modal-section">
-          <div class="modal-section-title">Overview</div>
-          <div class="modal-grid">
-            <div class="modal-stat">
-              <div class="modal-stat-label">Published</div>
-              <div class="modal-stat-value">${published}</div>
-            </div>
-            <div class="modal-stat">
-              <div class="modal-stat-label">Last Modified</div>
-              <div class="modal-stat-value">${lastModified}</div>
-            </div>
-            <div class="modal-stat">
-              <div class="modal-stat-label">CVSS Score</div>
-              <div class="modal-stat-value ${severityClass}">${cvssScore ?? 'N/A'}</div>
-            </div>
-            <div class="modal-stat">
-              <div class="modal-stat-label">Severity</div>
-              <div class="modal-stat-value ${severityClass}">${escapeHTML(severity)}</div>
-            </div>
-            ${epssScore != null ? `
-            <div class="modal-stat">
-              <div class="modal-stat-label">EPSS Score</div>
-              <div class="modal-stat-value">${epssScore.toFixed(4)}</div>
-            </div>
-            <div class="modal-stat">
-              <div class="modal-stat-label">EPSS Percentile</div>
-              <div class="modal-stat-value">${epssPercentile}%</div>
-            </div>
-            ` : ''}
-          </div>
-          ${epssScore != null ? `
-          <div class="modal-section" style="margin-top:12px;">
-            <div class="modal-section-title">Exploit Prediction (EPSS)</div>
-            <div class="modal-epss-bar">
-              <div class="modal-epss-fill" style="width:${epssPercentile}%"></div>
-            </div>
-            <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">Percentile: ${epssPercentile}% — This CVE is predicted to have exploit activity within the next 30 days.</div>
-          </div>
-          ` : ''}
-        </div>
-        
-        <div class="modal-section">
-          <div class="modal-section-title">Description</div>
-          <div class="modal-description">${escapeHTML(description)}</div>
-        </div>
-        
-        ${cvssVector ? `
-        <div class="modal-section">
-          <div class="modal-section-title">CVSS Vector</div>
-          <div class="modal-description" style="font-family:var(--font-mono);font-size:11px;word-break:break-all;">${escapeHTML(cvssVector)}</div>
-        </div>
-        ` : ''}
-        
-        ${references ? `
-        <div class="modal-section">
-          <div class="modal-section-title">References</div>
-          <div class="modal-refs">${references}</div>
-        </div>
-        ` : ''}
-      `;
-      
-      return; // Success - exit the retry loop
-      
-    } catch (err) {
-      lastError = err;
-      console.error('CVE fetch error:', err);
-      
-      // If it's a 429, the outer loop will handle retry
-      // Otherwise, don't retry on other errors
-      if (err.message !== 'HTTP 429') {
-        break;
-      }
-    }
-  }
-  
-  // All retries failed — still show cross-reference links so the user can
-  // check NVD / EPSS / KEV manually.
-  modalBody.innerHTML = `
-          ${buildCveXrefLinks(cveId, false, item?.poc_url)}
-    <div class="modal-error">Failed to load CVE details: ${escapeHTML(lastError?.message || 'Unknown error')}</div>`;
-}
-
-// ─── MITRE ATT&CK Matrix ─────────────────────────────────────────────────────
-const TACTIC_ORDER = [
-  { id: "TA0043", name: "Reconnaissance"    },
-  { id: "TA0042", name: "Resource Dev"      },
-  { id: "TA0001", name: "Initial Access"    },
-  { id: "TA0002", name: "Execution"         },
-  { id: "TA0003", name: "Persistence"       },
-  { id: "TA0004", name: "Privilege Esc"     },
-  { id: "TA0005", name: "Defense Evasion"   },
-  { id: "TA0006", name: "Credential Access" },
-  { id: "TA0007", name: "Discovery"         },
-  { id: "TA0008", name: "Lateral Movement"  },
-  { id: "TA0009", name: "Collection"        },
-  { id: "TA0011", name: "Command & Control" },
-  { id: "TA0010", name: "Exfiltration"      },
-  { id: "TA0040", name: "Impact"            },
-];
-
-function renderMatrixGrid() {
-  const grid = document.getElementById('matrix-grid');
-  if (!grid) return;
-
-  const tacticMap = {};
-  TACTIC_ORDER.forEach(t => { tacticMap[t.id] = {}; });
-
-  allItems.forEach(item => {
-    (item.ttps || []).forEach(ttp => {
-      if (!tacticMap[ttp.tactic_id]) tacticMap[ttp.tactic_id] = {};
-      if (!tacticMap[ttp.tactic_id][ttp.id]) {
-        tacticMap[ttp.tactic_id][ttp.id] = { name: ttp.name, count: 0, items: [] };
-      }
-      tacticMap[ttp.tactic_id][ttp.id].count++;
-      tacticMap[ttp.tactic_id][ttp.id].items.push(item.title);
-    });
-  });
-
-  grid.innerHTML = TACTIC_ORDER.map(tactic => {
-    const techniques  = tacticMap[tactic.id] || {};
-    const techEntries = Object.entries(techniques).sort((a, b) => b[1].count - a[1].count);
-    const totalCount  = techEntries.reduce((s, [, d]) => s + d.count, 0);
-    const cells = techEntries.map(([techId, data]) => {
-      const intensity = data.count >= 3 ? 'high' : 'med';
-      const tooltip   = `${data.count} item(s): ${data.items.slice(0,2).join(' | ')}${data.items.length>2?'...':''}`;
-      return `
-         <div class="tech-cell active-${intensity}"
-              title="${escapeHTML(tooltip)}"
-              data-tech="${escapeHTML(techId)}">
-          <span class="tech-id">${escapeHTML(techId)}</span>
-          <span class="tech-name">${escapeHTML(data.name)}</span>
-          <span class="tech-count">${data.count}</span>
-        </div>`;
-    }).join('');
-    return `
-      <div class="tactic-col">
-        <div class="tactic-header">
-          <span class="tactic-name">${escapeHTML(tactic.name)}</span>
-          <span class="tactic-count">${techEntries.length > 0 ? totalCount : '—'}</span>
-        </div>
-        <div class="tactic-cells">
-          ${cells || `<div class="tech-cell inactive"><span class="tech-name">No hits</span></div>`}
-        </div>
-      </div>`;
-  }).join('');
-}
-
-window.filterByTechnique = function(techId) {
-  activeFilter = 'all';
-  searchQuery  = techId;
-  document.querySelectorAll('.filter-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.filter === 'all')
-  );
-  const si = document.getElementById('search-input');
-  if (si) si.value = techId;
-  showContent();
-  applyFilters();
-};
-
-// ─── Watchlist (saved searches) ───────────────────────────────────────────────
-function matchesWatchlist(item) {
-  if (!watchlist.length) return false;
-  const hay = `${item.title || ''} ${item.description || ''} ${item.cve_id || ''} ${item.source || ''}`.toLowerCase();
-  return watchlist.some(kw => hay.includes(kw.toLowerCase()));
-}
-
-function saveWatchlist() {
-  try { localStorage.setItem('cw_watchlist', JSON.stringify(watchlist)); } catch (_) {}
-}
-
-function initWatchlist() {
-  const input = document.getElementById('watchlist-input');
-  if (input) {
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') {
-        const val = input.value.trim();
-        if (val && !watchlist.includes(val)) {
-          watchlist.push(val);
-          saveWatchlist();
-          renderWatchlist();
-          applyFilters();
-        }
-        input.value = '';
-      }
-    });
-  }
-  const toggle = document.getElementById('watchlist-only-btn');
-  if (toggle) {
-    toggle.addEventListener('click', () => {
-      watchlistOnly = !watchlistOnly;
-      toggle.classList.toggle('active', watchlistOnly);
-      toggle.textContent = watchlistOnly ? '★ SHOWING WATCHLIST' : '☆ WATCHLIST ONLY';
-      saveState();
-      applyFilters();
-    });
-  }
-  renderWatchlist();
-}
-
-window.removeWatchKeyword = function(kw) {
-  watchlist = watchlist.filter(w => w !== kw);
-  saveWatchlist();
-  renderWatchlist();
-  applyFilters();
-};
-
-function renderWatchlist() {
-  const wrap = document.getElementById('watchlist-chips');
-  if (!wrap) return;
-  const matchCount = allItems.filter(matchesWatchlist).length;
-  if (!watchlist.length) {
-    wrap.innerHTML = '<span class="watchlist-empty">Add keywords (e.g. Fortinet, npm, Citrix) to track your stack.</span>';
-  } else {
-    wrap.innerHTML = watchlist.map(kw =>
-      `<span class="watch-chip">${escapeHTML(kw)}<span class="watch-x" data-keyword="${escapeHTML(kw)}">×</span></span>`
-    ).join('');
-  }
-  const badge = document.getElementById('watchlist-match-count');
-  if (badge) badge.textContent = watchlist.length ? `${matchCount} match${matchCount !== 1 ? 'es' : ''}` : '';
-  const toggle = document.getElementById('watchlist-only-btn');
-  if (toggle) toggle.style.display = watchlist.length ? 'block' : 'none';
-}
-
-// ─── Sort toggle (latest vs priority) ─────────────────────────────────────────
-function initSortToggle() {
-  const btn = document.getElementById('sort-toggle');
-  if (!btn) return;
-  btn.addEventListener('click', () => {
-    sortMode = sortMode === 'latest' ? 'priority' : 'latest';
-    btn.textContent = sortMode === 'priority' ? '⚑ TOP PRIORITY' : '↓ LATEST FIRST';
-    saveState();
-    renderLimit = PAGE_SIZE;
-    renderCards();
-  });
-}
-
-// ─── Infinite scroll (lazy pagination) ────────────────────────────────────────
-function initInfiniteScroll() {
-  const sentinel = document.getElementById('scroll-sentinel');
-  if (!sentinel || !('IntersectionObserver' in window)) return;
-  const io = new IntersectionObserver(entries => {
-    for (const entry of entries) {
-      if (entry.isIntersecting && filteredItems.length > renderLimit &&
-          activeFilter !== 'matrix' && activeFilter !== 'trends') {
-        renderLimit += PAGE_SIZE;
-        renderCards();
-      }
-    }
-  }, { rootMargin: '600px' });
-  io.observe(sentinel);
-}
-
-// ─── Delegated event listeners (replaces inline onclick for CSP compliance) ──
-function initDelegations() {
-  // Actor filter badges.
-  document.addEventListener('click', e => {
-    const actorBadge = e.target.closest('.threat-actor-badge');
-    if (actorBadge && actorBadge.dataset.actor) {
-      e.stopPropagation();
-      filterByThreatActor(actorBadge.dataset.actor);
-      return;
-    }
-    const cveSpan = e.target.closest('.cve-id');
-    if (cveSpan && cveSpan.dataset.cve) {
-      e.stopPropagation();
-      openCveModal(cveSpan.dataset.cve);
-      return;
-    }
-    const catItem = e.target.closest('.cat-item');
-    if (catItem && catItem.dataset.cat) {
-      filterByCategory(catItem.dataset.cat);
-      return;
-    }
-    const techCell = e.target.closest('.tech-cell');
-    if (techCell && techCell.dataset.tech) {
-      filterByTechnique(techCell.dataset.tech);
-      return;
-    }
-    const watchX = e.target.closest('.watch-x');
-    if (watchX && watchX.dataset.keyword) {
-      removeWatchKeyword(watchX.dataset.keyword);
-      return;
-    }
-    const stackX = e.target.closest('.stack-x');
-    if (stackX && stackX.dataset.stack) {
-      removeStackKeyword(stackX.dataset.stack);
-      return;
-    }
-    const trendCve = e.target.closest('.trending-cve');
-    if (trendCve && trendCve.dataset.cve) {
-      openCveModal(trendCve.dataset.cve);
-      return;
-    }
-    if (e.target.id === 'retry-btn') {
-      location.reload();
-    }
-  });
-}
-
-// ─── Source Health Panel ──────────────────────────────────────────────────────
-// Staleness map computed from data/source_health_history.jsonl:
-// source name → hours since it last returned data ("ok" with count > 0).
-let sourceStaleness = {};
-
-async function loadSourceHealthHistory() {
-  if (window.location.protocol === 'file:') return;
-  try {
-    const r = await fetch(`data/source_health_history.jsonl?v=${Date.now()}`);
-    if (!r.ok) return;
-    const text = await r.text();
-    const lastOk = {};   // name → most recent timestamp with data
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
-      let rec;
-      try { rec = JSON.parse(line); } catch (_) { continue; }
-      const ts = new Date(rec.timestamp).getTime();
-      if (isNaN(ts)) continue;
-      for (const [name, h] of Object.entries(rec.health || {})) {
-        if (h.status === 'ok' && h.count > 0 && (!lastOk[name] || ts > lastOk[name])) {
-          lastOk[name] = ts;
-        }
-      }
-    }
+    const resp = await fetch(`${HEALTH_URL}?v=${Date.now()}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
     const now = Date.now();
-    sourceStaleness = {};
-    for (const [name, ts] of Object.entries(lastOk)) {
-      sourceStaleness[name] = (now - ts) / 3600000;   // hours
+    store.staleness = {};
+    for (const [name, entry] of Object.entries(data.sources || {})) {
+      if (entry.last_ok) {
+        const ts = new Date(entry.last_ok).getTime();
+        if (!Number.isNaN(ts)) store.staleness[name] = (now - ts) / 3600000;
+      }
+      if (entry.uptime_30d != null) store.staleness[`${name}__uptime`] = entry.uptime_30d;
     }
   } catch (_) { /* staleness is best-effort */ }
 }
 
-function staleLabel(hours) {
-  if (hours < 48) return null;                       // <2 days = fresh
-  const days = Math.floor(hours / 24);
-  return `${days}d silent`;
-}
-
-function renderSourceHealth(health) {
-  const wrap = document.getElementById('source-health');
-  if (!wrap) return;
-  if (!health || !Object.keys(health).length) {
-    wrap.closest('.sidebar-card').style.display = 'none';
-    return;
-  }
-  const entries = Object.entries(health).sort((a, b) => {
-    const rank = s => (s === 'error' ? 0 : s === 'empty' ? 1 : 2);
-    return rank(a[1].status) - rank(b[1].status);
-  });
-  const okCount = entries.filter(([, h]) => h.status === 'ok').length;
-  document.getElementById('source-health-summary').textContent = `${okCount}/${entries.length} live`;
-  wrap.innerHTML = entries.map(([name, h]) => {
-    const dot = h.status === 'ok' ? 'ok' : h.status === 'empty' ? 'empty' : 'err';
-    const stale = h.status !== 'ok' ? staleLabel(sourceStaleness[name] ?? 0) : null;
-    const detail = h.status === 'error' ? (h.error || 'error') : `${h.count} item${h.count !== 1 ? 's' : ''}`;
-    const staleTip = stale ? ` — no data for ${stale.replace(' silent', ' days')}` : '';
-    return `<div class="health-item ${stale ? 'stale' : ''}" title="${escapeHTML(detail + staleTip)}">
-      <span class="health-dot ${dot}"></span>
-      <span class="health-name">${escapeHTML(name)}</span>
-      ${stale ? `<span class="health-stale-badge">${escapeHTML(stale)}</span>` : ''}
-      <span class="health-count">${h.status === 'error' ? '!' : h.count}</span>
-    </div>`;
-  }).join('');
-}
-
-// ─── Trends View ──────────────────────────────────────────────────────────────
-async function showTrendsView() {
-  document.getElementById('loading-state').style.display   = 'none';
-  document.getElementById('error-state').style.display     = 'none';
-  document.getElementById('cards-container').style.display = 'none';
-  document.getElementById('no-results').style.display      = 'none';
-  document.getElementById('matrix-view').style.display     = 'none';
-  const view = document.getElementById('trends-view');
-  view.style.display = 'block';
-  document.getElementById('feed-count').textContent = 'Threat trends over time';
-
-  if (!trendsData) {
-    view.innerHTML = '<div class="loading-state"><div class="loader-ring"></div><p>Loading trends…</p></div>';
+// ─── Live updates ─────────────────────────────────────────────────────────────
+/**
+ * Poll for a new intel.json and OFFER it, rather than reshuffling the page under
+ * whoever is reading. A dashboard that silently reorders mid-sentence is worse
+ * than a slightly stale one.
+ */
+function initLivePolling() {
+  setInterval(async () => {
+    if (document.hidden) return;
     try {
-      if (window.location.protocol !== 'file:') {
-        const r = await fetch(`data/trends.json?v=${Date.now()}`);
-        if (r.ok) trendsData = await r.json();
-      }
-    } catch (_) { /* fall through */ }
-    if (!trendsData) { trendsData = buildTrendsFromItems(); }
+      const head = await fetch(DATA_URL, { method: 'HEAD', cache: 'no-store' });
+      const stamp = head.headers.get('etag') || head.headers.get('last-modified');
+      if (!stamp || stamp === store.stamp) return;
+
+      const known = new Set(store.items.map((i) => i._key));
+      const fresh = await (await fetch(`${DATA_URL}?v=${Date.now()}`)).json();
+      const incoming = (fresh.items || []).filter((i) => !known.has(itemKey(i)));
+      store.stamp = stamp;
+
+      if (!incoming.length) { ingest(fresh); return; }
+      showToast(`${incoming.length} new item${incoming.length === 1 ? '' : 's'}`, 'Load', () => {
+        ingest(fresh);
+        store.items.forEach((i) => { if (!known.has(i._key)) i._justArrived = true; });
+        applyFilters();
+        renderAll();
+      });
+    } catch (_) { /* offline is fine */ }
+  }, POLL_INTERVAL);
+}
+
+let toastTimer = null;
+function showToast(message, actionLabel, onAction) {
+  const host = $('toast-host');
+  if (!host) return;
+  host.replaceChildren();
+  const toast = el('div', 'toast');
+  toast.appendChild(el('span', 'toast-msg', message));
+  if (actionLabel) {
+    const btn = el('button', 'toast-action', actionLabel);
+    btn.addEventListener('click', () => { onAction(); host.replaceChildren(); });
+    toast.appendChild(btn);
   }
-  renderTrends(trendsData);
+  const close = el('button', 'toast-close', '×');
+  close.setAttribute('aria-label', 'Dismiss notification');
+  close.addEventListener('click', () => host.replaceChildren());
+  toast.appendChild(close);
+  host.appendChild(toast);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => host.replaceChildren(), 30000);
 }
 
-// Fallback: derive a minimal single-day trends object from current items when
-// data/trends.json isn't reachable (e.g. file:// preview).
-function buildTrendsFromItems() {
-  const sev = { critical: 0, high: 0, medium: 0, low: 0 };
-  const actors = {}, sources = {}, ttps = {};
-  allItems.forEach(i => {
-    const s = (i.severity || 'medium').toLowerCase(); if (s in sev) sev[s]++;
-    (i.threat_actors || []).forEach(a => actors[a] = (actors[a] || 0) + 1);
-    if (i.source) sources[i.source] = (sources[i.source] || 0) + 1;
-    (i.ttps || []).forEach(t => {
-      const key = t.id || t.name || '?';
-      ttps[key] = (ttps[key] || 0) + 1;
-    });
-  });
-  const toArr = o => Object.entries(o).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
-  return {
-    days_covered: 1,
-    daily: [{ date: 'today', total: allItems.length, ...sev }],
-    severity_totals: sev,
-    top_actors: toArr(actors).slice(0, 10),
-    top_sources: toArr(sources).slice(0, 12),
-    top_ttps: toArr(ttps).slice(0, 10).map(({ name, count }) => ({ id: name, name, count })),
-    trending_cves: allItems.filter(i => i.priority_score != null)
-      .sort((a, b) => b.priority_score - a.priority_score).slice(0, 15)
-      .map(i => ({ cve: i.cve_id, max_priority: i.priority_score, kev: !!i.cisa_kev,
-                   days_seen: 1, last_seen: 'today', title: i.title })),
-  };
+// ─── Filtering ────────────────────────────────────────────────────────────────
+function applyFilters() {
+  const q = store.query.trim().toLowerCase();
+  let list = store.items;
+
+  if (!store.showDismissed) list = list.filter((i) => !store.dismissed.has(i._key));
+  if (store.watchlistOnly) list = list.filter(matchesWatchlist);
+
+  if (store.filter === 'iocs') {
+    list = list.filter((i) => i.iocs && Object.keys(i.iocs).length);
+  } else if (store.filter === 'stack') {
+    list = list.filter(matchesStack);
+  } else if (store.filter === 'starred') {
+    list = list.filter((i) => store.starred.has(i._key));
+  } else if (store.filter === 'exploited') {
+    list = list.filter((i) => i.cisa_kev || i.ssvc_exploitation === 'active' || i.has_poc);
+  } else if (CATEGORIES.includes(store.filter)) {
+    list = list.filter((i) => (i.category || 'news') === store.filter);
+  }
+
+  if (store.severity) {
+    list = list.filter((i) => (i.severity || '').toLowerCase() === store.severity);
+  }
+  if (q) {
+    list = list.filter((i) => (
+      `${i.title} ${i.description} ${i.cve_id || ''} ${i.source} ${(i.vendors || []).join(' ')}`
+    ).toLowerCase().includes(q));
+  }
+
+  list = list.slice();
+  if (store.sort === 'priority') {
+    // Priority-first is the default now. `severity` is inferred from headline
+    // keywords and is the weakest signal in the payload; priority_score blends
+    // CVSS, EPSS, KEV, public PoC and SSVC, and is the defensible one.
+    list.sort((a, b) => (b.priority_score || 0) - (a.priority_score || 0)
+      || String(b.published || '').localeCompare(String(a.published || '')));
+  } else {
+    list.sort((a, b) => String(b.published || '').localeCompare(String(a.published || '')));
+  }
+
+  store.filtered = list;
+  store.renderLimit = PAGE_SIZE;
+  // Keep the keyboard cursor across re-renders. Resetting it here meant that
+  // after the first `x` the cursor was gone, so the next press had no current
+  // item and silently did nothing — triage worked exactly once.
+  store.cursor = store.cursor < 0 ? -1 : Math.min(store.cursor, list.length - 1);
+  writeUrlState();
 }
 
-function renderTrends(t) {
-  const view = document.getElementById('trends-view');
-  const daily = t.daily || [];
-  const maxTotal = Math.max(1, ...daily.map(d => d.total));
-
-  // Stacked volume bars over time.
-  const volBars = daily.map((d, i) => {
-    const prev = i > 0 ? daily[i - 1] : null;
-    const h = pct => `${(pct / maxTotal) * 100}%`;
-    const seg = (cls, n) => n > 0 ? `<span class="tb-seg ${cls}" style="height:${h(n)}" title="${d.date}: ${n} ${cls}"></span>` : '';
-    return `<div class="trend-bar-col" title="${escapeHTML(d.date)}: ${d.total} items">
-      <div class="trend-bar-stack">
-        ${seg('critical', d.critical)}${seg('high', d.high)}${seg('medium', d.medium)}${seg('low', d.low)}
-      </div>
-      <span class="trend-bar-x">${escapeHTML((d.date || '').slice(5))} ${trendArrow(d.total, prev?.total)}</span>
-    </div>`;
-  }).join('');
-
-  const actorBars = renderBarList(t.top_actors, 'name', 'count', '#a78bfa');
-  const sourceBars = renderBarList(t.top_sources, 'name', 'count', 'var(--accent-cyan)');
-  const ttpBars = renderBarList((t.top_ttps || []).map(x => ({ name: `${x.id} ${x.name}`, count: x.count })), 'name', 'count', '#4da6ff');
-
-  const trendingRows = (t.trending_cves || []).map(c => `
-    <div class="trending-cve" data-cve="${escapeHTML(c.cve)}">
-      <span class="tc-id">${escapeHTML(c.cve)}</span>
-      ${c.kev ? '<span class="tc-kev">KEV</span>' : ''}
-      <span class="tc-prio">P${Math.round(c.max_priority || 0)}</span>
-      <span class="tc-title">${escapeHTML((c.title || '').slice(0, 70))}</span>
-      <span class="tc-days">${c.days_seen}d</span>
-    </div>`).join('');
-
-  view.innerHTML = `
-    <div class="trends-grid">
-      <div class="trend-card trend-wide">
-        <div class="trend-title">THREAT VOLUME — last ${daily.length} day${daily.length !== 1 ? 's' : ''}</div>
-        <div class="trend-vol-chart">${volBars || '<span class="trend-empty">No history yet.</span>'}</div>
-        <div class="trend-legend">
-          <span><i class="dot critical"></i>Critical</span><span><i class="dot high"></i>High</span>
-          <span><i class="dot medium"></i>Medium</span><span><i class="dot low"></i>Low</span>
-        </div>
-      </div>
-      <div class="trend-card">
-        <div class="trend-title">MOST ACTIVE THREAT ACTORS</div>
-        ${actorBars || '<span class="trend-empty">None detected in window.</span>'}
-      </div>
-      <div class="trend-card">
-        <div class="trend-title">TRENDING CVEs</div>
-        <div class="trending-list">${trendingRows || '<span class="trend-empty">None.</span>'}</div>
-      </div>
-      <div class="trend-card">
-        <div class="trend-title">TOP TECHNIQUES</div>
-        ${ttpBars || '<span class="trend-empty">None.</span>'}
-      </div>
-      <div class="trend-card">
-        <div class="trend-title">SOURCE ACTIVITY</div>
-        ${sourceBars || '<span class="trend-empty">None.</span>'}
-      </div>
-    </div>`;
-}
-
-function renderBarList(arr, nameKey, valKey, color) {
-  if (!arr || !arr.length) return '';
-  const max = Math.max(1, ...arr.map(x => x[valKey]));
-  return `<div class="bar-list">` + arr.map(x => `
-    <div class="bar-row">
-      <span class="bar-label" title="${escapeHTML(String(x[nameKey]))}">${escapeHTML(String(x[nameKey]))}</span>
-      <span class="bar-track"><span class="bar-fill" style="width:${(x[valKey] / max) * 100}%;background:${color}"></span></span>
-      <span class="bar-val">${x[valKey]}</span>
-    </div>`).join('') + `</div>`;
-}
-
-// ─── Utilities ────────────────────────────────────────────────────────────────
-function timeAgo(date) {
-  const diff  = Date.now() - date;
-  const mins  = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days  = Math.floor(diff / 86400000);
-  if (isNaN(diff)) return '';
-  if (mins  <  1)  return 'just now';
-  if (mins  < 60)  return `${mins}m ago`;
-  if (hours < 24)  return `${hours}h ago`;
-  if (days  <  7)  return `${days}d ago`;
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function escapeHTML(str) {
-  if (!str) return '';
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-// ─── IOC Display ─────────────────────────────────────────────────────────
+// ─── Card rendering ───────────────────────────────────────────────────────────
 const IOC_LABELS = {
   ipv4: 'IP', domain: 'DOMAIN', url: 'URL', sha256: 'SHA256',
-  sha1: 'SHA1', md5: 'MD5', cve: 'CVE', cidr: 'CIDR', email: 'EMAIL'
+  sha1: 'SHA1', md5: 'MD5', cve: 'CVE', cidr: 'CIDR', email: 'EMAIL',
 };
 
-function buildIOCSection(item) {
-  const iocs = item.iocs;
-  if (!iocs) return '';
-
-  const pills = [];
-  for (const [type, values] of Object.entries(iocs)) {
-    if (values && values.length > 0) {
-      const label = IOC_LABELS[type] || type.toUpperCase();
-      pills.push(`<span class="ioc-pill ioc-${type}" title="${escapeHTML(values.join(', '))}">${label}: ${escapeHTML(values.length > 2 ? values[0] + ' +' + (values.length-1) : values.join(', '))}</span>`);
+function buildIocSection(item) {
+  const wrap = el('div', 'card-iocs');
+  const ownCve = (item.cve_id || '').toUpperCase();
+  for (const [type, values] of Object.entries(item.iocs || {})) {
+    if (!values || !values.length) continue;
+    // The `cve` indicator list usually just repeats item.cve_id, which the meta
+    // row already shows. Only surface it when it names OTHER CVEs.
+    if (type === 'cve') {
+      const others = values.filter((v) => String(v).toUpperCase() !== ownCve);
+      if (!others.length) continue;
+      const pill = el('span', 'ioc-pill ioc-cve',
+        `ALSO: ${others.length > 2 ? `${others[0]} +${others.length - 1}` : others.join(', ')}`);
+      pill.title = others.join(', ');
+      wrap.appendChild(pill);
+      continue;
     }
+    const label = IOC_LABELS[type] || type.toUpperCase();
+    const shown = values.length > 2 ? `${values[0]} +${values.length - 1}` : values.join(', ');
+    const pill = el('span', `ioc-pill ioc-${type}`, `${label}: ${shown}`);
+    pill.title = values.join(', ');
+    wrap.appendChild(pill);
   }
-
-  if (pills.length === 0) return '';
-
-  return `
-    <div class="card-iocs">
-      ${pills.join('')}
-    </div>
-  `;
+  return wrap;
 }
 
-// ─── Keyboard Shortcuts ─────────────────────────────────────────────────
-document.addEventListener('keydown', e => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  
-  switch(e.key) {
-    case '/':
-      e.preventDefault();
-      document.getElementById('search-input')?.focus();
-      break;
-    case 'Escape':
-      closeCveModal();
-      const matrixView = document.getElementById('matrix-view');
-      if (matrixView?.style.display === 'block') {
-        showContent();
-        document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'all'));
-        activeFilter = 'all';
-        applyFilters();
+function buildCard(item, index) {
+  const card = el('div', 'intel-card');
+  card.dataset.key = item._key;
+  card.dataset.index = String(index);
+  card.dataset.category = item.category || 'news';
+
+  const severity = (item.severity || 'medium').toLowerCase();
+  const isNew = item.is_new === true;
+  if (isNew) card.classList.add('new-item');
+  if (item._justArrived) card.classList.add('just-arrived');
+  if (matchesWatchlist(item)) card.classList.add('watchlist-hit');
+  if (store.starred.has(item._key)) card.classList.add('starred');
+  if (store.dismissed.has(item._key)) card.classList.add('is-dismissed');
+
+  const top = el('div', 'card-top');
+  const title = el('p', 'card-title');
+  const href = safeUrl(item.url);
+  if (href) {
+    const link = el('a', null, item.title || 'Untitled');
+    link.href = href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    title.appendChild(link);
+  } else {
+    title.appendChild(document.createTextNode(item.title || 'Untitled'));
+  }
+
+  const badges = el('span', 'card-badges');
+  if (isNew) badges.appendChild(el('span', 'new-item-badge', 'NEW'));
+  if (item.cisa_kev) {
+    const kev = el('span', 'cisa-kev-badge', 'KEV');
+    kev.title = 'CISA Known Exploited Vulnerabilities catalogue';
+    badges.appendChild(kev);
+  }
+  if (item.ssvc_exploitation === 'active' && !item.cisa_kev) {
+    const ex = el('span', 'cisa-kev-badge', 'EXPLOITED');
+    ex.title = 'CISA Vulnrichment SSVC: active exploitation observed';
+    badges.appendChild(ex);
+  }
+  if (item.has_poc) {
+    const poc = el('span', 'poc-badge');
+    const pocHref = safeUrl(item.poc_url);
+    // The old markup interpolated item.poc_url RAW into a title="" attribute,
+    // so a double quote in the value broke out of it.
+    poc.title = pocHref ? `Public PoC: ${item.poc_url}` : 'Public PoC on GitHub';
+    if (pocHref) {
+      const a = el('a', null, 'PoC');
+      a.href = pocHref;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      poc.appendChild(a);
+    } else {
+      poc.textContent = 'PoC';
+    }
+    badges.appendChild(poc);
+  }
+  if (matchesStack(item)) {
+    const stack = el('span', 'stack-badge', 'STACK');
+    stack.title = 'Matches your monitored stack';
+    badges.appendChild(stack);
+  }
+  if (item.ai_provider && item.ai_provider !== 'rule') {
+    const ai = el('span', 'ai-badge', String(item.ai_provider).toUpperCase());
+    ai.title = `Enriched by ${item.ai_model || item.ai_provider}`;
+    badges.appendChild(ai);
+  }
+  title.appendChild(badges);
+  top.appendChild(title);
+
+  if (item.priority_label) {
+    const badge = el('span', `badge prio-badge prio-${item.priority_label}`,
+      item.priority_label.toUpperCase());
+    badge.title = item.priority_rationale
+      || 'Blended priority: CVSS + EPSS + KEV + public PoC + SSVC';
+    top.appendChild(badge);
+  } else {
+    const badge = el('span', `badge ${severity}`, severity.toUpperCase());
+    badge.title = 'Severity inferred from headline keywords — weaker than a priority score';
+    top.appendChild(badge);
+  }
+  card.appendChild(top);
+
+  // The action line is the point of the priority score: a decision, not a number.
+  if (item.action) {
+    const action = el('div', `card-action prio-${item.priority_label || 'low'}`);
+    action.appendChild(el('span', 'action-verb', item.action));
+    if (item.action_detail) action.appendChild(el('span', 'action-detail', item.action_detail));
+    card.appendChild(action);
+  }
+
+  if (item.threat_actors && item.threat_actors.length) {
+    const actors = el('div', 'card-actors');
+    item.threat_actors.slice(0, 3).forEach((actor) => {
+      const chip = el('span', 'threat-actor-badge', actor);
+      chip.dataset.actor = actor;
+      chip.title = `Filter by ${actor}`;
+      actors.appendChild(chip);
+    });
+    card.appendChild(actors);
+  }
+
+  if (item.description) card.appendChild(el('p', 'card-description', item.description));
+
+  const meta = el('div', 'card-meta');
+  if (item.cve_id) {
+    const cve = el('span', 'cve-id', item.cve_id);
+    cve.dataset.cve = item.cve_id;
+    cve.title = 'Open CVE details';
+    meta.appendChild(cve);
+  }
+  const src = el('span', 'meta-tag meta-source', item.source || 'unknown');
+  src.dataset.source = item.source || '';
+  meta.appendChild(src);
+  meta.appendChild(el('span', 'meta-tag meta-cat', item.category || 'news'));
+
+  if (item.priority_score != null) {
+    const prio = el('span', `meta-tag meta-priority prio-${item.priority_label || 'low'}`,
+      `P${Math.round(item.priority_score)}`);
+    prio.title = item.priority_rationale || 'Blended priority score';
+    meta.appendChild(prio);
+  }
+  if (item.cvss_score != null) {
+    meta.appendChild(el('span', 'meta-tag meta-cvss', `CVSS ${Number(item.cvss_score).toFixed(1)}`));
+  }
+  if (item.epss_score != null) {
+    const epss = el('span', 'meta-tag meta-epss', `EPSS ${(item.epss_score * 100).toFixed(1)}%`);
+    epss.title = `${(item.epss_score * 100).toFixed(2)}% chance of exploitation within 30 days`;
+    meta.appendChild(epss);
+  }
+  if (item.ssvc_automatable === 'yes') {
+    const auto = el('span', 'meta-tag meta-ssvc', 'AUTOMATABLE');
+    auto.title = 'SSVC: an attacker can exploit this at scale, unattended';
+    meta.appendChild(auto);
+  }
+  if (item.cwe) {
+    const cwe = el('span', 'meta-tag meta-cwe', item.cwe);
+    cwe.title = item.cwe_name || item.cwe;
+    meta.appendChild(cwe);
+  }
+  if (item.published) meta.appendChild(el('span', 'meta-date', timeAgo(new Date(item.published))));
+  card.appendChild(meta);
+
+  if (item.iocs && Object.keys(item.iocs).length) card.appendChild(buildIocSection(item));
+
+  const analysis = el('div', 'analysis-section');
+  const header = el('div', 'analysis-header');
+  const enriched = item.ai_provider && item.ai_provider !== 'rule';
+  header.appendChild(el('span', 'analysis-label', enriched ? 'AI THREAT ANALYSIS' : 'SUMMARY'));
+  if (item.ai_model) header.appendChild(el('span', 'analysis-model', item.ai_model));
+  analysis.appendChild(header);
+  analysis.appendChild(el('p', 'analysis-summary', displaySummary(item)));
+  if (item.why_it_matters) analysis.appendChild(el('p', 'analysis-why', item.why_it_matters));
+
+  const graph = graphFor(item);
+  if (graph) {
+    const wrap = el('div', 'analysis-graph-wrap');
+    wrap.appendChild(el('div', 'analysis-graph-label', 'ATTACK FLOW'));
+    const container = el('div', 'mermaid-container');
+    container.dataset.rendered = 'false';
+    container.appendChild(el('div', 'mermaid-spinner', 'Rendering diagram…'));
+    wrap.appendChild(container);
+    analysis.appendChild(wrap);
+    card._graph = graph;
+    card._graphContainer = container;
+  }
+  card.appendChild(analysis);
+
+  const actions = el('div', 'card-actions');
+  const star = el('button', 'card-btn', store.starred.has(item._key) ? '★ Starred' : '☆ Star');
+  star.dataset.act = 'star';
+  const dismiss = el('button', 'card-btn',
+    store.dismissed.has(item._key) ? '↩ Restore' : '✕ Dismiss');
+  dismiss.dataset.act = 'dismiss';
+  const copy = el('button', 'card-btn', '⧉ Copy');
+  copy.dataset.act = 'copy';
+  copy.title = 'Copy as markdown for a ticket';
+  actions.append(star, dismiss, copy);
+  actions.appendChild(el('span', 'card-expand-hint', '▼ EXPAND'));
+  card.appendChild(actions);
+
+  return card;
+}
+
+function renderCards() {
+  const container = $('cards-container');
+  if (!container) return;
+  const slice = store.filtered.slice(0, store.renderLimit);
+
+  const frag = document.createDocumentFragment();
+  slice.forEach((item, i) => frag.appendChild(buildCard(item, i)));
+  container.replaceChildren(frag);
+  container.setAttribute('aria-busy', 'false');
+  container.dataset.density = store.density;
+
+  const count = $('feed-count');
+  if (count) {
+    const total = store.filtered.length;
+    const hidden = store.dismissed.size;
+    count.textContent = total === 0
+      ? 'No items match'
+      : `Showing ${Math.min(store.renderLimit, total)} of ${total}`
+        + (hidden && !store.showDismissed ? ` · ${hidden} dismissed` : '');
+  }
+  const noResults = $('no-results');
+  if (noResults) noResults.style.display = store.filtered.length ? 'none' : 'block';
+
+  // Restore the keyboard cursor onto the freshly-rendered cards.
+  if (store.cursor >= 0) {
+    const cards = container.querySelectorAll('.intel-card');
+    if (cards.length) {
+      store.cursor = Math.min(store.cursor, cards.length - 1);
+      cards[store.cursor].classList.add('cursor');
+    } else {
+      store.cursor = -1;
+    }
+  }
+}
+
+// ─── Mermaid ──────────────────────────────────────────────────────────────────
+let mermaidSeq = 0;
+async function renderGraph(container, source) {
+  if (typeof mermaid === 'undefined') {
+    container.textContent = 'Diagram renderer unavailable';
+    return;
+  }
+  try {
+    const { svg } = await mermaid.render(`mmd-${++mermaidSeq}`, source.replace(/\\n/g, '\n'));
+    container.innerHTML = svg;
+    const svgEl = container.querySelector('svg');
+    if (svgEl) {
+      svgEl.style.maxWidth = '100%';
+      svgEl.style.height = 'auto';
+      svgEl.removeAttribute('width');
+      svgEl.removeAttribute('height');
+    }
+  } catch (err) {
+    console.warn('Mermaid render failed:', err);
+    container.replaceChildren(el('pre', 'mermaid-raw-fallback', source));
+  }
+}
+
+// ─── Daily brief ──────────────────────────────────────────────────────────────
+function renderBrief() {
+  const host = $('daily-brief');
+  if (!host) return;
+  const brief = store.brief;
+  const urgent = store.items.filter((i) => i.priority_label === 'urgent').length;
+  const exploited = store.items.filter(
+    (i) => i.cisa_kev || i.ssvc_exploitation === 'active').length;
+
+  host.replaceChildren();
+  if (!brief && !urgent) { host.style.display = 'none'; return; }
+  host.style.display = 'block';
+
+  const inner = el('div', 'brief-inner');
+  const head = el('div', 'brief-head');
+  head.appendChild(el('span', 'brief-label', "TODAY'S BRIEF"));
+  head.appendChild(el('span', 'brief-stats',
+    `${urgent} urgent · ${exploited} actively exploited · ${store.items.length} total`));
+  inner.appendChild(head);
+
+  if (brief && brief.headline) inner.appendChild(el('p', 'brief-headline', brief.headline));
+
+  const picks = (brief && brief.items) || store.items
+    .filter((i) => i.priority_label === 'urgent')
+    .slice(0, 3)
+    .map((i) => ({ title: i.title, url: i.url, key: i._key, reason: i.action_detail || '' }));
+
+  if (picks.length) {
+    const list = el('ol', 'brief-list');
+    picks.forEach((pick) => {
+      const li = el('li', 'brief-item');
+      const href = safeUrl(pick.url);
+      if (href) {
+        const a = el('a', 'brief-link', pick.title || '');
+        a.href = href;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        li.appendChild(a);
+      } else {
+        li.appendChild(el('span', 'brief-link', pick.title || ''));
       }
-      break;
-    case 'c':
-      activeFilter = 'cve';
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'cve'));
-      showContent();
-      applyFilters();
-      break;
-    case 'n':
-      activeFilter = 'news';
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'news'));
-      showContent();
-      applyFilters();
-      break;
-    case 'a':
-      activeFilter = 'advisory';
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'advisory'));
-      showContent();
-      applyFilters();
-      break;
-    case 'i':
-      activeFilter = 'incident';
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'incident'));
-      showContent();
-      applyFilters();
-      break;
-    case 'o':
-      activeFilter = 'iocs';
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'iocs'));
-      showContent();
-      applyFilters();
-      break;
-    case 'm':
-      activeFilter = 'matrix';
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'matrix'));
-      applyFilters();
-      break;
-    case 't':
-      activeFilter = 'trends';
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'trends'));
-      applyFilters();
-      break;
-
+      if (pick.reason) li.appendChild(el('span', 'brief-reason', pick.reason));
+      list.appendChild(li);
+    });
+    inner.appendChild(list);
   }
-});
+  host.appendChild(inner);
+}
 
-// ─── Error Boundary ──────────────────────────────────────────────────────
-window.onerror = function(msg, url, line, col, error) {
-  console.error('Global error:', msg, 'at', url, ':', line);
-  const errorDiv = document.getElementById('error-state');
-  if (errorDiv) {
-    errorDiv.innerHTML = `
-      <p class="error-icon">⚠</p>
-      <p>An unexpected error occurred.</p>
-      <p class="error-detail">${escapeHTML(msg)}</p>
-      <button id="retry-btn" class="retry-btn">Retry</button>
-    `;
-    errorDiv.style.display = 'block';
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
+function renderSidebar() {
+  renderSeverityChart();
+  renderSourceList();
+  renderCategoryList();
+  renderSourceHealth();
+  renderWatchlist();
+  renderStack();
+  updateHeaderStats();
+}
+
+function countBy(field) {
+  const counts = {};
+  store.items.forEach((item) => {
+    const key = (item[field] || 'unknown').toString().toLowerCase();
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  return counts;
+}
+
+/**
+ * Severity distribution. Every row carries its label and count as text, so the
+ * ordinal ramp is a reinforcement of the ordering rather than the only cue.
+ * Rows are buttons: the sidebar used to be read-only decoration.
+ */
+function renderSeverityChart() {
+  const host = $('severity-chart');
+  if (!host) return;
+  const counts = countBy('severity');
+  const max = Math.max(1, ...SEVERITY_ORDER.map((s) => counts[s] || 0));
+
+  host.replaceChildren();
+  SEVERITY_ORDER.forEach((sev) => {
+    const value = counts[sev] || 0;
+    const row = el('button', `sev-row${store.severity === sev ? ' active' : ''}`);
+    row.type = 'button';
+    row.dataset.severity = sev;
+    row.setAttribute('aria-pressed', String(store.severity === sev));
+    row.title = `Filter to ${sev} (${value})`;
+
+    row.appendChild(el('span', `sev-label ${sev}`, sev.toUpperCase()));
+    const track = el('span', 'sev-bar-wrap');
+    const bar = el('span', 'sev-bar');
+    bar.style.width = `${(value / max) * 100}%`;
+    bar.style.background = SEVERITY_RAMP[sev];
+    track.appendChild(bar);
+    row.appendChild(track);
+    row.appendChild(el('span', 'sev-count', String(value)));
+    host.appendChild(row);
+  });
+}
+
+function renderSourceList() {
+  const host = $('source-list');
+  if (!host) return;
+  const counts = countBy('source');
+  const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 14);
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+
+  host.replaceChildren();
+  rows.forEach(([name, value]) => {
+    const original = store.items.find(
+      (i) => (i.source || '').toLowerCase() === name)?.source || name;
+    const row = el('button', 'src-row');
+    row.type = 'button';
+    row.dataset.source = original;
+    row.title = `Filter to ${original} (${value})`;
+    row.appendChild(el('span', 'src-name', original));
+    const track = el('span', 'src-bar-wrap');
+    const bar = el('span', 'src-bar');
+    bar.style.width = `${(value / max) * 100}%`;
+    // Nominal bars: one series, one hue.
+    bar.style.background = SERIES_1;
+    track.appendChild(bar);
+    row.appendChild(track);
+    row.appendChild(el('span', 'src-count', String(value)));
+    host.appendChild(row);
+  });
+}
+
+function renderCategoryList() {
+  const host = $('cat-list');
+  if (!host) return;
+  const counts = countBy('category');
+  host.replaceChildren();
+  Object.entries(counts).sort((a, b) => b[1] - a[1]).forEach(([name, value]) => {
+    const row = el('button', `cat-row${store.filter === name ? ' active' : ''}`);
+    row.type = 'button';
+    row.dataset.filter = name;
+    row.appendChild(el('span', 'cat-name', name));
+    row.appendChild(el('span', 'cat-count', String(value)));
+    host.appendChild(row);
+  });
+}
+
+function staleLabel(hours) {
+  if (hours == null || hours < 48) return null;
+  return `${Math.floor(hours / 24)}d silent`;
+}
+
+function renderSourceHealth() {
+  const host = $('source-health');
+  if (!host) return;
+  const entries = Object.entries(store.health);
+  if (!entries.length) {
+    const card = host.closest('.sidebar-card');
+    if (card) card.style.display = 'none';
+    return;
   }
-  document.getElementById('loading-state').style.display = 'none';
-  return true;
-};
+  const rank = (s) => (s === 'error' ? 0 : s === 'empty' ? 1 : s === 'stale' ? 2 : 3);
+  entries.sort((a, b) => rank(a[1].status) - rank(b[1].status));
 
-window.onunhandledrejection = function(event) {
-  console.error('Unhandled rejection:', event.reason);
-};
+  const okCount = entries.filter(([, h]) => h.status === 'ok').length;
+  const summary = $('source-health-summary');
+  if (summary) summary.textContent = `${okCount}/${entries.length} live`;
 
-// ─── Resizable Sidebar ───────────────────────────────────────────────────
-function initResizableSidebar() {
-  const sidebar = document.querySelector('.sidebar');
-  const dashboard = document.querySelector('.dashboard');
-  if (!sidebar || !dashboard) return;
-  
-  const handle = document.createElement('div');
-  handle.className = 'resize-handle';
-  sidebar.appendChild(handle);
-  
-  let isResizing = false;
-  let startX = 0;
-  let startWidth = 0;
-  
-  handle.addEventListener('mousedown', (e) => {
-    isResizing = true;
-    startX = e.clientX;
-    startWidth = sidebar.offsetWidth;
-    handle.classList.add('active');
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+  host.replaceChildren();
+  entries.forEach(([name, h]) => {
+    const row = el('div', `health-item health-${h.status}`);
+    const detail = h.status === 'error'
+      ? (h.error || 'error')
+      : `${h.count} item${h.count === 1 ? '' : 's'}`;
+    const age = h.median_age_days;
+    const uptime = store.staleness[`${name}__uptime`];
+    row.title = [detail,
+      age != null ? `median age ${age}d` : null,
+      uptime != null ? `${Math.round(uptime * 100)}% uptime (30d)` : null,
+      staleLabel(store.staleness[name]),
+    ].filter(Boolean).join(' · ');
+
+    row.appendChild(el('span', `health-dot dot-${h.status}`));
+    row.appendChild(el('span', 'health-name', name));
+    // `stale` is a distinct state from `ok`: a feed serving a four-year-old
+    // archive used to report green because health only counted items.
+    if (h.status === 'stale') row.appendChild(el('span', 'health-stale-badge', 'STALE'));
+    row.appendChild(el('span', 'health-count', h.status === 'error' ? '!' : String(h.count)));
+    host.appendChild(row);
   });
-  
-  document.addEventListener('mousemove', (e) => {
-    if (!isResizing) return;
-    const diff = e.clientX - startX;
-    const newWidth = Math.max(200, Math.min(500, startWidth + diff));
-    sidebar.style.width = newWidth + 'px';
-    sidebar.style.flex = 'none';
+}
+
+function renderChips(hostId, values, removeAct) {
+  const host = $(hostId);
+  if (!host) return;
+  host.replaceChildren();
+  values.forEach((value) => {
+    const chip = el('span', 'chip', value);
+    const btn = el('button', 'chip-x', '×');
+    btn.type = 'button';
+    btn.dataset.act = removeAct;
+    btn.dataset.value = value;
+    btn.setAttribute('aria-label', `Remove ${value}`);
+    chip.appendChild(btn);
+    host.appendChild(chip);
   });
-  
-  document.addEventListener('mouseup', () => {
-    if (isResizing) {
-      isResizing = false;
-      handle.classList.remove('active');
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      localStorage.setItem('sidebarWidth', sidebar.offsetWidth);
-    }
-  });
-  
-  // Restore saved width
-  const savedWidth = localStorage.getItem('sidebarWidth');
-  if (savedWidth) {
-    sidebar.style.width = savedWidth + 'px';
-    sidebar.style.flex = 'none';
+}
+
+function renderWatchlist() {
+  renderChips('watchlist-chips', store.watchlist, 'unwatch');
+  const hits = store.items.filter(matchesWatchlist).length;
+  const badge = $('watchlist-match-count');
+  if (badge) badge.textContent = store.watchlist.length ? `${hits} hits` : '';
+  const btn = $('watchlist-only-btn');
+  if (btn) {
+    btn.style.display = store.watchlist.length ? 'block' : 'none';
+    btn.classList.toggle('active', store.watchlistOnly);
+    btn.textContent = store.watchlistOnly ? '★ SHOWING WATCHLIST' : '☆ WATCHLIST ONLY';
   }
 }
 
-// Initialize resizable sidebar when DOM is ready
+function renderStack() {
+  renderChips('stack-chips', store.stack, 'unstack');
+  const hits = store.items.filter(matchesStack).length;
+  const badge = $('stack-match-count');
+  if (badge) {
+    // "0 items affect your stack today" is a valuable, calming answer that the
+    // old UI had no way to express.
+    badge.textContent = store.stack.length ? `${hits} affect you` : '';
+    badge.classList.toggle('all-clear', store.stack.length > 0 && hits === 0);
+  }
+}
+
+function updateHeaderStats() {
+  const counts = countBy('severity');
+  const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
+  set('count-critical', counts.critical || 0);
+  set('count-high', counts.high || 0);
+  set('count-urgent', store.items.filter((i) => i.priority_label === 'urgent').length);
+  set('count-total', store.items.length);
+
+  const meta = store.meta;
+  const updated = $('last-updated');
+  if (updated && meta.last_updated) {
+    const date = new Date(meta.last_updated);
+    updated.textContent = `Updated ${timeAgo(date)} · ${meta.sources_ok || 0} sources live`
+      + (meta.sources_stale ? ` · ${meta.sources_stale} stale` : '');
+    updated.title = date.toUTCString();
+  }
+}
+
+// ─── Charts (hand-rolled SVG; no charting dependency) ─────────────────────────
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, String(v));
+  return node;
+}
+
+/**
+ * Stacked area: daily item volume split by severity over the trend window.
+ * One ordinal ramp, a legend, a hover crosshair with a tooltip, and a table
+ * view behind a toggle.
+ */
+function buildVolumeChart(daily) {
+  const W = 720; const H = 220;
+  const PAD = { top: 16, right: 12, bottom: 26, left: 40 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
+
+  const figure = el('figure', 'chart-figure');
+  figure.appendChild(el('figcaption', 'chart-title', 'Daily volume by severity'));
+
+  const maxTotal = Math.max(1, ...daily.map(
+    (d) => SEVERITY_ORDER.reduce((s, k) => s + (d[k] || 0), 0)));
+  const x = (i) => PAD.left + (daily.length === 1 ? plotW / 2 : (i / (daily.length - 1)) * plotW);
+  const y = (v) => PAD.top + plotH - (v / maxTotal) * plotH;
+
+  const svg = svgEl('svg', {
+    viewBox: `0 0 ${W} ${H}`, class: 'chart-svg', role: 'img',
+    'aria-label': `Daily threat volume by severity over ${daily.length} days`,
+  });
+
+  // Recessive gridlines + axis labels.
+  for (let g = 0; g <= 4; g += 1) {
+    const gv = (maxTotal / 4) * g;
+    svg.appendChild(svgEl('line', {
+      x1: PAD.left, x2: W - PAD.right, y1: y(gv), y2: y(gv), class: 'chart-grid',
+    }));
+    const label = svgEl('text', { x: PAD.left - 6, y: y(gv) + 3, class: 'chart-axis-label', 'text-anchor': 'end' });
+    label.textContent = Math.round(gv);
+    svg.appendChild(label);
+  }
+
+  // Stack from the least severe upward so `critical` sits on top.
+  const stackOrder = [...SEVERITY_ORDER].reverse();
+  const running = new Array(daily.length).fill(0);
+  stackOrder.forEach((sev) => {
+    const lower = running.slice();
+    daily.forEach((d, i) => { running[i] += d[sev] || 0; });
+    const top = daily.map((_, i) => `${x(i)},${y(running[i])}`);
+    const bottom = daily.map((_, i) => `${x(i)},${y(lower[i])}`).reverse();
+    svg.appendChild(svgEl('polygon', {
+      points: [...top, ...bottom].join(' '),
+      fill: SEVERITY_RAMP[sev],
+      // 2px surface gap between stacked segments, per the mark spec.
+      stroke: '#0d1117',
+      'stroke-width': 2,
+      'stroke-linejoin': 'round',
+    }));
+  });
+
+  // Date ticks: first, middle, last only — a label per day would collide.
+  [0, Math.floor(daily.length / 2), daily.length - 1].forEach((i) => {
+    if (!daily[i]) return;
+    const t = svgEl('text', {
+      x: x(i), y: H - 8, class: 'chart-axis-label',
+      'text-anchor': i === 0 ? 'start' : i === daily.length - 1 ? 'end' : 'middle',
+    });
+    t.textContent = (daily[i].date || '').slice(5);
+    svg.appendChild(t);
+  });
+
+  const crosshair = svgEl('line', {
+    y1: PAD.top, y2: PAD.top + plotH, class: 'chart-crosshair', opacity: 0,
+  });
+  svg.appendChild(crosshair);
+
+  const hit = svgEl('rect', {
+    x: PAD.left, y: PAD.top, width: plotW, height: plotH, fill: 'transparent',
+  });
+  svg.appendChild(hit);
+  figure.appendChild(svg);
+
+  const tooltip = el('div', 'chart-tooltip');
+  tooltip.style.opacity = '0';
+  figure.appendChild(tooltip);
+
+  hit.addEventListener('pointermove', (ev) => {
+    const box = svg.getBoundingClientRect();
+    const px = ((ev.clientX - box.left) / box.width) * W;
+    const idx = Math.max(0, Math.min(daily.length - 1,
+      Math.round(((px - PAD.left) / plotW) * (daily.length - 1))));
+    const d = daily[idx];
+    crosshair.setAttribute('x1', x(idx));
+    crosshair.setAttribute('x2', x(idx));
+    crosshair.setAttribute('opacity', 1);
+    tooltip.replaceChildren();
+    tooltip.appendChild(el('strong', null, d.date));
+    SEVERITY_ORDER.forEach((sev) => {
+      if (!d[sev]) return;
+      const row = el('span', 'tt-row');
+      const dot = el('span', 'tt-dot');
+      dot.style.background = SEVERITY_RAMP[sev];
+      row.append(dot, el('span', 'tt-name', sev), el('span', 'tt-val', String(d[sev])));
+      tooltip.appendChild(row);
+    });
+    tooltip.style.opacity = '1';
+    tooltip.style.left = `${Math.min(Math.max((x(idx) / W) * 100, 8), 82)}%`;
+  });
+  hit.addEventListener('pointerleave', () => {
+    crosshair.setAttribute('opacity', 0);
+    tooltip.style.opacity = '0';
+  });
+
+  // Legend: identity is never colour-alone.
+  const legend = el('div', 'chart-legend');
+  SEVERITY_ORDER.forEach((sev) => {
+    const entry = el('span', 'legend-entry');
+    const swatch = el('span', 'legend-swatch');
+    swatch.style.background = SEVERITY_RAMP[sev];
+    entry.append(swatch, el('span', null, sev));
+    legend.appendChild(entry);
+  });
+  figure.appendChild(legend);
+  return figure;
+}
+
+/** Nominal bars: one series, one hue, direct value labels. */
+function buildBarChart(title, rows, nameKey, valKey) {
+  const figure = el('figure', 'chart-figure');
+  figure.appendChild(el('figcaption', 'chart-title', title));
+  if (!rows || !rows.length) {
+    figure.appendChild(el('p', 'chart-empty', 'No data yet'));
+    return figure;
+  }
+  const max = Math.max(1, ...rows.map((r) => r[valKey] || 0));
+  const list = el('div', 'bar-list');
+  rows.slice(0, 10).forEach((row) => {
+    const line = el('div', 'bar-row');
+    line.appendChild(el('span', 'bar-name', String(row[nameKey])));
+    const track = el('span', 'bar-track');
+    const fill = el('span', 'bar-fill');
+    fill.style.width = `${((row[valKey] || 0) / max) * 100}%`;
+    fill.style.background = SERIES_1;
+    track.appendChild(fill);
+    line.appendChild(track);
+    line.appendChild(el('span', 'bar-val', String(row[valKey] || 0)));
+    list.appendChild(line);
+  });
+  figure.appendChild(list);
+  return figure;
+}
+
+function buildDataTable(daily) {
+  const details = el('details', 'chart-table');
+  details.appendChild(el('summary', null, 'View as table'));
+  const table = el('table');
+  const thead = el('thead');
+  const hrow = el('tr');
+  ['Date', ...SEVERITY_ORDER.map((s) => s[0].toUpperCase() + s.slice(1)), 'Total']
+    .forEach((h) => hrow.appendChild(el('th', null, h)));
+  thead.appendChild(hrow);
+  table.appendChild(thead);
+  const tbody = el('tbody');
+  daily.slice().reverse().forEach((d) => {
+    const tr = el('tr');
+    tr.appendChild(el('td', null, d.date));
+    let total = 0;
+    SEVERITY_ORDER.forEach((s) => { total += d[s] || 0; tr.appendChild(el('td', null, String(d[s] || 0))); });
+    tr.appendChild(el('td', null, String(total)));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  details.appendChild(table);
+  return details;
+}
+
+async function showTrendsView() {
+  hideAllViews();
+  const host = $('trends-view');
+  if (!host) return;
+  host.style.display = 'block';
+  host.replaceChildren(el('p', 'chart-empty', 'Loading trends…'));
+
+  if (!store.trends) {
+    try {
+      const resp = await fetch(`${TRENDS_URL}?v=${Date.now()}`);
+      if (resp.ok) store.trends = await resp.json();
+    } catch (_) { /* fall through */ }
+  }
+  const t = store.trends;
+  host.replaceChildren();
+  if (!t || !t.daily || !t.daily.length) {
+    host.appendChild(el('p', 'chart-empty', 'No trend history yet — it builds from the daily archive.'));
+    return;
+  }
+
+  const grid = el('div', 'chart-grid-layout');
+  grid.appendChild(buildVolumeChart(t.daily));
+  grid.appendChild(buildBarChart('Most active sources', t.top_sources || [], 'name', 'count'));
+  grid.appendChild(buildBarChart('Most-seen threat actors', t.top_actors || [], 'name', 'count'));
+  grid.appendChild(buildBarChart('Most-mapped ATT&CK techniques', t.top_ttps || [], 'id', 'count'));
+  host.appendChild(grid);
+  host.appendChild(buildDataTable(t.daily));
+}
+
+// ─── ATT&CK matrix ────────────────────────────────────────────────────────────
+function showMatrixView() {
+  hideAllViews();
+  const host = $('matrix-view');
+  if (!host) return;
+  host.style.display = 'block';
+
+  const counts = {};
+  const names = {};
+  const tactics = new Map();
+  store.items.forEach((item) => {
+    (item.ttps || []).forEach((t) => {
+      counts[t.id] = (counts[t.id] || 0) + 1;
+      names[t.id] = t.name;
+      if (!tactics.has(t.tactic)) tactics.set(t.tactic, new Set());
+      tactics.get(t.tactic).add(t.id);
+    });
+  });
+
+  const grid = $('matrix-grid');
+  if (!grid) return;
+  grid.replaceChildren();
+  if (!tactics.size) {
+    grid.appendChild(el('p', 'chart-empty', 'No techniques mapped in the current feed.'));
+    return;
+  }
+  [...tactics.entries()].forEach(([tactic, ids]) => {
+    const col = el('div', 'tactic-col');
+    col.appendChild(el('div', 'tactic-header', tactic));
+    [...ids].sort().forEach((id) => {
+      const n = counts[id];
+      const cell = el('button', `tech-cell ${n >= 3 ? 'active-high' : 'active-med'}`);
+      cell.type = 'button';
+      cell.dataset.technique = id;
+      cell.title = `${id} — ${names[id]} (${n} item${n === 1 ? '' : 's'})`;
+      cell.appendChild(el('span', 'tech-id', id));
+      cell.appendChild(el('span', 'tech-count', String(n)));
+      col.appendChild(cell);
+    });
+    grid.appendChild(col);
+  });
+}
+
+// ─── View switching ───────────────────────────────────────────────────────────
+function hideAllViews() {
+  ['loading-state', 'error-state', 'cards-container', 'matrix-view', 'trends-view', 'no-results']
+    .forEach((id) => { const n = $(id); if (n) n.style.display = 'none'; });
+}
+
+function showContent() {
+  hideAllViews();
+  const container = $('cards-container');
+  if (container) container.style.display = 'grid';
+}
+
+function showError(message) {
+  hideAllViews();
+  const node = $('error-state');
+  if (node) {
+    node.style.display = 'block';
+    const detail = node.querySelector('.error-detail');
+    if (detail) detail.textContent = message || '';
+  }
+}
+
+function renderAll() {
+  if (store.filter === 'matrix') { showMatrixView(); return; }
+  if (store.filter === 'trends') { showTrendsView(); return; }
+  showContent();
+  renderBrief();
+  renderCards();
+  renderSidebar();
+  syncControls();
+}
+
+function syncControls() {
+  document.querySelectorAll('.filter-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.filter === store.filter);
+  });
+  document.querySelectorAll('.sev-row').forEach((b) => {
+    b.classList.toggle('active', b.dataset.severity === store.severity);
+  });
+  const sortBtn = $('sort-toggle');
+  if (sortBtn) {
+    sortBtn.textContent = store.sort === 'priority' ? '⚑ TOP PRIORITY' : '↓ LATEST FIRST';
+  }
+  const densityBtn = $('density-toggle');
+  if (densityBtn) {
+    densityBtn.textContent = store.density === 'compact' ? '▤ COMPACT' : '▥ COMFORTABLE';
+  }
+  const search = $('search-input');
+  if (search && search.value !== store.query) search.value = store.query;
+}
+
+function update() {
+  applyFilters();
+  renderAll();
+}
+
+// ─── Command palette ──────────────────────────────────────────────────────────
+function paletteCommands() {
+  const cmds = [
+    { label: 'Sort by priority', hint: 'Blended CVSS + EPSS + KEV + SSVC', run: () => { store.sort = 'priority'; writeLS(LS.sort, store.sort); update(); } },
+    { label: 'Sort by newest', hint: 'Publication time', run: () => { store.sort = 'latest'; writeLS(LS.sort, store.sort); update(); } },
+    { label: 'Show all items', run: () => { store.filter = 'all'; store.severity = null; update(); } },
+    { label: 'Show actively exploited', hint: 'KEV, SSVC active, or public PoC', run: () => { store.filter = 'exploited'; update(); } },
+    { label: 'Show items affecting my stack', run: () => { store.filter = 'stack'; update(); } },
+    { label: 'Show starred', run: () => { store.filter = 'starred'; update(); } },
+    { label: 'Toggle dismissed items', run: () => { store.showDismissed = !store.showDismissed; update(); } },
+    { label: 'Clear all dismissals', run: () => { store.dismissed.clear(); writeLS(LS.dismissed, []); update(); } },
+    { label: 'Toggle density', run: () => toggleDensity() },
+    { label: 'Open ATT&CK matrix', run: () => { store.filter = 'matrix'; renderAll(); } },
+    { label: 'Open trends', run: () => { store.filter = 'trends'; renderAll(); } },
+    { label: 'Copy shareable link', run: () => copyText(location.href, 'Link copied') },
+    { label: 'Export current view as CSV', run: () => exportCsv() },
+  ];
+  SEVERITY_ORDER.forEach((sev) => {
+    cmds.push({
+      label: `Filter: ${sev}`,
+      hint: 'severity',
+      run: () => { store.severity = store.severity === sev ? null : sev; update(); },
+    });
+  });
+  CATEGORIES.forEach((cat) => {
+    cmds.push({ label: `Filter: ${cat}`, hint: 'category', run: () => { store.filter = cat; update(); } });
+  });
+  return cmds;
+}
+
+let paletteIndex = 0;
+let paletteMatches = [];
+
+function openPalette() {
+  const overlay = $('palette');
+  if (!overlay) return;
+  overlay.style.display = 'flex';
+  const input = $('palette-input');
+  if (input) { input.value = ''; input.focus(); }
+  renderPalette('');
+}
+
+function closePalette() {
+  const overlay = $('palette');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function renderPalette(query) {
+  const list = $('palette-list');
+  if (!list) return;
+  const q = query.trim().toLowerCase();
+  const cmds = paletteCommands();
+
+  paletteMatches = q
+    ? cmds.filter((c) => c.label.toLowerCase().includes(q))
+    : cmds.slice(0, 10);
+
+  // Jumping straight to a CVE is the most common reason to open this.
+  if (q.length >= 3) {
+    store.items
+      .filter((i) => `${i.cve_id || ''} ${i.title}`.toLowerCase().includes(q))
+      .slice(0, 6)
+      .forEach((item) => {
+        paletteMatches.push({
+          label: item.cve_id ? `${item.cve_id} — ${item.title}` : item.title,
+          hint: item.source,
+          run: () => { store.query = item.cve_id || item.title.slice(0, 40); store.filter = 'all'; update(); },
+        });
+      });
+  }
+
+  paletteIndex = 0;
+  list.replaceChildren();
+  paletteMatches.forEach((cmd, i) => {
+    const row = el('button', `palette-row${i === 0 ? ' active' : ''}`);
+    row.type = 'button';
+    row.dataset.idx = String(i);
+    row.appendChild(el('span', 'palette-label', cmd.label));
+    if (cmd.hint) row.appendChild(el('span', 'palette-hint', cmd.hint));
+    list.appendChild(row);
+  });
+  if (!paletteMatches.length) list.appendChild(el('div', 'palette-empty', 'No matching command'));
+}
+
+function movePalette(delta) {
+  const rows = document.querySelectorAll('.palette-row');
+  if (!rows.length) return;
+  rows[paletteIndex]?.classList.remove('active');
+  paletteIndex = (paletteIndex + delta + rows.length) % rows.length;
+  rows[paletteIndex].classList.add('active');
+  rows[paletteIndex].scrollIntoView({ block: 'nearest' });
+}
+
+function runPalette(index) {
+  const cmd = paletteMatches[index];
+  closePalette();
+  if (cmd) cmd.run();
+}
+
+// ─── Triage ───────────────────────────────────────────────────────────────────
+function toggleSet(set, key, lsKey) {
+  if (set.has(key)) set.delete(key); else set.add(key);
+  writeLS(lsKey, [...set]);
+}
+
+function cardForKey(key) {
+  return document.querySelector(`.intel-card[data-key="${CSS.escape(key)}"]`);
+}
+
+function moveCursor(delta) {
+  const cards = [...document.querySelectorAll('.intel-card')];
+  if (!cards.length) return;
+  cards[store.cursor]?.classList.remove('cursor');
+  const start = store.cursor < 0 ? (delta > 0 ? -1 : 0) : store.cursor;
+  store.cursor = Math.max(0, Math.min(cards.length - 1, start + delta));
+  const card = cards[store.cursor];
+  card.classList.add('cursor');
+  card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function currentItem() {
+  const cards = [...document.querySelectorAll('.intel-card')];
+  const card = cards[store.cursor];
+  if (!card) return null;
+  return store.filtered.find((i) => i._key === card.dataset.key) || null;
+}
+
+function copyText(text, message) {
+  navigator.clipboard?.writeText(text)
+    .then(() => showToast(message || 'Copied'))
+    .catch(() => showToast('Copy failed'));
+}
+
+function itemAsMarkdown(item) {
+  const bits = [`## ${item.title}`, ''];
+  if (item.action) bits.push(`**${item.action}** — ${item.action_detail || ''}`, '');
+  if (item.cve_id) bits.push(`- CVE: ${item.cve_id}`);
+  if (item.priority_score != null) bits.push(`- Priority: P${Math.round(item.priority_score)} (${item.priority_rationale || ''})`);
+  if (item.cvss_score != null) bits.push(`- CVSS: ${item.cvss_score}`);
+  if (item.epss_score != null) bits.push(`- EPSS: ${(item.epss_score * 100).toFixed(2)}%`);
+  if (item.cisa_kev) bits.push('- CISA KEV: yes');
+  if (item.ssvc_exploitation) bits.push(`- SSVC exploitation: ${item.ssvc_exploitation}`);
+  if (item.source) bits.push(`- Source: ${item.source}`);
+  const url = safeUrl(item.url);
+  if (url) bits.push(`- Link: ${url}`);
+  bits.push('', displaySummary(item));
+  return bits.join('\n');
+}
+
+function exportCsv() {
+  const cols = ['title', 'cve_id', 'severity', 'priority_score', 'priority_label',
+    'action', 'cvss_score', 'epss_score', 'cisa_kev', 'ssvc_exploitation', 'source', 'published', 'url'];
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [cols.join(',')];
+  store.filtered.forEach((i) => lines.push(cols.map((c) => esc(i[c])).join(',')));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = el('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `cyberwatch-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast(`Exported ${store.filtered.length} items`);
+}
+
+function toggleDensity() {
+  store.density = store.density === 'compact' ? 'comfortable' : 'compact';
+  writeLS(LS.density, store.density);
+  renderCards();
+  syncControls();
+}
+
+// ─── CVE modal ────────────────────────────────────────────────────────────────
+async function openCveModal(cveId) {
+  const modal = $('cve-modal');
+  const body = $('modal-body');
+  const titleNode = $('modal-cve-id');
+  if (!modal || !body) return;
+  if (!/^CVE-\d{4}-\d{4,7}$/i.test(cveId)) return;
+
+  modal.style.display = 'flex';
+  if (titleNode) titleNode.textContent = cveId.toUpperCase();
+  body.replaceChildren(el('div', 'modal-loading', 'Fetching NVD details…'));
+
+  const local = store.items.find((i) => (i.cve_id || '').toUpperCase() === cveId.toUpperCase());
+  try {
+    const resp = await fetch(
+      `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId)}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const vuln = data?.vulnerabilities?.[0]?.cve;
+    if (!vuln) throw new Error('Not found in NVD');
+
+    body.replaceChildren();
+    const desc = (vuln.descriptions || []).find((d) => d.lang === 'en')?.value || 'No description.';
+
+    let score = null; let vector = null; let sev = 'UNKNOWN';
+    for (const metric of ['cvssMetricV31', 'cvssMetricV30', 'cvssMetricV2']) {
+      const m = vuln.metrics?.[metric];
+      if (m?.length) {
+        score = m[0].cvssData?.baseScore;
+        vector = m[0].cvssData?.vectorString;
+        sev = m[0].cvssData?.baseSeverity || sev;
+        break;
+      }
+    }
+
+    const stats = el('div', 'modal-grid');
+    const stat = (label, value) => {
+      const box = el('div', 'modal-stat');
+      box.appendChild(el('div', 'modal-stat-label', label));
+      box.appendChild(el('div', 'modal-stat-value', value));
+      stats.appendChild(box);
+    };
+    stat('CVSS', score != null ? String(score) : 'N/A');
+    stat('Severity', String(sev));
+    stat('EPSS', local?.epss_score != null ? `${(local.epss_score * 100).toFixed(2)}%` : 'N/A');
+    stat('Priority', local?.priority_score != null ? `P${Math.round(local.priority_score)}` : 'N/A');
+    if (local?.ssvc_exploitation) stat('SSVC', local.ssvc_exploitation);
+    if (local?.ssvc_automatable) stat('Automatable', local.ssvc_automatable);
+    stat('Published', vuln.published ? vuln.published.slice(0, 10) : 'N/A');
+    stat('Modified', vuln.lastModified ? vuln.lastModified.slice(0, 10) : 'N/A');
+    body.appendChild(stats);
+
+    if (local?.action) {
+      const rec = el('div', `modal-action prio-${local.priority_label}`);
+      rec.appendChild(el('strong', null, local.action));
+      rec.appendChild(el('span', null, ` — ${local.action_detail || ''}`));
+      body.appendChild(rec);
+    }
+
+    body.appendChild(el('div', 'modal-section-title', 'Description'));
+    body.appendChild(el('p', 'modal-desc', desc));
+    if (vector) {
+      body.appendChild(el('div', 'modal-section-title', 'Vector'));
+      body.appendChild(el('code', 'modal-vector', vector));
+    }
+
+    const links = el('div', 'modal-xrefs');
+    const xref = (label, url) => {
+      const a = el('a', 'modal-ref-link', label);
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      links.appendChild(a);
+    };
+    xref('NVD', `https://nvd.nist.gov/vuln/detail/${cveId}`);
+    xref('MITRE', `https://www.cve.org/CVERecord?id=${cveId}`);
+    xref('Vulnrichment', `https://github.com/cisagov/vulnrichment/search?q=${cveId}`);
+    if (local?.poc_url && safeUrl(local.poc_url)) xref('Public PoC', safeUrl(local.poc_url));
+    body.appendChild(el('div', 'modal-section-title', 'References'));
+    body.appendChild(links);
+
+    const refs = el('div', 'modal-xrefs');
+    (vuln.references || []).slice(0, 8).forEach((r) => {
+      const url = safeUrl(r.url);
+      if (!url) return;
+      const a = el('a', 'modal-ref-link', url.length > 70 ? `${url.slice(0, 70)}…` : url);
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      refs.appendChild(a);
+    });
+    if (refs.childElementCount) body.appendChild(refs);
+  } catch (err) {
+    body.replaceChildren(el('div', 'modal-error', `Could not load NVD data: ${err.message}`));
+  }
+}
+
+function closeCveModal() {
+  const modal = $('cve-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+// ─── Event wiring (all delegated — the CSP forbids inline handlers) ───────────
+function initEvents() {
+  document.addEventListener('click', (ev) => {
+    const t = ev.target;
+
+    const filterBtn = t.closest('.filter-btn');
+    if (filterBtn) {
+      store.filter = filterBtn.dataset.filter;
+      if (store.filter !== 'matrix' && store.filter !== 'trends') update();
+      else { syncControls(); renderAll(); }
+      return;
+    }
+
+    const sevRow = t.closest('.sev-row');
+    if (sevRow) {
+      const sev = sevRow.dataset.severity;
+      store.severity = store.severity === sev ? null : sev;
+      writeLS(LS.severity, store.severity);
+      update();
+      return;
+    }
+
+    const srcRow = t.closest('.src-row');
+    if (srcRow) { store.query = srcRow.dataset.source; update(); return; }
+
+    const catRow = t.closest('.cat-row');
+    if (catRow) { store.filter = catRow.dataset.filter; update(); return; }
+
+    const actor = t.closest('.threat-actor-badge');
+    if (actor) { store.query = actor.dataset.actor; store.filter = 'all'; update(); return; }
+
+    const source = t.closest('.meta-source');
+    if (source && source.dataset.source) { store.query = source.dataset.source; update(); return; }
+
+    const cve = t.closest('.cve-id');
+    if (cve) { ev.stopPropagation(); openCveModal(cve.dataset.cve); return; }
+
+    const tech = t.closest('.tech-cell');
+    if (tech) { store.filter = 'all'; store.query = tech.dataset.technique; update(); return; }
+
+    const chipX = t.closest('.chip-x');
+    if (chipX) {
+      const { act, value } = chipX.dataset;
+      if (act === 'unwatch') {
+        store.watchlist = store.watchlist.filter((w) => w !== value);
+        writeLS(LS.watchlist, store.watchlist);
+      } else {
+        store.stack = store.stack.filter((s) => s !== value);
+        writeLS(LS.stack, store.stack);
+      }
+      update();
+      return;
+    }
+
+    const cardBtn = t.closest('.card-btn');
+    if (cardBtn) {
+      ev.stopPropagation();
+      const card = cardBtn.closest('.intel-card');
+      const item = store.filtered.find((i) => i._key === card.dataset.key);
+      if (!item) return;
+      const act = cardBtn.dataset.act;
+      if (act === 'star') { toggleSet(store.starred, item._key, LS.starred); update(); }
+      if (act === 'dismiss') { toggleSet(store.dismissed, item._key, LS.dismissed); update(); }
+      if (act === 'copy') copyText(itemAsMarkdown(item), 'Copied as markdown');
+      return;
+    }
+
+    const paletteRow = t.closest('.palette-row');
+    if (paletteRow) { runPalette(Number(paletteRow.dataset.idx)); return; }
+
+    if (t.closest('#sort-toggle')) {
+      store.sort = store.sort === 'priority' ? 'latest' : 'priority';
+      writeLS(LS.sort, store.sort);
+      update();
+      return;
+    }
+    if (t.closest('#density-toggle')) { toggleDensity(); return; }
+    if (t.closest('#palette-open')) { openPalette(); return; }
+    if (t.closest('.modal-close') || t.classList.contains('modal-overlay')) { closeCveModal(); return; }
+    if (t.closest('#watchlist-only-btn')) {
+      store.watchlistOnly = !store.watchlistOnly;
+      writeLS(LS.watchlistOnly, store.watchlistOnly);
+      update();
+      return;
+    }
+    if (t.closest('#toggle-sidebar-btn')) {
+      document.querySelector('.sidebar')?.classList.toggle('open');
+      return;
+    }
+    if (t.closest('#palette')) {
+      if (t.id === 'palette') closePalette();
+      return;
+    }
+
+    // Card body click toggles expansion and lazily renders the diagram.
+    const card = t.closest('.intel-card');
+    if (card && !t.closest('a')) {
+      const wasExpanded = card.classList.contains('expanded');
+      card.classList.toggle('expanded');
+      if (!wasExpanded && card._graph && card._graphContainer
+          && card._graphContainer.dataset.rendered === 'false') {
+        card._graphContainer.dataset.rendered = 'true';
+        renderGraph(card._graphContainer, card._graph);
+      }
+    }
+  });
+
+  const search = $('search-input');
+  if (search) {
+    let debounce = null;
+    search.addEventListener('input', (ev) => {
+      clearTimeout(debounce);
+      const value = ev.target.value;
+      debounce = setTimeout(() => { store.query = value; update(); }, 180);
+    });
+  }
+
+  const watchInput = $('watchlist-input');
+  if (watchInput) {
+    watchInput.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      const value = watchInput.value.trim();
+      if (value && !store.watchlist.includes(value)) {
+        store.watchlist.push(value);
+        writeLS(LS.watchlist, store.watchlist);
+      }
+      watchInput.value = '';
+      update();
+    });
+  }
+
+  const stackInput = $('stack-input');
+  if (stackInput) {
+    stackInput.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      const value = stackInput.value.trim();
+      if (value && !store.stack.includes(value)) {
+        store.stack.push(value);
+        writeLS(LS.stack, store.stack);
+      }
+      stackInput.value = '';
+      update();
+    });
+  }
+
+  const paletteInput = $('palette-input');
+  if (paletteInput) {
+    paletteInput.addEventListener('input', (ev) => renderPalette(ev.target.value));
+    paletteInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); movePalette(1); }
+      if (ev.key === 'ArrowUp') { ev.preventDefault(); movePalette(-1); }
+      if (ev.key === 'Enter') { ev.preventDefault(); runPalette(paletteIndex); }
+      if (ev.key === 'Escape') closePalette();
+    });
+  }
+
+  // Infinite scroll.
+  const sentinel = $('scroll-sentinel');
+  if (sentinel && 'IntersectionObserver' in window) {
+    new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && store.renderLimit < store.filtered.length) {
+        store.renderLimit += PAGE_SIZE;
+        renderCards();
+      }
+    }, { rootMargin: '400px' }).observe(sentinel);
+  }
+
+  initKeyboard();
+}
+
+/** Gmail-style triage. The point is to make 250 items tractable. */
+function initKeyboard() {
+  document.addEventListener('keydown', (ev) => {
+    const typing = ['INPUT', 'TEXTAREA'].includes(ev.target.tagName);
+
+    if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') {
+      ev.preventDefault();
+      openPalette();
+      return;
+    }
+    if (ev.key === 'Escape') {
+      closePalette();
+      closeCveModal();
+      if (typing) ev.target.blur();
+      return;
+    }
+    if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+
+    switch (ev.key) {
+      case '/':
+        ev.preventDefault();
+        $('search-input')?.focus();
+        break;
+      case 'j': ev.preventDefault(); moveCursor(1); break;
+      case 'k': ev.preventDefault(); moveCursor(-1); break;
+      case 'e': case 'Enter': {
+        ev.preventDefault();
+        const cards = [...document.querySelectorAll('.intel-card')];
+        cards[store.cursor]?.click();
+        break;
+      }
+      case 'x': {
+        const item = currentItem();
+        if (item) { toggleSet(store.dismissed, item._key, LS.dismissed); update(); }
+        break;
+      }
+      case 's': {
+        const item = currentItem();
+        if (item) { toggleSet(store.starred, item._key, LS.starred); update(); }
+        break;
+      }
+      case 'w': {
+        const item = currentItem();
+        if (item) copyText(itemAsMarkdown(item), 'Copied as markdown');
+        break;
+      }
+      case 'o': {
+        const item = currentItem();
+        const url = item && safeUrl(item.url);
+        if (url) window.open(url, '_blank', 'noopener');
+        break;
+      }
+      case '?': {
+        const help = $('shortcuts');
+        if (help) help.style.display = help.style.display === 'flex' ? 'none' : 'flex';
+        break;
+      }
+      default: break;
+    }
+  });
+}
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+function restoreState() {
+  store.filter = readLS(LS.filter, 'all') || 'all';
+  store.severity = readLS(LS.severity, null) || null;
+  store.sort = readLS(LS.sort, 'priority') || 'priority';
+  store.density = readLS(LS.density, 'comfortable') || 'comfortable';
+  store.watchlist = readLS(LS.watchlist, []) || [];
+  store.watchlistOnly = readLS(LS.watchlistOnly, false) === true;
+  store.stack = readLS(LS.stack, []) || [];
+  store.dismissed = new Set(readLS(LS.dismissed, []) || []);
+  store.starred = new Set(readLS(LS.starred, []) || []);
+  store.lastVisit = readLS(LS.lastVisit, null);
+  writeLS(LS.lastVisit, new Date().toISOString());
+  readUrlState();
+}
+
+function initMermaid() {
+  if (typeof mermaid === 'undefined') return;
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'dark',
+    // 'strict' HTML-encodes node labels and disables click-binding, closing the
+    // XSS surface of rendering source-controlled graph text.
+    securityLevel: 'strict',
+    themeVariables: {
+      background: '#080b0f', mainBkg: '#0d1117', primaryColor: '#0d2038',
+      primaryTextColor: '#c9d8e8', primaryBorderColor: '#1e4d73',
+      lineColor: '#4da6ff', secondaryColor: '#111820', tertiaryColor: '#080b0f',
+      edgeLabelBackground: '#080b0f', nodeBorder: '#1e2d3d', clusterBkg: '#0d1117',
+      fontFamily: "'JetBrains Mono', 'Courier New', monospace", fontSize: '12px',
+    },
+    flowchart: { htmlLabels: false, curve: 'linear', padding: 24 },
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-  initResizableSidebar();
+  restoreState();
+  initMermaid();
+  initEvents();
+  loadIntelData().then((ok) => { if (ok) initLivePolling(); });
 });
 
-// ─── Service Worker Registration (Offline Mode) ─────────────────────────
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('service-worker.js').then(
-      (registration) => {
-        console.log('SW registered:', registration.scope);
-      },
-      (err) => {
-        console.log('SW registration failed:', err);
-      }
-    );
+    navigator.serviceWorker.register('service-worker.js').catch(() => {});
   });
 }

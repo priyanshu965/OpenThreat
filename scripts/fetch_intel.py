@@ -35,6 +35,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import csv, io
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import feedparser
 
 # ── Local modules (support both `python scripts/x.py` and package import) ─────
@@ -115,10 +117,25 @@ MB_API_KEY        = CONFIG.mb_api_key
 GROQ_MODEL_PRIMARY  = CONFIG.groq_model_primary
 GROQ_MODEL_FALLBACK = CONFIG.groq_model_fallback
 GEMINI_MODEL        = CONFIG.gemini_model
-GROQ_SLEEP_SECS     = CONFIG.groq_sleep_secs
-GEMINI_SLEEP_SECS   = CONFIG.gemini_sleep_secs
+VULNCHECK_API_KEY   = CONFIG.vulncheck_api_key
+AI_BATCH_SIZE       = CONFIG.ai_batch_size
 
 HEADERS = {"User-Agent": CONFIG.http_user_agent}
+
+# ── Shared HTTP session ───────────────────────────────────────────────────────
+# Every fetcher used to open a fresh TCP+TLS connection (~37 handshakes/run).
+# One pooled session with a retry adapter removes that, and gives every source
+# uniform backoff on 429/5xx instead of a hard failure.
+_SESSION = requests.Session()
+_SESSION.headers.update(HEADERS)
+_ADAPTER = HTTPAdapter(
+    pool_connections=16, pool_maxsize=16,
+    max_retries=Retry(total=2, backoff_factor=0.6, respect_retry_after_header=True,
+                      status_forcelist=[429, 500, 502, 503, 504],
+                      allowed_methods=frozenset(["GET", "POST"])),
+)
+_SESSION.mount("https://", _ADAPTER)
+_SESSION.mount("http://", _ADAPTER)
 
 DEFAULT_WORKFLOW_GRAPH = (
     "graph LR\n"
@@ -131,7 +148,7 @@ DEFAULT_WORKFLOW_GRAPH = (
 
 # ── RSS Feed Sources (15 total) ───────────────────────────────────────────────
 RSS_SOURCES = [
-    {"name": "CISA",             "url": "https://www.cisa.gov/cybersecurity-advisories/ics-advisories.xml", "category": "advisory", "severity": "high"},
+    {"name": "CISA",             "url": "https://www.cisa.gov/cybersecurity-advisories/all.xml", "category": "advisory", "severity": "high"},
     {"name": "The Hacker News",  "url": "https://feeds.feedburner.com/TheHackersNews",            "category": "news",     "severity": "medium"},
     {"name": "Bleeping Computer","url": "https://www.bleepingcomputer.com/feed/",                 "category": "news",     "severity": "medium"},
     {"name": "Krebs on Security","url": "https://krebsonsecurity.com/feed/",                      "category": "news",     "severity": "medium"},
@@ -139,7 +156,6 @@ RSS_SOURCES = [
     {"name": "TheRecord Media",  "url": "https://therecord.media/feed",                           "category": "news",     "severity": "high"},
     {"name": "Dark Reading",     "url": "https://www.darkreading.com/rss.xml",                    "category": "news",     "severity": "medium"},
     {"name": "SecurityWeek",     "url": "https://www.securityweek.com/feed/",                     "category": "news",     "severity": "medium"},
-    {"name": "Threatpost",       "url": "https://threatpost.com/feed/",                           "category": "news",     "severity": "medium"},
     {"name": "Cisco Talos",      "url": "https://blog.talosintelligence.com/feed",                "category": "news",     "severity": "high"},
     {"name": "Unit 42",          "url": "https://feeds.feedburner.com/Unit42",                    "category": "news",     "severity": "high"},
     {"name": "Graham Cluley",    "url": "https://grahamcluley.com/feed/",                         "category": "news",     "severity": "medium"},
@@ -168,10 +184,19 @@ def parse_date(date_str) -> str:
         pass
     return now_utc()
 
+_TAG_RE = re.compile(r"</?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?/?>|<!--.*?-->", re.DOTALL)
+
 def clean_html(text: str) -> str:
+    """Strip HTML tags without destroying prose that merely contains '<'.
+
+    The previous `<[^>]+>` pattern deleted everything between a bare '<' in
+    text (e.g. `if (a < b)`) and the next '>', silently truncating code
+    snippets in advisory descriptions."""
     if not text:
         return ""
-    text = re.sub(r"<[^>]+>", "", text)
+    text = _TAG_RE.sub(" ", text)
+    text = (text.replace("&nbsp;", " ").replace("&amp;", "&")
+                .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"'))
     text = re.sub(r"\s+", " ", text).strip()
     return text[:999]
 
@@ -199,188 +224,12 @@ def make_request_text(url: str, headers: dict = None) -> str | None:
         log.warning(f"Text request failed {url}: {e}")
         return None
 
-def ai_score_to_severity(score: float) -> str:
-    if score >= 9.0: return "critical"
-    if score >= 7.0: return "high"
-    if score >= 4.0: return "medium"
-    return "low"
-
-# ── AI Prompt Builder ─────────────────────────────────────────────────────────
-
-def build_prompt(item: dict) -> str:
-    ttp_str = ", ".join(
-        f"{t['id']} ({t['name']})" for t in item.get("ttps", [])[:6]
-    ) or "None detected"
-    return f"""You are a senior threat intelligence analyst. Analyze this cybersecurity threat and respond with ONLY a valid JSON object — no markdown, no code fences, no preamble.
-
-Return exactly this structure:
-{{
-  "ai_summary": "4-5 sentences: detailed technical breakdown of the vulnerability/exploit, affected systems/versions, real-world impact with specific examples, threat actor attribution if mentioned, and specific actionable remediation steps for defenders.",
-  "severity_score": 7.5,
-  "workflow_graph": "graph LR\\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\\n    B -->|T1059.001| C[Execution]:::tactic\\n    C -->|T1041| D[Command and Control]:::tactic\\n    D -->|T1486| E[Impact]:::tactic\\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8\\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8"
-}}
-
-RULES:
-- ai_summary: 4-5 sentences. Be DETAILED and SPECIFIC.
-- severity_score: 0.0 to 10.0 float. 9-10=critical, 7-8=high, 4-6=medium, 1-3=low.
-- workflow_graph: valid Mermaid "graph LR" string with \\n for newlines, 4-6 nodes, edge labels = REAL TTP IDs.
-
-THREAT ITEM:
-Title: {item.get('title', '')[:200]}
-Description: {item.get('description', '')[:500]}
-Category: {item.get('category', '')}
-TTPs Detected: {ttp_str}
-CVE ID: {item.get('cve_id') or 'N/A'}
-CVSS Score: {item.get('cvss_score') or 'N/A'}"""
-
-# ── AI Response Parser ────────────────────────────────────────────────────────
-
-def parse_ai_response(raw: str) -> dict:
-    """
-    Best-effort parse of an LLM's JSON reply.
-
-    LLMs frequently wrap JSON in code fences, add a preamble, emit trailing
-    commas, or leave the object unterminated when truncated by max_tokens. We
-    try progressively harder to recover a dict and only raise ``ValueError`` if
-    nothing usable survives — that signals the caller to fall back to the next
-    provider rather than accepting a half-empty enrichment.
-    """
-    if not raw or not raw.strip():
-        raise ValueError("empty AI response")
-
-    text = raw.strip()
-    # Strip ```json ... ``` fences.
-    text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.MULTILINE)
-    text = re.sub(r"\n?```\s*$", "", text, flags=re.MULTILINE)
-    text = text.strip()
-
-    # Narrow to the outermost {...} span.
-    start = text.find("{")
-    end   = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = text[start:end + 1]
-    else:
-        candidate = text
-
-    # 1) Straight parse.
-    try:
-        return json.loads(candidate)
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    # 2) Repair common issues: control chars + trailing commas.
-    repaired = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", candidate)
-    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
-    try:
-        return json.loads(repaired)
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    # 3) Truncated object (ran out of tokens): balance braces and retry.
-    if candidate.count("{") > candidate.count("}"):
-        balanced = repaired + "}" * (candidate.count("{") - candidate.count("}"))
-        try:
-            return json.loads(balanced)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # 4) Last resort: pull individual fields out with regex so we still get the
-    #    human-readable summary even when the graph JSON is malformed.
-    salvaged = {}
-    m = re.search(r'"ai_summary"\s*:\s*"((?:[^"\\]|\\.)*)"', candidate, re.DOTALL)
-    if m:
-        salvaged["ai_summary"] = m.group(1).encode().decode("unicode_escape", "ignore")
-    m = re.search(r'"severity_score"\s*:\s*([0-9]+(?:\.[0-9]+)?)', candidate)
-    if m:
-        salvaged["severity_score"] = float(m.group(1))
-    if salvaged:
-        return salvaged
-
-    raise ValueError("could not parse AI response as JSON")
-
-def postprocess_graph(raw_graph: str) -> str:
-    if not raw_graph or not raw_graph.strip():
-        return DEFAULT_WORKFLOW_GRAPH
-    graph = raw_graph.replace("\\n", "\n").strip()
-    if not re.match(r'^graph\s+(LR|TD|TB|RL|BT)', graph, re.IGNORECASE):
-        graph = "graph LR\n" + graph
-    lines = [l for l in graph.split("\n") if not l.strip().startswith("classDef")]
-    graph = "\n".join(lines).rstrip()
-    graph += (
-        "\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8"
-        "\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8"
-    )
-    return graph
-
-# ── Groq API Caller ───────────────────────────────────────────────────────────
-
-def call_groq(prompt: str) -> tuple[str | None, str | None]:
-    if not GROQ_API_KEY:
-        return None, None
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    for model in [GROQ_MODEL_PRIMARY, GROQ_MODEL_FALLBACK]:
-        try:
-            body = {
-                "model": model, "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1, "max_tokens": 700,
-                "response_format": {"type": "json_object"},
-            }
-            resp = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers=headers, json=body, timeout=REQUEST_TIMEOUT
-            )
-            if resp.status_code == 429:
-                log.warning(f"Groq rate limit on {model}, trying fallback...")
-                time.sleep(5)
-                continue
-            resp.raise_for_status()
-            data = resp.json()
-            raw = data["choices"][0]["message"]["content"]
-            return raw, model
-        except Exception as e:
-            log.warning(f"Groq error ({model}): {e}")
-    return None, None
-
-# ── Gemini API Caller ─────────────────────────────────────────────────────────
-
-def call_gemini(prompt: str) -> tuple[str | None, str | None]:
-    if not GEMINI_API_KEY:
-        return None, None
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel(GEMINI_MODEL)
-        response = model.generate_content(prompt)
-        return response.text.strip(), GEMINI_MODEL
-    except Exception as e:
-        log.warning(f"Gemini call failed: {e}")
-        return None, None
-
-# ── AI Enrichment ─────────────────────────────────────────────────────────────
-
-def apply_parsed(item: dict, parsed: dict, provider: str, model: str) -> None:
-    item["ai_summary"] = str(parsed.get("ai_summary", "")).strip() or "AI analysis pending"
-    raw_graph = str(parsed.get("workflow_graph", "")).strip()
-    item["workflow_graph"] = postprocess_graph(raw_graph)
-    raw_score = parsed.get("severity_score", None)
-    try:
-        score = float(raw_score)
-        score = max(0.0, min(10.0, score))
-    except (TypeError, ValueError):
-        score = 5.0
-    item["severity_score"] = round(score, 1)
-    item["severity"] = ai_score_to_severity(score)
-    item["ai_provider"] = provider
-    item["ai_model"] = model
-
-def set_fallback(item: dict) -> None:
-    item.setdefault("ai_summary", "AI analysis pending")
-    item.setdefault("workflow_graph", DEFAULT_WORKFLOW_GRAPH)
-    item.setdefault("severity_score", None)
-    item.setdefault("ai_provider", "none")
-    item.setdefault("ai_model", "none")
-
+# ── Attack-flow graph templates ───────────────────────────────────────────────
+# Shipped ONCE in the output document and referenced by `graph_template`.
+# Previously each of 251 items carried a full copy of one of these four
+# strings: 62 KB of payload, 60 KB of it byte-identical duplication.
 _RULE_GRAPHS = {
+    "default": DEFAULT_WORKFLOW_GRAPH,
     "cve": (
         "graph LR\n"
         "    A([Threat Actor]):::actor -->|CVE-Exploit| B[Initial Access]:::tactic\n"
@@ -404,117 +253,351 @@ _RULE_GRAPHS = {
     ),
 }
 
-_SEVERITY_SCORE_MAP = {
-    "critical": 9.0,
-    "high": 7.5,
-    "medium": 5.0,
-    "low": 2.5,
+# ── AI Enrichment ─────────────────────────────────────────────────────────────
+# Design notes (this replaced a per-item, sequential, free-text-JSON design):
+#
+#  * BATCHED. One request carries AI_BATCH_SIZE items and returns an array.
+#    The old loop made one call per item with an unconditional sleep between
+#    them: ~90s to enrich 10 items. This does ~40 items in a handful of calls,
+#    which is what makes AI_ENRICH_LIMIT=40 affordable on a free tier.
+#
+#  * SCHEMA-CONSTRAINED. The model is given a JSON schema and cannot emit
+#    invalid JSON, which deleted a 60-line four-stage "repair the LLM's JSON"
+#    recovery ladder (strip fences -> fix trailing commas -> balance braces ->
+#    regex-salvage). One try/except is now enough.
+#
+#  * DIFFERENT JOB. We no longer ask the model to re-summarise a description we
+#    already have, or to draw a boilerplate attack diagram. We ask for the two
+#    things a model is actually good at and regex is not:
+#       - affected vendor/product extraction (feeds "My Stack" matching)
+#       - a one-line "why this matters / who should act" judgement
+
+_ENRICH_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "index":       {"type": "integer", "description": "The item index given in the prompt"},
+        "summary":     {"type": "string",  "description": "3-4 sentence technical analysis: mechanism, affected versions, impact, remediation"},
+        "why_it_matters": {"type": "string", "description": "One sentence: who should act and how urgently"},
+        "vendors":     {"type": "array", "items": {"type": "string"}, "description": "Affected vendor names, lowercase"},
+        "products":    {"type": "array", "items": {"type": "string"}, "description": "Affected product names, lowercase"},
+        "confidence":  {"type": "number", "description": "0.0-1.0 confidence in this analysis"},
+    },
+    "required": ["index", "summary", "why_it_matters", "vendors", "products", "confidence"],
 }
 
+_ENRICH_BATCH_SCHEMA = {
+    "type": "object",
+    "properties": {"results": {"type": "array", "items": _ENRICH_ITEM_SCHEMA}},
+    "required": ["results"],
+}
+
+_BRIEF_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string", "description": "One sentence summarising today's threat landscape"},
+        "top_items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index":  {"type": "integer"},
+                    "reason": {"type": "string", "description": "Why this one matters today, one sentence"},
+                },
+                "required": ["index", "reason"],
+            },
+        },
+    },
+    "required": ["headline", "top_items"],
+}
+
+
+def build_batch_prompt(items: list[dict]) -> str:
+    """One prompt covering a batch of items. Indices are how results map back."""
+    lines = [
+        "You are a senior threat intelligence analyst. Analyse each numbered "
+        "threat item below and return one result object per item.",
+        "",
+        "Rules:",
+        "- summary: 3-4 sentences. Technical and specific. Mechanism, affected "
+        "versions, real impact, concrete remediation. Do not pad.",
+        "- why_it_matters: ONE sentence naming who should act and how fast.",
+        "- vendors/products: lowercase names extracted from the text (e.g. "
+        '"fortinet", "fortios"). Empty arrays if none are identifiable. Do not guess.',
+        "- confidence: 0.0-1.0. Be honest; low confidence on thin source text.",
+        "",
+        "ITEMS:",
+    ]
+    for idx, item in enumerate(items):
+        ttps = ", ".join(f"{t['id']}" for t in (item.get("ttps") or [])[:6]) or "none"
+        lines.append(
+            f"\n[{idx}] title: {(item.get('title') or '')[:220]}"
+            f"\n    description: {(item.get('description') or '')[:600]}"
+            f"\n    cve: {item.get('cve_id') or 'N/A'} | cvss: {item.get('cvss_score') or 'N/A'}"
+            f" | kev: {bool(item.get('cisa_kev'))} | poc: {bool(item.get('has_poc'))}"
+            f"\n    ttps: {ttps}"
+        )
+    return "\n".join(lines)
+
+
+def _call_gemini_json(prompt: str, schema: dict, model: str | None = None) -> dict | None:
+    """Structured-output Gemini call. Returns a parsed dict or None.
+
+    Tries the current `google-genai` SDK first and falls back to the legacy
+    `google-generativeai` package so this keeps working during migration.
+    """
+    if not GEMINI_API_KEY:
+        return None
+    model = model or GEMINI_MODEL
+
+    # Preferred: google-genai (current SDK).
+    try:
+        from google import genai  # type: ignore
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        resp = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config={"response_mime_type": "application/json", "response_schema": schema},
+        )
+        return json.loads(resp.text)
+    except ImportError:
+        pass
+    except Exception as e:
+        log.warning(f"Gemini ({model}) structured call failed: {e}")
+        return None
+
+    # Fallback: legacy google-generativeai.
+    try:
+        import google.generativeai as genai_legacy  # type: ignore
+        genai_legacy.configure(api_key=GEMINI_API_KEY)
+        gm = genai_legacy.GenerativeModel(model)
+        resp = gm.generate_content(
+            prompt,
+            generation_config={"response_mime_type": "application/json",
+                               "response_schema": schema},
+        )
+        return json.loads(resp.text)
+    except Exception as e:
+        log.warning(f"Gemini legacy ({model}) call failed: {e}")
+        return None
+
+
+def _call_groq_json(prompt: str) -> dict | None:
+    """Groq fallback. Groq's free tier is small (100-2,000 req/day), so this is
+    a failover for a handful of calls, not a primary path."""
+    if not GROQ_API_KEY:
+        return None
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    for model in (GROQ_MODEL_PRIMARY, GROQ_MODEL_FALLBACK):
+        try:
+            resp = _SESSION.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers, timeout=REQUEST_TIMEOUT,
+                json={"model": model,
+                      "messages": [{"role": "user", "content": prompt}],
+                      "temperature": 0.1, "max_tokens": 4000,
+                      "response_format": {"type": "json_object"}})
+            if resp.status_code == 429:
+                log.warning(f"Groq rate limited on {model}")
+                continue
+            resp.raise_for_status()
+            return json.loads(resp.json()["choices"][0]["message"]["content"])
+        except Exception as e:
+            log.warning(f"Groq error ({model}): {e}")
+    return None
+
+
+def apply_enrichment(item: dict, result: dict) -> None:
+    """Write one model result onto an item."""
+    summary = str(result.get("summary", "")).strip()
+    if summary:
+        item["ai_summary"] = summary[:1200]
+    why = str(result.get("why_it_matters", "")).strip()
+    if why:
+        item["why_it_matters"] = why[:400]
+
+    vendors  = [str(v).strip().lower() for v in (result.get("vendors")  or []) if str(v).strip()]
+    products = [str(p).strip().lower() for p in (result.get("products") or []) if str(p).strip()]
+    if vendors:
+        item["vendors"] = sorted(set(vendors))[:8]
+    if products:
+        item["products"] = sorted(set(products))[:8]
+
+    try:
+        item["ai_confidence"] = round(max(0.0, min(1.0, float(result.get("confidence", 0.5)))), 2)
+    except (TypeError, ValueError):
+        item["ai_confidence"] = 0.5
+
+
 def rule_based_enrich(item: dict) -> None:
-    """Fill summary, severity, and graph from the item's own fields — zero API cost."""
-    title = item.get("title", "") or ""
-    desc = item.get("description", "") or ""
-    iocs = item.get("iocs") or {}
+    """Zero-cost defaults for every item.
 
-    # Summary: first ~3 sentences of description, or title fallback.
-    summary = ""
-    if desc:
-        sentences = re.split(r"(?<=[.!?])\s+", desc.strip())
-        summary = " ".join(sentences[:3])
-    if not summary:
-        summary = title[:300]
-    summary = (summary or "No description available")[:500]
-
-    # Append IOC counts.
-    ioc_counts = {k: len(v) for k, v in iocs.items() if v}
-    if ioc_counts:
-        ioc_str = "; ".join(f"{k}: {c}" for k, c in sorted(ioc_counts.items()))
-        summary += f" [IOCs: {ioc_str}]"
-
-    # Severity via keyword matching.
-    text = title + " " + desc
-    sev = infer_severity(text)
-    score = _SEVERITY_SCORE_MAP.get(sev, 5.0)
-
-    # Category-appropriate workflow graph.
-    cat = infer_category(text, "news")
-    graph = _RULE_GRAPHS.get(cat, DEFAULT_WORKFLOW_GRAPH)
-
-    item["ai_summary"] = summary
-    item["workflow_graph"] = graph
-    item["severity_score"] = score
-    item["severity"] = sev
+    Deliberately does NOT set `ai_summary`: 246 of 248 rule summaries were a
+    prefix of `description`, which is already in the same JSON object, so
+    shipping both wasted 58 KB per payload for zero information. The frontend
+    derives a display summary from `description` when `ai_summary` is absent.
+    """
+    text = f"{item.get('title', '')} {item.get('description', '')}"
+    item["severity"]    = infer_severity(text, item.get("severity") or "medium")
+    item["category"]    = infer_category(text, item.get("category") or "news")
+    # Graph is referenced by template id; the templates ship once per document
+    # rather than being duplicated onto all 251 items (was 60 KB of dupes).
+    item["graph_template"] = item["category"] if item["category"] in _RULE_GRAPHS else "default"
     item["ai_provider"] = "rule"
-    item["ai_model"] = "rule-based"
+
 
 def enrich_with_ai(items: list[dict]) -> list[dict]:
-    # Phase 1: rule-based pre-fill on EVERY item so the dashboard never shows
-    # empty summaries. AI will overwrite the highest-priority items in phase 2.
-    log.info("Applying rule-based enrichment to all items...")
+    """Rule-based defaults for everything, then batched model calls for the
+    highest-priority slice."""
     for item in items:
         rule_based_enrich(item)
-    log.info(f"  Rule-based summary set on {len(items)} items")
+    log.info(f"Rule-based defaults applied to {len(items)} items")
 
-    if not GROQ_API_KEY and not GEMINI_API_KEY:
+    if not GEMINI_API_KEY and not GROQ_API_KEY:
         log.info("No AI keys set — skipping AI enrichment")
         return items
 
-    groq_available = bool(GROQ_API_KEY)
-    gemini_available = bool(GEMINI_API_KEY)
-    log.info(f"AI enrichment: gemini={gemini_available} groq={groq_available}")
-
-    # Priority-sort: items with a priority_score get enriched first.
-    candidates = [item for item in items if item.get("ai_provider") == "rule"]
-    candidates.sort(key=lambda i: i.get("priority_score") or 0, reverse=True)
+    candidates = sorted(items, key=lambda i: i.get("priority_score") or 0, reverse=True)
     to_enrich = candidates[:AI_ENRICH_LIMIT]
-    log.info(f"  Enriching top {len(to_enrich)} priority items via AI...")
+    if not to_enrich:
+        return items
 
-    for i, item in enumerate(to_enrich):
-        prompt = build_prompt(item)
-        enriched = False
+    batches = [to_enrich[i:i + AI_BATCH_SIZE] for i in range(0, len(to_enrich), AI_BATCH_SIZE)]
+    log.info(f"AI enrichment: {len(to_enrich)} items in {len(batches)} batch(es) of <= {AI_BATCH_SIZE}")
 
-        # Try Gemini first (more generous free tier).
-        if gemini_available:
-            raw, model = call_gemini(prompt)
-            if raw:
-                try:
-                    parsed = parse_ai_response(raw)
-                    apply_parsed(item, parsed, "gemini", model)
-                    log.info(f"  [{i+1}/{len(to_enrich)}] Gemini ✓")
-                    enriched = True
-                except Exception as e:
-                    log.warning(f"Gemini parse error: {e}")
-        if not enriched and groq_available:
-            time.sleep(3)
-            raw, model = call_groq(prompt)
-            if raw:
-                try:
-                    parsed = parse_ai_response(raw)
-                    apply_parsed(item, parsed, "groq", model)
-                    log.info(f"  [{i+1}/{len(to_enrich)}] Groq ✓")
-                    enriched = True
-                except Exception as e:
-                    log.warning(f"Groq parse error: {e}")
-        if not enriched:
-            log.info(f"  [{i+1}/{len(to_enrich)}] AI skipped — keeping rule-based summary")
-        if i < len(to_enrich) - 1:
-            time.sleep(GROQ_SLEEP_SECS)
+    enriched = 0
+    for bnum, batch in enumerate(batches, 1):
+        prompt = build_batch_prompt(batch)
+        parsed = _call_gemini_json(prompt, _ENRICH_BATCH_SCHEMA)
+        provider, model = "gemini", GEMINI_MODEL
+        if not parsed:
+            parsed = _call_groq_json(prompt)
+            provider, model = "groq", GROQ_MODEL_PRIMARY
+        if not parsed:
+            log.warning(f"  batch {bnum}/{len(batches)}: no AI result, keeping rule defaults")
+            continue
 
-    ai_count = sum(1 for i in to_enrich if i.get("ai_provider") not in ("rule", "none"))
-    log.info(f"AI enrichment complete: {ai_count}/{len(to_enrich)} overwritten by AI, "
-             f"{len(items) - ai_count} using rule-based")
+        for result in parsed.get("results", []):
+            try:
+                idx = int(result.get("index", -1))
+            except (TypeError, ValueError):
+                continue
+            if not (0 <= idx < len(batch)):
+                continue
+            item = batch[idx]
+            apply_enrichment(item, result)
+            item["ai_provider"] = provider
+            item["ai_model"] = model
+            enriched += 1
+        log.info(f"  batch {bnum}/{len(batches)}: {len(parsed.get('results', []))} results")
+
+    log.info(f"AI enrichment complete: {enriched}/{len(to_enrich)} items enriched")
     return items
 
+
+def build_daily_brief(items: list[dict]) -> dict | None:
+    """One call per run: 'of these N items, which few actually matter today?'
+
+    This is the highest-value use of a model in the pipeline — a judgement over
+    the whole feed, which is exactly what no amount of regex can produce.
+    """
+    if not CONFIG.enable_ai_brief or not GEMINI_API_KEY:
+        return None
+
+    ranked = sorted(items, key=lambda i: i.get("priority_score") or 0, reverse=True)[:40]
+    if not ranked:
+        return None
+
+    lines = ["Below are today's top threat-intel items. Pick the 3-5 that a "
+             "defender should act on FIRST and say why in one sentence each. "
+             "Prefer confirmed exploitation, public PoC, and wide blast radius "
+             "over interesting-but-theoretical. Also write a single headline "
+             "sentence summarising the day.", "", "ITEMS:"]
+    for idx, item in enumerate(ranked):
+        lines.append(
+            f"[{idx}] {(item.get('title') or '')[:180]} "
+            f"(src={item.get('source')}, sev={item.get('severity')}, "
+            f"P={item.get('priority_score')}, kev={bool(item.get('cisa_kev'))}, "
+            f"poc={bool(item.get('has_poc'))}, ssvc={item.get('ssvc_exploitation') or 'n/a'})")
+
+    parsed = _call_gemini_json("\n".join(lines), _BRIEF_SCHEMA, model=CONFIG.gemini_brief_model)
+    if not parsed:
+        return None
+
+    picks = []
+    for entry in parsed.get("top_items", [])[:5]:
+        try:
+            idx = int(entry.get("index", -1))
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < len(ranked):
+            item = ranked[idx]
+            picks.append({
+                "title":  item.get("title"),
+                "url":    item.get("url"),
+                "cve_id": item.get("cve_id"),
+                "key":    item_key(item),
+                "reason": str(entry.get("reason", ""))[:300],
+            })
+    if not picks:
+        return None
+    return {"headline": str(parsed.get("headline", ""))[:300],
+            "items": picks,
+            "model": CONFIG.gemini_brief_model,
+            "generated": now_utc()}
+
+
 # ── RSS Fetcher ───────────────────────────────────────────────────────────────
+
+# Per-feed ETag / Last-Modified store, so hourly runs can send a conditional
+# request instead of re-downloading unchanged feeds 24x/day. Most of these
+# feeds publish a handful of times daily; several have already started 403ing
+# aggressive clients (GBHackers is commented out of RSS_SOURCES for exactly
+# that reason), so this is politeness as much as speed.
+_FEED_META: dict[str, dict] = {}
+_FEED_META_LOCK = threading.Lock()
+
+
+def _load_feed_meta() -> None:
+    global _FEED_META
+    try:
+        if CONFIG.feed_meta_path.exists():
+            _FEED_META = json.loads(CONFIG.feed_meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        _FEED_META = {}
+
+
+def _save_feed_meta() -> None:
+    try:
+        CONFIG.feed_meta_path.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG.feed_meta_path.write_text(json.dumps(_FEED_META, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.warning(f"Could not persist feed metadata: {e}")
+
 
 def fetch_rss(source: dict) -> list[dict]:
     log.info(f"Fetching RSS: {source['name']}")
     items = []
+    url = source["url"]
     hdrs = {**HEADERS, **source.get("headers", {})}
+    with _FEED_META_LOCK:
+        meta = dict(_FEED_META.get(url, {}))
+    if meta.get("etag"):
+        hdrs["If-None-Match"] = meta["etag"]
+    if meta.get("last_modified"):
+        hdrs["If-Modified-Since"] = meta["last_modified"]
+
     try:
-        resp = requests.get(source["url"], headers=hdrs, timeout=15)
+        resp = _SESSION.get(url, headers=hdrs, timeout=15)
+        if resp.status_code == 304:
+            log.info(f"  {source['name']}: 304 Not Modified — reusing last snapshot")
+            return _replay_cached_feed(url)
         resp.raise_for_status()
+        with _FEED_META_LOCK:
+            _FEED_META[url] = {
+                "etag": resp.headers.get("ETag", ""),
+                "last_modified": resp.headers.get("Last-Modified", ""),
+                "checked": now_utc(),
+            }
         feed = feedparser.parse(resp.text)
         if feed.bozo and not feed.entries:
             log.warning(f"Feed error {source['name']}")
@@ -537,12 +620,35 @@ def fetch_rss(source: dict) -> list[dict]:
                 "cve_id": extract_cve_id(text), "source": source["name"],
                 "category": category, "severity": severity, "cvss_score": None,
                 "published": pub_date,
-                "iocs": extract_iocs(text),
             })
     except Exception as e:
         log.error(f"Unexpected error {source['name']}: {e}")
+    if items:
+        _store_cached_feed(source["url"], items)
     log.info(f"  Got {len(items)} items from {source['name']}")
     return items
+
+
+def _feed_cache_path(url: str) -> Path:
+    import hashlib
+    return _cache_path(f"feed_{hashlib.sha1(url.encode()).hexdigest()[:16]}.json")
+
+
+def _store_cached_feed(url: str, items: list[dict]) -> None:
+    try:
+        _feed_cache_path(url).write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _replay_cached_feed(url: str) -> list[dict]:
+    try:
+        path = _feed_cache_path(url)
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return []
 
 # ── NVD CVE Fetcher ───────────────────────────────────────────────────────────
 
@@ -588,7 +694,6 @@ def fetch_nvd_cves() -> list[dict]:
             "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}", "cve_id": cve_id,
             "source": "NVD", "category": "cve", "severity": severity,
             "cvss_score": cvss_score, "published": parse_date(cve.get("published", "")),
-            "iocs": extract_iocs(description),
             "affected_products": sorted(products)[:8],
         })
     log.info(f"  Got {len(items)} CVEs from NVD")
@@ -615,7 +720,6 @@ def fetch_reddit_netsec() -> list[dict]:
                 "url": link, "cve_id": extract_cve_id(title),
                 "source": "Reddit/netsec", "category": infer_category(title, "news"),
                 "severity": infer_severity(title, "low"), "cvss_score": None, "published": pub,
-                "iocs": extract_iocs(title + " " + desc),
             })
     except Exception as e:
         log.warning(f"Reddit r/netsec failed: {e}")
@@ -644,7 +748,6 @@ def fetch_otx_pulse() -> list[dict]:
             "cve_id": None, "source": "AlienVault OTX", "category": "incident",
             "severity": infer_severity(name + " " + description, "medium"),
             "cvss_score": None, "published": parse_date(pulse.get("created", now_utc())),
-            "iocs": extract_iocs(name + " " + description),
         })
     log.info(f"  Got {len(items)} pulses from AlienVault OTX")
     return items
@@ -812,15 +915,6 @@ def fetch_phishtank() -> list[dict]:
     log.info(f"  Got {len(items)} phishing URLs from PhishTank")
     return items
 
-# ── OSV Vulnerability Fetcher (covers 25+ sources) ───────────────────────────
-
-# OSV removed — the API no longer supports listing vulnerabilities per
-# ecosystem without a specific package name, so it always returns 400.
-
-def fetch_osv() -> list[dict]:
-    log.info("OSV requires package names per ecosystem — no standalone listing API available, skipping.")
-    return []
-
 # ── MalwareBazaar Fetcher (keyless) ──────────────────────────────────────────
 
 def fetch_malwarebazaar() -> list[dict]:
@@ -896,7 +990,7 @@ def fetch_threatfox() -> list[dict]:
             elif "." in ioc and " " not in ioc:
                 iocs["domain"] = [ioc.lower()]
             else:
-                iocs = extract_iocs(ioc)
+                iocs = extract_iocs(ioc, source="ThreatFox")
             items.append({
                 "title": f"ThreatFox: {ioc[:60]} ({malware_printable or malware})",
                 "description": desc,
@@ -940,7 +1034,6 @@ def _fetch_rss_source(name: str, url: str, default_severity: str, extra_headers:
                 "source": name, "category": "advisory",
                 "severity": infer_severity(title, default_severity),
                 "cvss_score": None, "published": pub,
-                "iocs": extract_iocs(desc),
             })
         return items
     except Exception as e:
@@ -974,7 +1067,6 @@ def fetch_fedora() -> list[dict]:
                     "cve_id": extract_cve_id(title + " " + desc), "source": "Fedora",
                     "category": "advisory", "severity": infer_severity(title, "medium"),
                     "cvss_score": None, "published": pub,
-                    "iocs": extract_iocs(desc),
                 })
     except Exception as e:
         log.warning(f"Fedora Bodhi failed: {e}")
@@ -1022,7 +1114,6 @@ def fetch_archlinux() -> list[dict]:
                     "cve_id": cve_id, "source": "Arch Linux",
                     "category": "advisory", "severity": infer_severity(title, "medium"),
                     "cvss_score": None, "published": pub,
-                    "iocs": extract_iocs(title),
                 })
     except Exception as e:
         log.warning(f"Arch Linux failed: {e}")
@@ -1052,7 +1143,6 @@ def fetch_amazon_linux() -> list[dict]:
                         "cve_id": extract_cve_id(title + " " + desc), "source": "Amazon Linux",
                         "category": "advisory", "severity": infer_severity(title, "medium"),
                         "cvss_score": None, "published": pub,
-                        "iocs": extract_iocs(desc),
                     })
             except Exception:
                 continue  # try next Amazon Linux feed version
@@ -1093,7 +1183,6 @@ def fetch_vmware() -> list[dict]:
                 "cve_id": cve_id, "source": "VMware",
                 "category": "advisory", "severity": infer_severity(title, "high"),
                 "cvss_score": None, "published": pub,
-                "iocs": extract_iocs(desc),
             })
     except Exception as e:
         log.warning(f"VMware failed: {e}")
@@ -1119,7 +1208,6 @@ def fetch_mitre_cwe() -> list[dict]:
                     "cve_id": None, "source": "Mitre CWE",
                     "category": "advisory", "severity": "medium",
                     "cvss_score": None, "published": now_utc(),
-                    "iocs": extract_iocs(desc),
                 })
     except Exception as e:
         log.warning(f"Mitre CWE failed: {e}")
@@ -1165,7 +1253,6 @@ def fetch_ghsa() -> list[dict]:
                 "severity": sev if sev in ("critical", "high", "medium", "low") else "medium",
                 "cvss_score": cvss,
                 "published": parse_date(adv.get("published_at", "")),
-                "iocs": extract_iocs(desc),
                 "affected_products": packages[:8],
             })
     except Exception as e:
@@ -1318,59 +1405,111 @@ def _cached_fetch(name: str, ttl_hours: int, fetcher) -> str | None:
     log.warning(f"  Fetch failed for {name} (no cache): {err}")
     return None
 
-# ── EPSS Scoring ──────────────────────────────────────────────────────────────
+# ── EPSS Scoring (bulk daily CSV) ─────────────────────────────────────────────
+# The previous implementation cached the API response under a single filename
+# with a 24h TTL, but the payload was scored for whichever CVE list happened to
+# populate it. For the next 23 hourly runs every newly-discovered CVE got a
+# cache HIT on data that did not contain it, and silently received no EPSS
+# score — 14 of 69 CVEs were unscored in the committed output.
+#
+# FIRST publishes the entire scored corpus daily as gzipped CSV. Download it
+# once per day and look everything up locally: correct, and one request instead
+# of one-per-run against a free API.
+
+_EPSS_BULK_URL = "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz"
+_EPSS_LEGACY_URL = "https://epss.cyentia.com/epss_scores-current.csv.gz"
+
+
+def _fetch_epss_bulk_raw() -> tuple[str | None, str | None]:
+    """Download and decompress the full EPSS corpus into `cve,score` lines."""
+    import gzip
+    for url in (_EPSS_BULK_URL, _EPSS_LEGACY_URL):
+        try:
+            resp = _SESSION.get(url, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            text = gzip.decompress(resp.content).decode("utf-8", "replace")
+            out = []
+            for line in text.splitlines():
+                if not line or line.startswith("#") or line.startswith("cve,"):
+                    continue
+                parts = line.split(",")
+                if len(parts) >= 2:
+                    out.append(f"{parts[0].strip().upper()},{parts[1].strip()}")
+            if out:
+                return "\n".join(out), None
+        except Exception as e:
+            last = str(e)
+            continue
+    return None, locals().get("last", "all EPSS endpoints failed")
+
+
+def _fetch_epss_api(cve_ids: list[str]) -> dict[str, float]:
+    """Per-CVE API fallback, chunked to keep the query string sane."""
+    scores: dict[str, float] = {}
+    for i in range(0, len(cve_ids), 100):
+        chunk = cve_ids[i:i + 100]
+        try:
+            resp = _SESSION.get("https://api.first.org/data/v1/epss",
+                                params={"cve": ",".join(chunk)}, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            for entry in resp.json().get("data", []):
+                cve, epss = entry.get("cve", ""), entry.get("epss")
+                if cve and epss is not None:
+                    scores[cve.upper()] = float(epss)
+        except Exception as e:
+            log.warning(f"  EPSS API chunk failed: {e}")
+    return scores
+
 
 def fetch_epss_scores(cve_ids: list[str]) -> dict[str, float]:
     if not cve_ids:
         return {}
-    log.info(f"Fetching EPSS scores for {len(cve_ids)} CVEs...")
-    cached = _cached_fetch("epss.json", 24, lambda: _fetch_epss_raw(cve_ids))
-    if cached is None:
-        return {}
-    try:
-        scores = json.loads(cached)
-        log.info(f"  Got EPSS scores for {len(scores)} CVEs")
-        return scores
-    except Exception as e:
-        log.warning(f"EPSS cache parse failed: {e}")
-        return {}
+    wanted = {c.upper() for c in cve_ids}
+    log.info(f"Resolving EPSS scores for {len(wanted)} CVEs...")
 
-def _fetch_epss_raw(cve_ids: list[str]) -> tuple[str | None, str | None]:
-    try:
-        cve_str = ",".join(cve_ids)
-        resp = requests.get(
-            f"https://api.first.org/data/v1/epss?cve={cve_str}",
-            headers=HEADERS, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
-        scores = {}
-        for entry in data.get("data", []):
-            cve = entry.get("cve", "")
-            epss = entry.get("epss")
-            if cve and epss is not None:
-                scores[cve.upper()] = float(epss)
-        return json.dumps(scores), None
-    except Exception as e:
-        return None, str(e)
+    if CONFIG.enable_epss_bulk:
+        cached = _cached_fetch("epss_bulk.csv", 24, _fetch_epss_bulk_raw)
+        if cached:
+            scores = {}
+            for line in cached.splitlines():
+                cve, _, val = line.partition(",")
+                if cve in wanted:
+                    try:
+                        scores[cve] = float(val)
+                    except ValueError:
+                        continue
+            log.info(f"  Matched {len(scores)}/{len(wanted)} CVEs from the bulk corpus")
+            if scores:
+                return scores
 
-# ── CISA KEV ──────────────────────────────────────────────────────────────────
+    log.info("  Falling back to the per-CVE EPSS API")
+    return _fetch_epss_api(sorted(wanted))
+
+
+# ── CISA KEV (+ optional VulnCheck KEV superset) ──────────────────────────────
 
 def fetch_cisa_kev() -> set[str]:
     log.info("Fetching CISA KEV catalog...")
     cached = _cached_fetch("cisa_kev.json", 24, _fetch_cisa_kev_raw)
-    if cached is None:
-        return set()
-    try:
-        cves = set(json.loads(cached))
-        log.info(f"  Got {len(cves)} CVEs in CISA KEV")
-        return cves
-    except Exception as e:
-        log.warning(f"CISA KEV cache parse failed: {e}")
-        return set()
+    kev: set[str] = set()
+    if cached:
+        try:
+            kev = set(json.loads(cached))
+            log.info(f"  {len(kev)} CVEs in CISA KEV")
+        except Exception as e:
+            log.warning(f"CISA KEV cache parse failed: {e}")
+
+    extra = fetch_vulncheck_kev()
+    if extra:
+        new = extra - kev
+        log.info(f"  VulnCheck KEV adds {len(new)} CVEs CISA has not listed")
+        kev |= extra
+    return kev
+
 
 def _fetch_cisa_kev_raw() -> tuple[str | None, str | None]:
     try:
-        resp = requests.get(
+        resp = _SESSION.get(
             "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
             timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
@@ -1379,6 +1518,148 @@ def _fetch_cisa_kev_raw() -> tuple[str | None, str | None]:
         return json.dumps(cves), None
     except Exception as e:
         return None, str(e)
+
+
+# ── VulnCheck KEV ─────────────────────────────────────────────────────────────
+# A superset of CISA KEV that typically lists exploited vulnerabilities earlier.
+# Requires a free API key. NEVER hardcode it — set VULNCHECK_API_KEY as a
+# GitHub Actions secret (Settings -> Secrets and variables -> Actions) or in a
+# local .env file, which .gitignore already excludes.
+
+def _fetch_vulncheck_kev_raw() -> tuple[str | None, str | None]:
+    try:
+        cves, page = [], 1
+        while page <= 20:
+            resp = _SESSION.get(
+                "https://api.vulncheck.com/v3/index/vulncheck-kev",
+                headers={"Authorization": f"Bearer {VULNCHECK_API_KEY}"},
+                params={"limit": 500, "page": page}, timeout=REQUEST_TIMEOUT)
+            if resp.status_code in (401, 403):
+                return None, f"VulnCheck auth rejected (HTTP {resp.status_code}) — check VULNCHECK_API_KEY"
+            resp.raise_for_status()
+            payload = resp.json()
+            rows = payload.get("data", []) or []
+            if not rows:
+                break
+            for row in rows:
+                for cve in (row.get("cve") or []):
+                    if cve:
+                        cves.append(str(cve).upper())
+            meta = payload.get("_meta", {}) or {}
+            if not meta.get("next_page"):
+                break
+            page += 1
+        return (json.dumps(sorted(set(cves))), None) if cves else (None, "empty response")
+    except Exception as e:
+        return None, str(e)
+
+
+def fetch_vulncheck_kev() -> set[str]:
+    if not VULNCHECK_API_KEY:
+        log.info("VULNCHECK_API_KEY not set — skipping VulnCheck KEV")
+        return set()
+    log.info("Fetching VulnCheck KEV...")
+    cached = _cached_fetch("vulncheck_kev.json", 12, _fetch_vulncheck_kev_raw)
+    if not cached:
+        return set()
+    try:
+        return set(json.loads(cached))
+    except Exception as e:
+        log.warning(f"VulnCheck KEV parse failed: {e}")
+        return set()
+
+
+# ── CISA Vulnrichment (SSVC decision points) ──────────────────────────────────
+# Free, no key. Turns a score into a DECISION: Exploitation (none/poc/active),
+# Automatable (can this be exploited at scale, unattended), and Technical
+# Impact (partial/total). This is the enrichment that makes the priority score
+# defensible rather than just "CVSS with extra steps".
+#
+# Layout: <year>/<N>xxx/CVE-<id>.json  e.g. 2026/12xxx/CVE-2026-12345.json
+
+_VULNRICHMENT_RAW = ("https://raw.githubusercontent.com/cisagov/vulnrichment/develop/"
+                     "{year}/{bucket}xxx/{cve}.json")
+
+
+def _vulnrichment_url(cve_id: str) -> str | None:
+    m = re.match(r"CVE-(\d{4})-(\d{4,7})$", cve_id.upper())
+    if not m:
+        return None
+    year, num = m.group(1), m.group(2)
+    return _VULNRICHMENT_RAW.format(year=year, bucket=num[:-3] or "0", cve=cve_id.upper())
+
+
+def _parse_ssvc(record: dict) -> dict:
+    """Pull SSVC decision points and any ADP-supplied CVSS/CWE out of a record."""
+    out: dict = {}
+    for container in (record.get("containers", {}) or {}).get("adp", []) or []:
+        for metric in container.get("metrics", []) or []:
+            ssvc = metric.get("other", {}).get("content", {}) if metric.get("other") else {}
+            for option in ssvc.get("options", []) or []:
+                for key, value in option.items():
+                    k = key.strip().lower()
+                    if k in ("exploitation", "automatable", "technical impact"):
+                        out[k.replace(" ", "_")] = str(value).strip().lower()
+            for version in ("cvssV4_0", "cvssV3_1", "cvssV3_0"):
+                cvss = metric.get(version)
+                if cvss and cvss.get("baseScore") is not None and "cvss" not in out:
+                    try:
+                        out["cvss"] = float(cvss["baseScore"])
+                    except (TypeError, ValueError):
+                        pass
+        for problem in container.get("problemTypes", []) or []:
+            for desc in problem.get("descriptions", []) or []:
+                if desc.get("cweId") and "cwe" not in out:
+                    out["cwe"] = desc["cweId"]
+                    out["cwe_name"] = desc.get("description", "")[:120]
+    return out
+
+
+def fetch_vulnrichment(cve_ids: list[str]) -> dict[str, dict]:
+    """Fetch SSVC enrichment for the CVEs in this run's feed, in parallel."""
+    if not CONFIG.enable_vulnrichment or not cve_ids:
+        return {}
+    unique = sorted({c.upper() for c in cve_ids})
+    log.info(f"Fetching CISA Vulnrichment SSVC for {len(unique)} CVEs...")
+
+    results: dict[str, dict] = {}
+
+    def _one(cve_id: str) -> None:
+        # Vulnrichment records are effectively immutable once published.
+        cached = _cached_fetch(f"ssvc_{cve_id}.json", 24 * 14,
+                               lambda: _fetch_vulnrichment_raw(cve_id))
+        if not cached:
+            return
+        try:
+            parsed = _parse_ssvc(json.loads(cached))
+        except Exception:
+            return
+        if parsed:
+            results[cve_id] = parsed
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_one, unique))
+
+    log.info(f"  SSVC data for {len(results)} CVEs "
+             f"({sum(1 for v in results.values() if v.get('exploitation') == 'active')} actively exploited)")
+    return results
+
+
+def _fetch_vulnrichment_raw(cve_id: str) -> tuple[str | None, str | None]:
+    url = _vulnrichment_url(cve_id)
+    if not url:
+        return None, "unparseable CVE id"
+    try:
+        resp = _SESSION.get(url, timeout=REQUEST_TIMEOUT)
+        if resp.status_code == 404:
+            # Not every CVE is enriched. Cache the miss so we don't re-request
+            # it every hour for the next two weeks.
+            return "{}", None
+        resp.raise_for_status()
+        return resp.text, None
+    except Exception as e:
+        return None, str(e)
+
 
 # ── Threat Actor Detection ────────────────────────────────────────────────────
 
@@ -1438,47 +1719,68 @@ def cvss_to_severity(score) -> str:
 
 # ── CVE Prioritization Score ──────────────────────────────────────────────────
 
+# SSVC (CISA Vulnrichment) contributions to the blended score.
+_SSVC_EXPLOITATION_WEIGHT = {"active": 1.0, "poc": 0.45, "none": 0.0}
+
+# Score -> what a defender should actually do. This is the point of the whole
+# pipeline: a decision, not a number.
+_ACTION_BY_LABEL = {
+    "urgent":   ("Patch now",        "Confirmed exploitation or trivially weaponisable — act within 24h"),
+    "elevated": ("Patch this week",  "Exploitation is plausible and impact is high"),
+    "moderate": ("Next patch cycle", "Worth scheduling, not worth paging anyone"),
+    "low":      ("Monitor",          "Track it; no action required today"),
+}
+
+
 def compute_priority(item: dict) -> dict | None:
     """
-    Blend CVSS (impact), EPSS (probability of exploitation) and CISA KEV
-    (confirmed in-the-wild exploitation) into a single 0–100 "act on this first"
-    score. Returns a small dict the frontend can badge/sort on, or None when the
-    item has no CVE signal at all (so we don't score plain news items).
+    Blend CVSS (impact), EPSS (probability), CISA KEV (confirmed exploitation),
+    public PoC availability and SSVC decision points into one 0-100 "act on
+    this first" score, plus a plain-language action.
 
         score = cvss_weight * (cvss/10)
               + epss_weight * epss
-              + kev_bonus       (only if CISA KEV)
+              + ssvc_active_bonus * exploitation_weight
+              + ssvc_auto_bonus     (if Automatable)
+              + ssvc_total_bonus    (if Technical Impact == total)
+              + poc_bonus / kev_bonus
 
-    KEV items are additionally floored at 90 — a vuln CISA has confirmed is being
-    exploited should always sort to the top regardless of its CVSS/EPSS.
+    KEV and SSVC-active items are floored at 90 — something confirmed to be
+    exploited in the wild should sort to the top regardless of its CVSS.
     """
     cvss = item.get("cvss_score")
     epss = item.get("epss_score")
     kev  = bool(item.get("cisa_kev"))
     poc  = bool(item.get("has_poc"))
+    exploitation = (item.get("ssvc_exploitation") or "").lower()
+    automatable  = (item.get("ssvc_automatable") or "").lower() == "yes"
+    total_impact = (item.get("ssvc_technical_impact") or "").lower() == "total"
 
-    if cvss is None and epss is None and not kev and not poc:
+    if cvss is None and epss is None and not kev and not poc and not exploitation:
         return None
 
     try:
-        cvss_val = float(cvss) if cvss is not None else 0.0
+        cvss_val = max(0.0, min(10.0, float(cvss))) if cvss is not None else 0.0
     except (TypeError, ValueError):
         cvss_val = 0.0
     try:
-        epss_val = float(epss) if epss is not None else 0.0
+        epss_val = max(0.0, min(1.0, float(epss))) if epss is not None else 0.0
     except (TypeError, ValueError):
         epss_val = 0.0
 
-    cvss_val = max(0.0, min(10.0, cvss_val))
-    epss_val = max(0.0, min(1.0, epss_val))
-
     score = (CONFIG.priority_cvss_weight * (cvss_val / 10.0)
              + CONFIG.priority_epss_weight * epss_val)
+
+    if exploitation in _SSVC_EXPLOITATION_WEIGHT:
+        score += CONFIG.priority_ssvc_active_bonus * _SSVC_EXPLOITATION_WEIGHT[exploitation]
+    if automatable:
+        score += CONFIG.priority_ssvc_auto_bonus
+    if total_impact:
+        score += CONFIG.priority_ssvc_total_bonus
     if poc:
-        # Public exploit code exists — weaponization is one git clone away.
         score += CONFIG.priority_poc_bonus
         score = max(score, 70.0)
-    if kev:
+    if kev or exploitation == "active":
         score += CONFIG.priority_kev_bonus
         score = max(score, 90.0)
 
@@ -1489,10 +1791,17 @@ def compute_priority(item: dict) -> dict | None:
     elif score >= 40: label = "moderate"
     else:             label = "low"
 
-    # Human-readable driver of the score, shown in a tooltip.
     reasons = []
     if kev:
         reasons.append("CISA KEV (actively exploited)")
+    if exploitation == "active" and not kev:
+        reasons.append("SSVC: active exploitation")
+    elif exploitation == "poc":
+        reasons.append("SSVC: public PoC")
+    if automatable:
+        reasons.append("SSVC: automatable")
+    if total_impact:
+        reasons.append("SSVC: total impact")
     if poc:
         reasons.append("Public PoC on GitHub")
     if epss is not None:
@@ -1500,69 +1809,224 @@ def compute_priority(item: dict) -> dict | None:
     if cvss is not None:
         reasons.append(f"CVSS {cvss_val:.1f}")
 
-    return {"score": score, "label": label, "rationale": " · ".join(reasons)}
+    action, action_detail = _ACTION_BY_LABEL[label]
+    return {"score": score, "label": label, "rationale": " · ".join(reasons),
+            "action": action, "action_detail": action_detail}
+
+
+# Keyword sets for rule-based classification. Matched as WHOLE TOKENS — the
+# original `kw in text` form fired "rce" inside "source"/"force"/"resource",
+# which mislabelled 31% of all `critical` items and, because ALERT_SEVERITIES
+# defaults to `critical`, sent those false positives straight to Slack.
+_SEVERITY_KEYWORDS = [
+    ("critical", ["critical", "zero-day", "0-day", "actively exploited", "rce",
+                  "remote code execution", "unauthenticated", "wormable",
+                  "exploited in the wild", "pre-auth"]),
+    ("high",     ["high", "privilege escalation", "authentication bypass",
+                  "ransomware", "data breach", "nation-state", "apt",
+                  "sandbox escape", "arbitrary code"]),
+    ("medium",   ["medium", "xss", "csrf", "injection", "phishing", "malware",
+                  "denial of service", "dos", "information disclosure"]),
+    ("low",      ["low", "informational", "advisory", "guide"]),
+]
+
+_CATEGORY_KEYWORDS = [
+    ("cve",      ["cve", "vulnerability", "vulnerabilities", "patch", "exploit",
+                  "nvd", "advisory id", "security update"]),
+    ("incident", ["breach", "attack", "ransomware", "hack", "hacked", "intrusion",
+                  "stolen", "compromised", "leaked", "incident", "victim"]),
+    ("advisory", ["advisory", "alert", "directive", "guidance", "warning",
+                  "cisa", "recommendation", "patch tuesday", "bulletin"]),
+]
+
+
+def _compile_keyword_matcher(keywords: list[str]) -> re.Pattern:
+    """Whole-token alternation. Lookarounds rather than \b so that keywords
+    containing digits or spaces ("0-day", "patch tuesday") still match."""
+    return re.compile(
+        r"(?<![0-9A-Za-z])(?:"
+        + "|".join(re.escape(k) for k in sorted(keywords, key=len, reverse=True))
+        + r")(?![0-9A-Za-z])",
+        re.IGNORECASE,
+    )
+
+
+_SEVERITY_MATCHERS = [(label, _compile_keyword_matcher(kws)) for label, kws in _SEVERITY_KEYWORDS]
+_CATEGORY_MATCHERS = [(label, _compile_keyword_matcher(kws)) for label, kws in _CATEGORY_KEYWORDS]
+
 
 def infer_severity(text: str, default: str = "medium") -> str:
-    t = text.lower()
-    if any(kw in t for kw in ["critical","zero-day","0-day","actively exploited","rce","remote code execution","unauthenticated","wormable"]):
-        return "critical"
-    if any(kw in t for kw in ["high","privilege escalation","authentication bypass","ransomware","data breach","nation-state","apt"]):
-        return "high"
-    if any(kw in t for kw in ["medium","xss","csrf","injection","phishing","malware"]):
-        return "medium"
-    if any(kw in t for kw in ["low","informational","advisory","guide"]):
-        return "low"
+    """Infer severity from text via whole-token keyword matching, most severe first."""
+    if not text:
+        return default
+    for label, pattern in _SEVERITY_MATCHERS:
+        if pattern.search(text):
+            return label
     return default
 
+
 def infer_category(text: str, default: str = "news") -> str:
-    t = text.lower()
-    if any(kw in t for kw in ["cve-","vulnerability","patch","exploit","nvd"]):
-        return "cve"
-    if any(kw in t for kw in ["breach","attack","ransomware","hack","intrusion","stolen","compromised","leaked","incident"]):
-        return "incident"
-    if any(kw in t for kw in ["advisory","alert","directive","guidance","warning","cisa","recommendation","patch tuesday"]):
-        return "advisory"
+    """Infer category from text via whole-token keyword matching."""
+    if not text:
+        return default
+    for label, pattern in _CATEGORY_MATCHERS:
+        if pattern.search(text):
+            return label
     return default
+
 
 def extract_cve_id(text: str) -> str | None:
     match = re.search(r"CVE-\d{4}-\d{4,7}", text, re.IGNORECASE)
     return match.group(0).upper() if match else None
 
 # ── IOC Extraction Engine ─────────────────────────────────────────────────────
+# Previously this ran over EVERY item's prose, so the STIX/CSV exports ended up
+# publishing gmail.com, redhat.com, cern.ch, `req.query`, `handlers.ts` and two
+# named maintainers' work email addresses as `indicator_types: malicious-activity`.
+# Essentially 100% false positives, plus a PII leak in a public repo.
+#
+# Two changes fix it:
+#   1. Only sources that actually publish IOCs are scanned (IOC_SOURCES).
+#   2. Everything else must clear a plausibility bar: defanged notation, a real
+#      public suffix, and not the article's own host.
 
 IOC_PATTERNS = {
-    'sha256': re.compile(r'\b[a-fA-F0-9]{64}\b'),
-    'sha1':   re.compile(r'\b[a-fA-F0-9]{40}\b'),
-    'md5':    re.compile(r'\b[a-fA-F0-9]{32}\b'),
-    'ipv4':   re.compile(r'(?<![0-9])(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?![0-9])'),
-    'domain': re.compile(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'),
+    'sha256': re.compile(r'(?<![a-fA-F0-9])[a-fA-F0-9]{64}(?![a-fA-F0-9])'),
+    'sha1':   re.compile(r'(?<![a-fA-F0-9])[a-fA-F0-9]{40}(?![a-fA-F0-9])'),
+    'md5':    re.compile(r'(?<![a-fA-F0-9])[a-fA-F0-9]{32}(?![a-fA-F0-9])'),
+    'ipv4':   re.compile(r'(?<![0-9.])(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?![0-9.])'),
+    'domain': re.compile(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,24}\b'),
     'url':    re.compile(r'https?://[^\s<>"\'{}|\\^`\[\]]+', re.I),
     'cve':    re.compile(r'CVE-\d{4}-\d{4,7}', re.I),
-    'cidr':   re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b'),
+    'cidr':   re.compile(r'(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}(?![0-9])'),
     'email':  re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'),
 }
 
-def extract_iocs(text: str) -> dict[str, list[str]]:
+# Sources whose payloads ARE indicator feeds. Only these get network/file IOC
+# extraction; everything else contributes CVE ids only.
+IOC_SOURCES = {
+    "URLhaus", "ThreatFox", "Feodo Tracker", "Spamhaus", "MalwareBazaar",
+    "AbuseIPDB", "PhishTank", "AlienVault OTX",
+}
+
+# Never treat these as indicators: infrastructure, source hosts, and the
+# vendors whose advisories we ingest.
+_DOMAIN_DENYLIST = {
+    "github.com", "githubusercontent.com", "gmail.com", "google.com", "twitter.com",
+    "x.com", "linkedin.com", "youtube.com", "facebook.com", "microsoft.com",
+    "redhat.com", "cern.ch", "cisa.gov", "nist.gov", "mitre.org", "apache.org",
+    "debian.org", "ubuntu.com", "fedoraproject.org", "gentoo.org", "archlinux.org",
+    "kernel.org", "python.org", "npmjs.com", "docker.com", "amazon.com", "aws.amazon.com",
+    "oracle.com", "vmware.com", "broadcom.com", "cloudflare.com", "wordpress.org",
+    "sans.edu", "isc.sans.edu", "abuse.ch", "virustotal.com", "first.org",
+    "bleepingcomputer.com", "thehackernews.com", "krebsonsecurity.com", "reddit.com",
+    "securityweek.com", "darkreading.com", "welivesecurity.com", "talosintelligence.com",
+    "paloaltonetworks.com", "unit42.paloaltonetworks.com", "grahamcluley.com",
+    "therecord.media", "cybersecuritynews.com", "zerodayinitiative.com", "example.com",
+}
+
+# Source-code and filename shapes the domain regex loves: `req.query`,
+# `handlers.ts`, `ops.dispatch`, `security.txt`, `countid.substring`.
+_CODE_TLD_DENYLIST = {
+    "ts", "js", "py", "go", "rs", "rb", "sh", "md", "txt", "json", "yml", "yaml",
+    "xml", "html", "css", "c", "h", "cpp", "java", "php", "sql", "log", "cfg",
+    "conf", "ini", "toml", "lock", "map", "min", "test", "spec", "config",
+    "query", "params", "body", "data", "value", "length", "push", "pop", "get",
+    "set", "add", "remove", "dispatch", "dequeue", "substring", "insecure",
+    "exe", "dll", "dat", "bin", "tmp", "bak", "old", "new", "local", "internal",
+}
+
+_DEFANG_HINT = re.compile(r"\[\.\]|\(\.\)|hxxp|\[at\]|\[:\]", re.IGNORECASE)
+
+
+def _plausible_domain(value: str, own_host: str = "") -> bool:
+    """Reject code identifiers, filenames, infrastructure and the item's own host."""
+    v = value.strip().lower().rstrip(".")
+    if "." not in v or len(v) < 4 or len(v) > 253:
+        return False
+    tld = v.rsplit(".", 1)[-1]
+    if tld in _CODE_TLD_DENYLIST or not tld.isalpha() or len(tld) < 2:
+        return False
+    if v in _DOMAIN_DENYLIST:
+        return False
+    # Registrable-domain check against the denylist ("mail.google.com" -> "google.com").
+    parts = v.split(".")
+    if len(parts) >= 2 and ".".join(parts[-2:]) in _DOMAIN_DENYLIST:
+        return False
+    if own_host and (v == own_host or own_host.endswith("." + v) or v.endswith("." + own_host)):
+        return False
+    return True
+
+
+def _is_private_ip(value: str) -> bool:
+    try:
+        parts = [int(p) for p in value.split(".")]
+    except ValueError:
+        return True
+    if len(parts) != 4:
+        return True
+    a, b = parts[0], parts[1]
+    return (a in (0, 10, 127) or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168)
+            or (a == 169 and b == 254) or a >= 224)
+
+
+def extract_iocs(text: str, source: str = "", own_url: str = "") -> dict[str, list[str]]:
+    """Extract indicators from text.
+
+    `source` gates network/file indicators: only feeds that publish IOCs get
+    them. Any source may still contribute CVE ids, which are unambiguous.
+    """
     if not text:
-        return {k: [] for k in IOC_PATTERNS}
-    result = {}
-    text_clean = text.replace('[.]', '.').replace('hxxp', 'http').replace('hxxps', 'https').replace('[at]', '@')
-    for ioc_type, pattern in IOC_PATTERNS.items():
-        matches = pattern.findall(text_clean)
-        seen = set()
-        unique = []
-        for m in matches:
-            m = m.strip().lower()
-            if m not in seen and len(m) > 2:
-                # Filter private IPs for ipv4
-                if ioc_type == 'ipv4':
-                    parts = m.split('.')
-                    if parts[0] in ('10', '127') or (parts[0] == '172' and 16 <= int(parts[1]) <= 31) or (parts[0] == '192' and parts[1] == '168'):
-                        continue
-                seen.add(m)
-                unique.append(m)
-        result[ioc_type] = unique
+        return {}
+
+    defanged = bool(_DEFANG_HINT.search(text))
+    clean = (text.replace('[.]', '.').replace('(.)', '.')
+                 .replace('hxxps', 'https').replace('hxxp', 'http')
+                 .replace('[at]', '@').replace('[:]', ':'))
+
+    own_host = ""
+    if own_url:
+        m = re.match(r'https?://([^/:]+)', own_url.strip().lower())
+        if m:
+            own_host = m.group(1).removeprefix("www.")
+
+    result: dict[str, list[str]] = {}
+    # CVE ids are safe from any source.
+    types = ["cve"]
+    # Network/file indicators only from IOC feeds, or when the text is defanged
+    # (defanging is the author explicitly signalling "this is an indicator").
+    if source in IOC_SOURCES or defanged:
+        types += ["sha256", "sha1", "md5", "ipv4", "cidr", "url", "domain", "email"]
+
+    for ioc_type in types:
+        pattern = IOC_PATTERNS[ioc_type]
+        seen: set[str] = set()
+        unique: list[str] = []
+        for match in pattern.findall(clean):
+            value = match.strip().lower().rstrip('.,;)')
+            if not value or len(value) <= 2 or value in seen:
+                continue
+            if ioc_type == 'ipv4' and _is_private_ip(value):
+                continue
+            if ioc_type == 'domain' and not _plausible_domain(value, own_host):
+                continue
+            if ioc_type == 'url' and own_host and own_host in value:
+                continue
+            if ioc_type == 'email':
+                # Only from indicator feeds, never scraped from advisory metadata
+                # (that is how maintainers' addresses ended up in the STIX bundle).
+                if source not in IOC_SOURCES:
+                    continue
+            if ioc_type == 'cve':
+                value = value.upper()
+            seen.add(value)
+            unique.append(value)
+            if len(unique) >= 50:
+                break
+        if unique:
+            result[ioc_type] = unique
     return result
+
 
 _STOPWORDS = {
     "the", "a", "an", "of", "to", "in", "on", "for", "and", "with", "via",
@@ -1591,6 +2055,21 @@ def _canonical_url(url: str) -> str:
     u = re.sub(r"^www\.", "", u)
     u = u.split("?")[0].split("#")[0].rstrip("/")
     return u
+
+# Higher rank wins a dedup collision. Primary vendor/government advisories
+# beat aggregators, which beat news rewrites of the same story.
+_SOURCE_AUTHORITY = {
+    "NVD": 100, "CISA": 95, "MSRC": 90, "GitHub Advisories": 85, "ZDI": 85,
+    "VMware": 80, "Fedora": 75, "Gentoo": 75, "Arch Linux": 75,
+    "Amazon Linux": 75, "CentOS": 70, "Mitre CWE": 70,
+    "PoC-in-GitHub": 65, "Ransomware.live": 60, "AlienVault OTX": 60,
+    "ThreatFox": 60, "URLhaus": 60, "Feodo Tracker": 60, "Spamhaus": 60,
+}
+
+
+def _source_rank(source: str) -> int:
+    return _SOURCE_AUTHORITY.get(source, 10)
+
 
 def deduplicate(items: list[dict]) -> list[dict]:
     """
@@ -1689,7 +2168,6 @@ API_SOURCES = [
     ("Feodo Tracker",  fetch_feodo),
     ("AbuseIPDB",      fetch_abuseipdb),
     ("PhishTank",      fetch_phishtank),
-    ("OSV",            fetch_osv),
     ("MalwareBazaar",  fetch_malwarebazaar),
     ("ThreatFox",      fetch_threatfox),
     ("MSRC",           fetch_msrc),
@@ -1706,34 +2184,71 @@ API_SOURCES = [
     ("Ransomware.live", fetch_ransomware_live),
 ]
 
+def _median_age_days(items: list[dict]) -> float | None:
+    """Median age of an item batch, in days. None when nothing parses."""
+    now = datetime.now(timezone.utc)
+    ages = []
+    for item in items:
+        raw = item.get("published")
+        if not raw:
+            continue
+        try:
+            published = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        ages.append((now - published).total_seconds() / 86400.0)
+    if not ages:
+        return None
+    ages.sort()
+    mid = len(ages) // 2
+    return round(ages[mid] if len(ages) % 2 else (ages[mid - 1] + ages[mid]) / 2, 1)
+
+
 def run_source(name: str, fetcher, health: dict) -> list[dict]:
     """
     Invoke a single fetcher, capturing timing + outcome into ``health`` so a
-    silently-dead feed (0 items or an exception) becomes visible in the output
-    instead of just vanishing. Never raises — a broken source can't abort the run.
+    silently-dead feed becomes visible in the output instead of just vanishing.
+    Never raises — a broken source can't abort the run.
+
+    Health is FRESHNESS-aware, not just count-aware. The previous version set
+    `ok` whenever a fetcher returned anything, so Threatpost — shut down in
+    2023, still serving its 2022 archive — reported green every single hour.
+    A feed whose median item is older than CONFIG.source_stale_days is `stale`.
     """
     started = time.monotonic()
     try:
         items = fetcher() or []
         elapsed = round(time.monotonic() - started, 2)
-        status = "ok" if items else "empty"
-        health[name] = {"status": status, "count": len(items), "elapsed_s": elapsed, "error": None}
+        median_age = _median_age_days(items)
+        if not items:
+            status = "empty"
+        elif median_age is not None and median_age > CONFIG.source_stale_days:
+            status = "stale"
+            log.warning(f"Source '{name}' is STALE — median item age {median_age:.0f} days")
+        else:
+            status = "ok"
+        health[name] = {"status": status, "count": len(items), "elapsed_s": elapsed,
+                        "median_age_days": median_age, "error": None}
         return items
     except Exception as e:
         elapsed = round(time.monotonic() - started, 2)
         log.error(f"Source '{name}' failed: {e}")
-        health[name] = {"status": "error", "count": 0, "elapsed_s": elapsed, "error": str(e)[:200]}
+        health[name] = {"status": "error", "count": 0, "elapsed_s": elapsed,
+                        "median_age_days": None, "error": str(e)[:200]}
         return []
 
 
 def main():
     log.info("═" * 60)
-    log.info("CYBERWATCH v2.3 — Starting intel pipeline")
+    log.info("CYBERWATCH v3.0 — Starting intel pipeline")
     log.info("═" * 60)
 
     all_items = []
     source_health: dict[str, dict] = {}
     _lock = threading.Lock()
+    _load_feed_meta()
 
     def _collect(name: str, fetcher) -> None:
         items = run_source(name, fetcher, source_health)
@@ -1760,27 +2275,54 @@ def main():
             pass
     log.info(f"API phase complete — {len(all_items)} items so far")
 
-    # ── Persist source health history ─────────────────────────────────────
+    # ── Roll up source health ───────────────────────────────────────────────
+    # Replaces the append-only source_health_history.jsonl, which had grown to
+    # 1.8 MB, was committed on every one of 24 daily runs, and was fetched in
+    # full by the dashboard on every page load. All the UI ever needed was
+    # "when did this source last return data", so store exactly that.
     try:
-        health_path = CONFIG.data_dir / "source_health_history.jsonl"
-        health_record = json.dumps({
-            "timestamp": now_utc(), "health": source_health,
-        })
-        with open(health_path, "a", encoding="utf-8") as f:
-            f.write(health_record + "\n")
+        summary = {}
+        if CONFIG.health_summary_path.exists():
+            summary = json.loads(CONFIG.health_summary_path.read_text(encoding="utf-8"))
+        sources = summary.setdefault("sources", {})
+        stamp = now_utc()
+        for name, h in source_health.items():
+            entry = sources.setdefault(name, {})
+            entry["last_status"] = h["status"]
+            entry["last_count"] = h["count"]
+            entry["median_age_days"] = h.get("median_age_days")
+            if h["status"] == "ok" and h["count"] > 0:
+                entry["last_ok"] = stamp
+            entry["last_checked"] = stamp
+            # 30-day rolling success rate, cheap to keep and genuinely useful.
+            hist = entry.setdefault("recent", [])
+            hist.append(1 if h["status"] == "ok" else 0)
+            del hist[:-720]                      # ~30 days at hourly cadence
+            entry["uptime_30d"] = round(sum(hist) / len(hist), 3)
+        summary["updated"] = stamp
+        CONFIG.health_summary_path.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG.health_summary_path.write_text(
+            json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
-        log.warning(f"Could not write source health history: {e}")
+        log.warning(f"Could not write source health summary: {e}")
 
-    dead = [n for n, h in source_health.items() if h["status"] != "ok"]
-    if dead:
-        log.warning(f"Sources with no data this run: {', '.join(dead)}")
+    degraded = [f"{n}({h['status']})" for n, h in source_health.items() if h["status"] != "ok"]
+    if degraded:
+        log.warning(f"Degraded sources this run: {', '.join(degraded)}")
 
-    # ── Deduplicate + sort ──────────────────────────────────────────────────
+    # ── Sort, THEN deduplicate ──────────────────────────────────────────────
+    # Order matters and used to be wrong. Items arrive in thread-completion
+    # order, so running dedup first meant "first occurrence wins" picked
+    # whichever HTTP request happened to finish first — the authoritative NVD
+    # record and a blog rewrite of it were equally likely to survive, and the
+    # winner changed between runs. Sorting first makes it deterministic;
+    # ranking by source authority makes it correct.
+    all_items.sort(key=lambda x: (-_source_rank(x.get("source", "")),
+                                  x.get("published", "")), reverse=True)
     before_dedup = len(all_items)
     all_items = deduplicate(all_items)
     log.info(f"Deduplicated {before_dedup} → {len(all_items)} items")
     all_items.sort(key=lambda x: x.get("published", ""), reverse=True)
-    log.info(f"Total raw items after dedup: {len(all_items)}")
 
     # ── Map MITRE ATT&CK TTPs ──────────────────────────────────────────────
     log.info("Mapping MITRE ATT&CK TTPs...")
@@ -1788,6 +2330,22 @@ def main():
         item["ttps"] = map_ttps(item.get("title", "") + " " + item.get("description", ""))
     ttp_total = sum(len(i["ttps"]) for i in all_items)
     log.info(f"  Mapped {ttp_total} TTP associations across {len(all_items)} items")
+
+    # ── Extract IOCs (source-aware; see extract_iocs) ───────────────────────
+    log.info("Extracting indicators...")
+    ioc_items = 0
+    for item in all_items:
+        text = f"{item.get('title', '')} {item.get('description', '')}"
+        found = extract_iocs(text, source=item.get("source", ""), own_url=item.get("url", ""))
+        existing = item.get("iocs") or {}
+        # Anything a fetcher set explicitly (the indicator feeds) wins.
+        for k, v in found.items():
+            if k not in existing:
+                existing[k] = v
+        if existing:
+            item["iocs"] = existing
+            ioc_items += 1
+    log.info(f"  Indicators on {ioc_items} items")
 
     # ── Fetch EPSS scores ──────────────────────────────────────────────────
     cve_ids = [item["cve_id"] for item in all_items if item.get("cve_id")]
@@ -1835,14 +2393,41 @@ def main():
             actor_count += 1
     log.info(f"  Detected threat actors in {actor_count} items")
 
-    # ── CVE prioritization score (CVSS + EPSS + CISA KEV + public PoC) ─────
+    # ── CISA Vulnrichment SSVC decision points ─────────────────────────────
+    ssvc_map = fetch_vulnrichment(cve_ids) if cve_ids else {}
+    if ssvc_map:
+        ssvc_applied = 0
+        for item in all_items:
+            cve = (item.get("cve_id") or "").upper()
+            data = ssvc_map.get(cve)
+            if not data:
+                continue
+            if data.get("exploitation"):
+                item["ssvc_exploitation"] = data["exploitation"]
+            if data.get("automatable"):
+                item["ssvc_automatable"] = data["automatable"]
+            if data.get("technical_impact"):
+                item["ssvc_technical_impact"] = data["technical_impact"]
+            if data.get("cwe"):
+                item["cwe"] = data["cwe"]
+                item["cwe_name"] = data.get("cwe_name", "")
+            # Only fill CVSS where the CNA left it blank.
+            if item.get("cvss_score") is None and data.get("cvss") is not None:
+                item["cvss_score"] = data["cvss"]
+                item["cvss_source"] = "CISA-ADP"
+            ssvc_applied += 1
+        log.info(f"  Applied SSVC to {ssvc_applied} items")
+
+    # ── Prioritisation (CVSS + EPSS + KEV + PoC + SSVC) ────────────────────
     prioritized = 0
     for item in all_items:
         priority = compute_priority(item)
         if priority:
-            item["priority_score"] = priority["score"]
-            item["priority_label"] = priority["label"]
+            item["priority_score"]     = priority["score"]
+            item["priority_label"]     = priority["label"]
             item["priority_rationale"] = priority["rationale"]
+            item["action"]             = priority["action"]
+            item["action_detail"]      = priority["action_detail"]
             prioritized += 1
     log.info(f"  Scored priority for {prioritized} items")
 
@@ -1854,21 +2439,41 @@ def main():
     try:
         all_items = enrich_with_ai(all_items)
     except Exception as e:
-        log.error(f"AI enrichment failed: {e}")
-        for item in all_items:
-            set_fallback(item)
+        # Rule-based defaults are already on every item, so a total AI failure
+        # degrades the feed rather than emptying it.
+        log.error(f"AI enrichment failed, keeping rule-based defaults: {e}")
+
+    # ── Daily brief (one model call over the whole feed) ───────────────────
+    daily_brief = None
+    try:
+        daily_brief = build_daily_brief(all_items)
+        if daily_brief:
+            log.info(f"✓ Daily brief: {daily_brief['headline'][:80]}")
+    except Exception as e:
+        log.warning(f"Daily brief generation failed: {e}")
 
     # ── Source breakdown ───────────────────────────────────────────────────
     source_counter = Counter(i.get("source", "Unknown") for i in all_items)
 
     # ── Write output ───────────────────────────────────────────────────────
+    ai_enriched = sum(1 for i in all_items if i.get("ai_provider") not in (None, "rule"))
     output = {
         "last_updated": now_utc(),
         "total_items": len(all_items),
-        "pipeline_version": "2.4.0",
-        "sources_fetched": len(RSS_SOURCES) + len(API_SOURCES),
-        "sources_ok": sum(1 for h in source_health.values() if h["status"] == "ok"),
+        "pipeline_version": "3.0.0",
+        # Honest counts. The old `sources_fetched` included a stub that
+        # returned [] by design, and `sources_ok` counted any source that
+        # returned anything, however stale.
+        "sources_configured": len(RSS_SOURCES) + len(API_SOURCES),
+        "sources_ok":      sum(1 for h in source_health.values() if h["status"] == "ok"),
+        "sources_stale":   sum(1 for h in source_health.values() if h["status"] == "stale"),
+        "sources_empty":   sum(1 for h in source_health.values() if h["status"] == "empty"),
+        "sources_error":   sum(1 for h in source_health.values() if h["status"] == "error"),
         "ai_provider_configured": bool(GROQ_API_KEY) or bool(GEMINI_API_KEY),
+        "ai_enriched_count": ai_enriched,
+        "new_since_last": new_count,
+        "graph_templates": _RULE_GRAPHS,
+        "brief": daily_brief,
         "source_breakdown": dict(source_counter.most_common()),
         "source_health": source_health,
         "items": all_items,
@@ -1876,12 +2481,20 @@ def main():
 
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    # ── Archive first (crash-safe: if this fails, intel.json is untouched) ──
+    # ── Archive once per day, not 24x ───────────────────────────────────────
+    # The daily snapshot was rewritten every hour and only the final write
+    # survived, costing ~430 KB of git objects per run for no added history.
     archive_path = ARCHIVE_DIR / f"{today_str}.json"
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-    with open(archive_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
-    log.info(f"✓ Archived to {archive_path}")
+    archive_age_h = None
+    if archive_path.exists():
+        archive_age_h = (time.time() - archive_path.stat().st_mtime) / 3600.0
+    if archive_age_h is None or archive_age_h >= 20:
+        with open(archive_path, "w", encoding="utf-8") as f:
+            json.dump(output, f, indent=2, ensure_ascii=False)
+        log.info(f"✓ Archived to {archive_path}")
+    else:
+        log.info(f"Archive for {today_str} is {archive_age_h:.1f}h old — skipping rewrite")
 
     # ── Write intel.json atomically (tmp → rename) ────────────────────────
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1929,6 +2542,8 @@ def main():
             log.info(f"✓ Dispatched {sent} new alert(s)")
         except Exception as e:
             log.error(f"Alert dispatch failed: {e}")
+
+    _save_feed_meta()
 
     log.info("═" * 60)
     log.info(f"CYBERWATCH — Complete. {len(all_items)} items from {len(source_counter)} sources.")

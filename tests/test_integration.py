@@ -84,6 +84,75 @@ class TestIntelJsonSchema(unittest.TestCase):
         self.assertTrue(health, "source_health missing from output")
         for name, h in health.items():
             self.assertIn("status", h, f"health entry for {name} missing status")
+            self.assertIn(h["status"], {"ok", "stale", "empty", "error"},
+                          f"unknown health status for {name}: {h['status']}")
+
+    def test_no_stale_source_reports_ok(self):
+        """Regression: a feed serving a 4-year-old archive used to report green
+        because health only counted items and never checked freshness."""
+        for name, h in self.data.get("source_health", {}).items():
+            age = h.get("median_age_days")
+            if h["status"] == "ok" and age is not None:
+                self.assertLessEqual(age, 400, f"{name} reports ok with median age {age}d")
+
+    def test_graph_templates_shipped_once(self):
+        """Attack-flow graphs are referenced by template id, not duplicated onto
+        every item (that was 60 KB of byte-identical payload)."""
+        self.assertIn("graph_templates", self.data)
+        inline = sum(1 for i in self.data["items"] if i.get("workflow_graph"))
+        ai_enriched = self.data.get("ai_enriched_count", 0)
+        self.assertLessEqual(inline, max(ai_enriched, 5),
+                             "workflow_graph should only be inline for AI-enriched items")
+
+    def test_no_redundant_rule_summaries(self):
+        """Rule-based items must not carry an ai_summary that merely repeats
+        `description` — 246 of 248 used to, wasting 58 KB per payload."""
+        redundant = 0
+        for item in self.data["items"]:
+            if item.get("ai_provider") != "rule":
+                continue
+            summary = (item.get("ai_summary") or "").split(" [IOCs:")[0]
+            desc = item.get("description") or ""
+            if summary and desc.startswith(summary[:60]):
+                redundant += 1
+        self.assertEqual(redundant, 0, f"{redundant} rule items duplicate their description")
+
+    def test_iocs_only_from_indicator_feeds(self):
+        """Regression: the STIX bundle published gmail.com, redhat.com and two
+        maintainers' work email addresses as malicious-activity indicators."""
+        ioc_sources = {"URLhaus", "ThreatFox", "Feodo Tracker", "Spamhaus",
+                       "MalwareBazaar", "AbuseIPDB", "PhishTank", "AlienVault OTX"}
+        network_types = {"domain", "email", "ipv4", "url", "cidr"}
+        for item in self.data["items"]:
+            if item.get("source") in ioc_sources:
+                continue
+            leaked = network_types & set((item.get("iocs") or {}).keys())
+            self.assertFalse(
+                leaked,
+                f"{item.get('source')} leaked {leaked} from prose: "
+                f"{item.get('title', '?')[:60]}")
+
+    def test_no_personal_emails_in_exports(self):
+        export = PROJECT_ROOT / "data" / "exports" / "iocs.csv"
+        if not export.exists():
+            self.skipTest("no exports generated yet")
+            return
+        text = export.read_text(encoding="utf-8", errors="replace")
+        for needle in ("@redhat.com", "@cern.ch", "@gmail.com", "@fedoraproject.org"):
+            self.assertNotIn(needle, text, f"PII leaked into iocs.csv: {needle}")
+
+    def test_scored_items_have_an_action(self):
+        for item in self.data["items"]:
+            if item.get("priority_score") is not None:
+                self.assertTrue(item.get("action"),
+                                f"scored item without action: {item.get('title', '?')[:60]}")
+
+    def test_ssvc_values_are_valid(self):
+        valid_exploitation = {"none", "poc", "active"}
+        for item in self.data["items"]:
+            val = item.get("ssvc_exploitation")
+            if val:
+                self.assertIn(val, valid_exploitation, f"bad SSVC exploitation: {val}")
 
     def test_priority_scores_in_range(self):
         for item in self.data["items"]:
@@ -142,6 +211,33 @@ class TestLiveSources(unittest.TestCase):
 
     def test_urlhaus(self):
         r = self._get("https://urlhaus.abuse.ch/downloads/csv_recent/")
+        self.assertEqual(r.status_code, 200)
+
+    def test_cisa_advisories_feed(self):
+        """The ICS-only feed returned zero items for months; this is the
+        combined advisories feed that replaced it."""
+        r = self._get("https://www.cisa.gov/cybersecurity-advisories/all.xml")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("<rss", r.text[:400] + r.text[:400].lower())
+
+    def test_vulnrichment_raw(self):
+        """CISA Vulnrichment SSVC records — free, no key."""
+        r = self._get("https://raw.githubusercontent.com/cisagov/vulnrichment/"
+                      "develop/2024/3xxx/CVE-2024-3094.json")
+        self.assertIn(r.status_code, (200, 404))
+
+    def test_epss_bulk_csv(self):
+        """The full daily corpus, which replaced the per-run API cache that
+        silently returned scores for the wrong CVE set."""
+        r = self._get("https://epss.empiricalsecurity.com/epss_scores-current.csv.gz")
+        self.assertEqual(r.status_code, 200)
+
+    @unittest.skipUnless(os.environ.get("VULNCHECK_API_KEY"), "VULNCHECK_API_KEY not set")
+    def test_vulncheck_kev(self):
+        import requests
+        r = requests.get("https://api.vulncheck.com/v3/index/vulncheck-kev",
+                         headers={"Authorization": f"Bearer {os.environ['VULNCHECK_API_KEY']}"},
+                         params={"limit": 1}, timeout=self.TIMEOUT)
         self.assertEqual(r.status_code, 200)
 
 

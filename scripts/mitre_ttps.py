@@ -5,11 +5,13 @@ Full MITRE ATT&CK Enterprise matrix (v15.1)
 246 techniques · 445 sub-techniques · 14 tactics
 
 Each entry: id → {name, tactic, tactic_id, keywords[]}
-Keywords are matched case-insensitively as substrings against
-the combined title + description of each intel item.
+Keywords are matched case-insensitively as WHOLE TOKENS against the combined
+title + description of each intel item (see map_ttps).
 
 Source: https://attack.mitre.org/techniques/enterprise/
 """
+
+import re
 
 TACTIC_ORDER = [
     {"id": "TA0043", "name": "Reconnaissance"},
@@ -1123,50 +1125,76 @@ MITRE_TECHNIQUES = {
 }
 
 
+# ── Fast keyword index ────────────────────────────────────────────────────────
+# The original implementation looped 504 techniques x ~2,100 keywords per item
+# (~530k substring scans/run) using bare `kw in text`. That was both slow and
+# WRONG: "rce" matched inside "source"/"force"/"resource" and "lure" inside
+# "failure", which is where roughly half of all T1190/T1204 hits came from.
+#
+# One precompiled alternation with word-boundary guards fixes both. The guards
+# use lookarounds rather than \b so multi-word and digit-bearing keywords
+# ("cl0p", "patch tuesday") still match as whole tokens.
+
+_KEYWORD_TO_TECHNIQUE: dict[str, str] = {}
+for _tid, _tech in MITRE_TECHNIQUES.items():
+    for _kw in _tech.get("keywords", []):
+        _norm = _kw.strip().lower()
+        if _norm:
+            # First technique to claim a keyword wins, matching the old
+            # dict-iteration-order behaviour.
+            _KEYWORD_TO_TECHNIQUE.setdefault(_norm, _tid)
+
+# Longest-first so "remote code execution" wins over a shorter overlapping key.
+_TTP_PATTERN = re.compile(
+    r"(?<![0-9A-Za-z])("
+    + "|".join(re.escape(k) for k in sorted(_KEYWORD_TO_TECHNIQUE, key=len, reverse=True))
+    + r")(?![0-9A-Za-z])",
+    re.IGNORECASE,
+)
+
+MAX_TTPS_PER_ITEM = 10
+
+
 def map_ttps(text: str) -> list[dict]:
     """
     Match text (title + description) against MITRE ATT&CK technique keywords.
     Returns a deduplicated list sorted by tactic then technique ID.
 
+    Matching is whole-token: "resource" no longer matches the "rce" keyword and
+    "failure" no longer matches "lure".
+
     Sub-technique deduplication:
-      If a sub-technique (e.g. T1059.001) matches but its parent (T1059)
-      also matches, the parent is kept; if only the sub-technique matches,
-      it is kept as-is for precision.
+      If a sub-technique (e.g. T1059.001) matches but its parent (T1059) also
+      matches, the parent is kept; if only the sub-technique matches, it is kept
+      as-is for precision.
     """
-    t = text.lower()
-    matched = {}   # id → technique dict
-    seen_parents = set()
+    if not text:
+        return []
 
-    for tech_id, tech in MITRE_TECHNIQUES.items():
-        for kw in tech["keywords"]:
-            if kw in t:
-                parent_id = tech_id.split(".")[0]
-                is_sub    = "." in tech_id
+    matched: dict[str, dict] = {}
+    seen_parents: set[str] = set()
 
-                # If we already matched this technique, skip
-                if tech_id in matched:
-                    break
+    for m in _TTP_PATTERN.finditer(text):
+        tech_id = _KEYWORD_TO_TECHNIQUE.get(m.group(1).lower())
+        if not tech_id or tech_id in matched:
+            continue
+        tech = MITRE_TECHNIQUES[tech_id]
+        matched[tech_id] = {
+            "id":        tech_id,
+            "name":      tech["name"],
+            "tactic":    tech["tactic"],
+            "tactic_id": tech["tactic_id"],
+        }
+        if "." not in tech_id:
+            seen_parents.add(tech_id)
 
-                # Add the match
-                matched[tech_id] = {
-                    "id":        tech_id,
-                    "name":      tech["name"],
-                    "tactic":    tech["tactic"],
-                    "tactic_id": tech["tactic_id"],
-                }
-
-                if not is_sub:
-                    seen_parents.add(tech_id)
-                break
-
-    # Dedup: remove sub-techniques whose parent is also matched
+    # Dedup: remove sub-techniques whose parent is also matched.
     final = [
         v for k, v in matched.items()
         if "." not in k or k.split(".")[0] not in seen_parents
     ]
 
-    # Sort: tactic order, then technique id
     tactic_rank = {t["id"]: i for i, t in enumerate(TACTIC_ORDER)}
     final.sort(key=lambda x: (tactic_rank.get(x["tactic_id"], 99), x["id"]))
-    # Cap at 10 most specific matches to prevent noise in JSON / matrix view.
-    return final[:10]
+    return final[:MAX_TTPS_PER_ITEM]
+

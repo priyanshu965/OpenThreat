@@ -1,18 +1,21 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # CYBERWATCH DASHBOARD — .github/workflows/update.yml
 #
-# Runs every hour. Fetches fresh threat intel, enriches top 15 items with
-# Groq (primary) or Gemini (fallback), saves intel.json + archive snapshot,
-# then commits and pushes.
+# Runs every hour. Fetches fresh threat intel, enriches the top AI_ENRICH_LIMIT
+# items in batches via Gemini (primary) with Groq as failover, writes
+# intel.json + a once-daily archive snapshot, then commits and pushes.
 #
 # Required Secrets (Settings → Secrets and variables → Actions):
-#   GROQ_API_KEY    ← Groq (primary AI)    https://console.groq.com
-#   GEMINI_API_KEY  ← Gemini (fallback AI) https://aistudio.google.com
-#   OTX_API_KEY     ← AlienVault OTX (optional)
-#   BOT_PAT         ← Classic PAT with 'repo' scope (bypasses branch protection)
+#   GEMINI_API_KEY    ← Gemini (primary AI)  https://aistudio.google.com
+#   GROQ_API_KEY      ← Groq (failover AI)    https://console.groq.com
+#   VULNCHECK_API_KEY ← VulnCheck KEV superset (optional, free)
+#   OTX_API_KEY       ← AlienVault OTX (optional)
+#   BOT_PAT           ← Classic PAT with 'repo' scope (bypasses branch protection)
+#
+# NOTE: CISA Vulnrichment (SSVC) and the EPSS bulk corpus need no key at all.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-name: Daily Intel Update
+name: Hourly Intel Update
 
 on:
   schedule:
@@ -32,7 +35,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1          # history is never read here; a full clone grew ~20 MB/day
           token: ${{ secrets.BOT_PAT }}
 
       - name: Set up Python 3.11
@@ -62,11 +65,15 @@ jobs:
           PHISHTANK_API_KEY: ${{ secrets.PHISHTANK_API_KEY }}
           NVD_API_KEY:       ${{ secrets.NVD_API_KEY }}
           THREATFOX_API_KEY: ${{ secrets.THREATFOX_API_KEY }}
+          VULNCHECK_API_KEY: ${{ secrets.VULNCHECK_API_KEY }}
           MB_API_KEY:        ${{ secrets.MB_API_KEY }}
           # Alerting (optional — leave WEBHOOK_URL unset to disable):
           WEBHOOK_URL:  ${{ secrets.WEBHOOK_URL }}
           WEBHOOK_TYPE: ${{ vars.WEBHOOK_TYPE }}
           ALERT_SEVERITIES: ${{ vars.ALERT_SEVERITIES }}
+          ALERT_MIN_PRIORITY: ${{ vars.ALERT_MIN_PRIORITY }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
         run: |
           python scripts/fetch_intel.py
 
@@ -76,26 +83,54 @@ jobs:
           git config user.email "cyberwatch-bot@users.noreply.github.com"
 
           git add data/intel.json
-          git add data/archive/    || true
-          git add data/exports/    || true
-          git add data/trends.json || true
-          git add data/source_health_history.jsonl || true
-          git add -f data/.alert_state.json || true   # persist alert dedup memory
+          git add data/archive/                     || true
+          git add data/exports/                     || true
+          git add data/api/                         || true
+          git add data/trends.json                  || true
+          git add data/source_health_summary.json   || true
+          git add -f data/.alert_state.json         || true   # persist alert dedup memory
+          git add -f data/.digest_state.json        || true
+
+          # source_health_history.jsonl is intentionally no longer committed —
+          # it reached 1.8 MB, was rewritten hourly, and the dashboard
+          # downloaded all of it on every page load. Superseded by the rolled-up
+          # data/source_health_summary.json.
+          git rm --cached data/source_health_history.jsonl 2>/dev/null || true
 
           if git diff --staged --quiet; then
             echo "No changes detected — skipping commit."
           else
             TODAY=$(date -u '+%Y-%m-%d %H:%M UTC')
             git commit -m "chore: intel update [${TODAY}]"
-            git push
+            # A manual dispatch overlapping the cron used to fail on a
+            # non-fast-forward push.
+            for attempt in 1 2 3; do
+              git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push && break
+              echo "Push attempt ${attempt} failed; retrying..."
+              sleep $((attempt * 5))
+            done
             echo "Successfully pushed updated intel data."
           fi
 
-      - name: Notify on failure
+      # A sustained outage used to open 24 identical issues a day. Only file one
+      # if there isn't already an open pipeline-failure issue.
+      - name: Check for an existing failure issue
         if: failure()
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          COUNT=$(gh issue list --repo "${{ github.repository }}" \
+                    --label pipeline-failure --state open --limit 1 --json number \
+                    --jq 'length' 2>/dev/null || echo 0)
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+      - name: Notify on failure
+        if: failure() && steps.existing.outputs.count == '0'
         uses: dacbd/create-issue-action@v2
         with:
           token: ${{ secrets.BOT_PAT }}
+          labels: pipeline-failure
           title: "🚨 Pipeline failure — ${{ github.run_id }}"
           body: |
             The hourly intel pipeline **failed** on ${{ github.repository }}.
@@ -107,16 +142,36 @@ jobs:
             Check the logs above for details.
 
       - name: Print summary
+        if: always()
         run: |
-          echo "## CyberWatch Update Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Run time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
-          TOTAL=$(python -c "import json; d=json.load(open('data/intel.json')); print(d.get('total_items', len(d.get('items',[]))))" 2>/dev/null || echo "?")
-          echo "- **Items fetched:** ${TOTAL}" >> $GITHUB_STEP_SUMMARY
-          LAST=$(python -c "import json; d=json.load(open('data/intel.json')); print(d.get('last_updated','?'))" 2>/dev/null || echo "?")
-          echo "- **Last updated:** ${LAST}" >> $GITHUB_STEP_SUMMARY
-          GROQ_ITEMS=$(python -c "import json; d=json.load(open('data/intel.json')); print(sum(1 for i in d.get('items',[]) if i.get('ai_provider')=='groq'))" 2>/dev/null || echo "0")
-          GEM_ITEMS=$(python -c "import json; d=json.load(open('data/intel.json')); print(sum(1 for i in d.get('items',[]) if i.get('ai_provider')=='gemini'))" 2>/dev/null || echo "0")
-          echo "- **Groq enriched:** ${GROQ_ITEMS} items" >> $GITHUB_STEP_SUMMARY
-          echo "- **Gemini enriched:** ${GEM_ITEMS} items" >> $GITHUB_STEP_SUMMARY
-          echo "- **Archive:** data/archive/$(date -u '+%Y-%m-%d').json" >> $GITHUB_STEP_SUMMARY
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          p = pathlib.Path("data/intel.json")
+          if not p.exists():
+              print("## CyberWatch — no output produced"); raise SystemExit
+          d = json.loads(p.read_text(encoding="utf-8"))
+          items = d.get("items", [])
+          print("## CyberWatch Update Complete\n")
+          print(f"- **Items:** {len(items)}")
+          print(f"- **Last updated:** {d.get('last_updated','?')}")
+          print(f"- **Sources:** {d.get('sources_ok',0)} ok · "
+                f"{d.get('sources_stale',0)} stale · {d.get('sources_empty',0)} empty · "
+                f"{d.get('sources_error',0)} error (of {d.get('sources_configured','?')})")
+          print(f"- **AI enriched:** {d.get('ai_enriched_count',0)}")
+          print(f"- **New since last run:** {d.get('new_since_last',0)}")
+          print(f"- **Urgent / elevated:** "
+                f"{sum(1 for i in items if i.get('priority_label')=='urgent')} / "
+                f"{sum(1 for i in items if i.get('priority_label')=='elevated')}")
+          print(f"- **Actively exploited (KEV or SSVC):** "
+                f"{sum(1 for i in items if i.get('cisa_kev') or i.get('ssvc_exploitation')=='active')}")
+          print(f"- **Payload size:** {p.stat().st_size // 1024} KB")
+          if d.get("brief"):
+              print(f"\n> {d['brief'].get('headline','')}")
+          stale = [n for n, h in d.get("source_health", {}).items() if h.get("status") != "ok"]
+          if stale:
+              print(f"\n<details><summary>Degraded sources ({len(stale)})</summary>\n")
+              for n in stale:
+                  h = d["source_health"][n]
+                  print(f"- `{n}` — {h.get('status')} ({h.get('error') or h.get('count')} items)")
+              print("\n</details>")
+          PY
