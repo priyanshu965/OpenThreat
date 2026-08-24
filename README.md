@@ -85,15 +85,18 @@ or the page will load with nothing in it.
 ### 🐳 Docker
 
 ```bash
+docker compose run --rm fetcher        # populate data/ first
 docker compose up -d                   # dashboard on :8080
-docker compose run --rm fetcher        # one-off intel fetch
 ```
+
+Fetch before serving. `data/intel.json` is no longer committed, so on a fresh
+clone the dashboard has nothing to load until a run produces it.
 
 ### 🧪 Tests
 
 ```bash
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v          # 45 unit tests
+python -m unittest discover -s tests -v          # 65 unit + 29 schema tests
 RUN_LIVE_TESTS=1 python -m unittest tests.test_integration -v   # live source checks
 ```
 
