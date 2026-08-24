@@ -74,6 +74,22 @@ class Config:
     request_timeout        = _int("REQUEST_TIMEOUT", 30)
     ai_enrich_limit        = _int("AI_ENRICH_LIMIT", 40)
     ai_batch_size          = _int("AI_BATCH_SIZE", 10)
+    # Slots reserved for items with no priority score — incidents and news.
+    # Ranking candidates purely by priority_score sent the entire budget to
+    # CVEs, which are the items that least need a model: they already carry
+    # CVSS, EPSS, KEV and SSVC. 167 of 241 items in a typical run are unscored
+    # and were never enriched at all.
+    ai_enrich_unscored_limit = _int("AI_ENRICH_UNSCORED_LIMIT", 12)
+    # Enrichment is cached across runs by item key. The feed barely changes
+    # hour to hour, so without this the same top-N items were re-sent to the
+    # model on all 24 daily runs.
+    ai_cache_ttl_days      = _int("AI_CACHE_TTL_DAYS", 14)
+    ai_cache_max_entries   = _int("AI_CACHE_MAX_ENTRIES", 5000)
+    # The "daily" brief was regenerated on every hourly run. It is now reused
+    # until it goes stale OR the set of urgent items changes — so it still
+    # reacts to a breaking KEV addition within the hour, without paying for
+    # 24 identical briefs a day.
+    brief_max_age_hours    = _int("BRIEF_MAX_AGE_HOURS", 12)
     archive_retention_days = _int("ARCHIVE_RETENTION_DAYS", 90)
     fetch_workers          = _int("FETCH_WORKERS", 8)
 

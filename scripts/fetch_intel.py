@@ -27,13 +27,19 @@ Fetches threat intelligence from multiple free sources:
 Output: data/intel.json  +  data/archive/YYYY-MM-DD.json
 """
 
-import json, os, re, sys, time, logging, threading
+import hashlib
+import json
+import logging
+import os
+import re
+import threading
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import csv, io
+import csv
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -445,9 +451,93 @@ def rule_based_enrich(item: dict) -> None:
     item["ai_provider"] = "rule"
 
 
+# ── Cross-run enrichment cache ────────────────────────────────────────────────
+# A model result is a property of the ITEM, not of the run. The feed turns over
+# slowly — most of what ranks in the top N this hour ranked there last hour too
+# — so without a cache the same items were re-sent to Gemini on all 24 daily
+# runs. Keyed by item_key() (CVE, else canonical URL, else title fingerprint),
+# which is the same identity mark_new_since_last() diffs on.
+
+_AI_CACHE_NAME = "ai_enrich.json"
+_AI_CACHE_FIELDS = ("ai_summary", "why_it_matters", "vendors", "products",
+                    "ai_confidence", "ai_provider", "ai_model")
+
+
+def _load_ai_cache() -> dict:
+    """Cached enrichments, with expired entries dropped."""
+    path = _cache_path(_AI_CACHE_NAME)
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning(f"AI cache unreadable, starting fresh: {e}")
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    cutoff = time.time() - CONFIG.ai_cache_ttl_days * 86400
+    return {k: v for k, v in raw.items()
+            if isinstance(v, dict) and float(v.get("cached_at") or 0) >= cutoff}
+
+
+def _save_ai_cache(cache: dict) -> None:
+    """Atomically persist the cache, newest entries first, size-capped."""
+    if not cache:
+        return
+    entries = sorted(cache.items(), key=lambda kv: -float(kv[1].get("cached_at") or 0))
+    trimmed = dict(entries[:CONFIG.ai_cache_max_entries])
+    try:
+        path = _cache_path(_AI_CACHE_NAME)
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(trimmed, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:
+        log.warning(f"Could not write AI cache: {e}")
+
+
+def _cache_enrichment(cache: dict, item: dict) -> None:
+    entry = {f: item[f] for f in _AI_CACHE_FIELDS if item.get(f) is not None}
+    if entry.get("ai_provider") in (None, "rule"):
+        return                      # nothing a model produced; not worth storing
+    entry["cached_at"] = time.time()
+    cache[item_key(item)] = entry
+
+
+def _apply_cached_enrichment(item: dict, entry: dict) -> bool:
+    """Replay a cached model result onto an item. True if anything was applied."""
+    applied = False
+    for field in _AI_CACHE_FIELDS:
+        if entry.get(field) is not None:
+            item[field] = entry[field]
+            applied = True
+    return applied
+
+
+_UNSCORED_SEVERITY_RANK = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+
+
+def select_enrichment_candidates(items: list[dict]) -> list[dict]:
+    """Pick which items get a model call.
+
+    Two budgets, because ranking everything by ``priority_score`` sent the
+    whole allowance to CVEs — the items that need a model least, since they
+    already carry CVSS, EPSS, KEV and SSVC. Incidents and news carry none of
+    that structure and never got enriched at all.
+    """
+    scored   = [i for i in items if i.get("priority_score") is not None]
+    unscored = [i for i in items if i.get("priority_score") is None]
+
+    scored.sort(key=lambda i: i.get("priority_score") or 0, reverse=True)
+    unscored.sort(key=lambda i: (_UNSCORED_SEVERITY_RANK.get(i.get("severity"), 0),
+                                 i.get("published") or ""), reverse=True)
+
+    return (scored[:AI_ENRICH_LIMIT]
+            + unscored[:CONFIG.ai_enrich_unscored_limit])
+
+
 def enrich_with_ai(items: list[dict]) -> list[dict]:
-    """Rule-based defaults for everything, then batched model calls for the
-    highest-priority slice."""
+    """Rule-based defaults for everything, cached results where we have them,
+    then batched model calls for whatever is left in budget."""
     for item in items:
         rule_based_enrich(item)
     log.info(f"Rule-based defaults applied to {len(items)} items")
@@ -456,9 +546,21 @@ def enrich_with_ai(items: list[dict]) -> list[dict]:
         log.info("No AI keys set — skipping AI enrichment")
         return items
 
-    candidates = sorted(items, key=lambda i: i.get("priority_score") or 0, reverse=True)
-    to_enrich = candidates[:AI_ENRICH_LIMIT]
+    cache = _load_ai_cache()
+    reused = 0
+    for item in items:
+        entry = cache.get(item_key(item))
+        if entry and _apply_cached_enrichment(item, entry):
+            reused += 1
+    if reused:
+        log.info(f"AI cache: reused {reused} enrichment(s), {len(cache)} entries on disk")
+
+    # Only spend calls on items the cache could not answer.
+    to_enrich = [i for i in select_enrichment_candidates(items)
+                 if i.get("ai_provider") in (None, "rule")]
     if not to_enrich:
+        log.info("AI enrichment: nothing new to enrich this run")
+        _save_ai_cache(cache)
         return items
 
     batches = [to_enrich[i:i + AI_BATCH_SIZE] for i in range(0, len(to_enrich), AI_BATCH_SIZE)]
@@ -487,10 +589,12 @@ def enrich_with_ai(items: list[dict]) -> list[dict]:
             apply_enrichment(item, result)
             item["ai_provider"] = provider
             item["ai_model"] = model
+            _cache_enrichment(cache, item)
             enriched += 1
         log.info(f"  batch {bnum}/{len(batches)}: {len(parsed.get('results', []))} results")
 
-    log.info(f"AI enrichment complete: {enriched}/{len(to_enrich)} items enriched")
+    _save_ai_cache(cache)
+    log.info(f"AI enrichment complete: {enriched} new, {reused} from cache")
     return items
 
 
@@ -506,6 +610,18 @@ def build_daily_brief(items: list[dict]) -> dict | None:
     ranked = sorted(items, key=lambda i: i.get("priority_score") or 0, reverse=True)[:40]
     if not ranked:
         return None
+
+    # Reuse the last brief unless it has aged out or the urgent picture moved.
+    # Regenerating hourly cost 24 calls a day to answer the same question with
+    # the same inputs; keying on the urgent set means a new KEV entry still
+    # forces a fresh brief within the hour.
+    signature = _brief_signature(items)
+    cached = _load_cached_brief()
+    if cached and cached.get("signature") == signature:
+        age_h = (time.time() - float(cached.get("cached_at") or 0)) / 3600.0
+        if age_h < CONFIG.brief_max_age_hours:
+            log.info(f"Daily brief: reusing cached brief ({age_h:.1f}h old, urgent set unchanged)")
+            return cached["brief"]
 
     lines = ["Below are today's top threat-intel items. Pick the 3-5 that a "
              "defender should act on FIRST and say why in one sentence each. "
@@ -540,10 +656,47 @@ def build_daily_brief(items: list[dict]) -> dict | None:
             })
     if not picks:
         return None
-    return {"headline": str(parsed.get("headline", ""))[:300],
-            "items": picks,
-            "model": CONFIG.gemini_brief_model,
-            "generated": now_utc()}
+    brief = {"headline": str(parsed.get("headline", ""))[:300],
+             "items": picks,
+             "model": CONFIG.gemini_brief_model,
+             "generated": now_utc()}
+    _save_cached_brief(brief, signature)
+    return brief
+
+
+_BRIEF_CACHE_NAME = "daily_brief.json"
+
+
+def _brief_signature(items: list[dict]) -> str:
+    """Identity of the current urgent picture. Changes only when the set of
+    items a defender must act on changes — which is exactly when the brief
+    needs rewriting."""
+    urgent = sorted(item_key(i) for i in items
+                    if i.get("priority_label") in ("urgent", "elevated"))
+    return hashlib.sha256("|".join(urgent).encode("utf-8")).hexdigest()[:32]
+
+
+def _load_cached_brief() -> dict | None:
+    path = _cache_path(_BRIEF_CACHE_NAME)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) and data.get("brief") else None
+    except Exception:
+        return None
+
+
+def _save_cached_brief(brief: dict, signature: str) -> None:
+    try:
+        path = _cache_path(_BRIEF_CACHE_NAME)
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps({"brief": brief, "signature": signature,
+                                   "cached_at": time.time()}, ensure_ascii=False),
+                       encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:
+        log.warning(f"Could not cache daily brief: {e}")
 
 
 # ── RSS Fetcher ───────────────────────────────────────────────────────────────
@@ -630,7 +783,6 @@ def fetch_rss(source: dict) -> list[dict]:
 
 
 def _feed_cache_path(url: str) -> Path:
-    import hashlib
     return _cache_path(f"feed_{hashlib.sha1(url.encode()).hexdigest()[:16]}.json")
 
 
@@ -807,7 +959,7 @@ def fetch_spamhaus_drop() -> list[dict]:
         items.append({
             "title": f"Spamhaus DROP: {cidr}",
             "description": f"Malicious IP range: {cidr} — {description[:200]}",
-            "url": f"https://www.spamhaus.org/drop/", "cve_id": None,
+            "url": "https://www.spamhaus.org/drop/", "cve_id": None,
             "source": "Spamhaus", "category": "advisory", "severity": "medium",
             "cvss_score": None, "published": now_utc(),
             "iocs": {"cidr": [cidr]},
@@ -959,6 +1111,28 @@ def fetch_malwarebazaar() -> list[dict]:
 
 # ── ThreatFox Fetcher (keyless) ──────────────────────────────────────────────
 
+# ThreatFox states the indicator type explicitly. The previous code ignored
+# that field and re-derived the type from the string's shape, which was both
+# redundant and wrong: the IPv4 branch required a ":port" suffix, so a bare
+# address fell through to the domain branch and was published as a *domain*,
+# and hashes matched no branch at all.
+_THREATFOX_TYPE_MAP = {
+    "ip:port": "ipv4", "ip": "ipv4",
+    "domain": "domain", "url": "url", "email": "email",
+    "md5_hash": "md5", "sha1_hash": "sha1", "sha256_hash": "sha256",
+}
+
+
+def _threatfox_ioc(ioc: str, ioc_type: str) -> dict[str, list[str]]:
+    """Bucket one ThreatFox indicator using the type the API reports."""
+    kind = _THREATFOX_TYPE_MAP.get((ioc_type or "").strip().lower())
+    if not kind or not ioc:
+        # Unknown type: fall back to the shared extractor rather than guessing.
+        return extract_iocs(ioc, source="ThreatFox")
+    value = ioc.rsplit(":", 1)[0] if kind == "ipv4" and ioc.count(":") == 1 else ioc
+    return {kind: [value.lower() if kind in ("domain", "email") else value]}
+
+
 def fetch_threatfox() -> list[dict]:
     if not THREATFOX_API_KEY:
         log.info("THREATFOX_API_KEY not set — skipping ThreatFox")
@@ -982,15 +1156,7 @@ def fetch_threatfox() -> list[dict]:
             reference = entry.get("reference", "")
             malware_printable = entry.get("malware_printable", "")
             desc = f"IOC: {ioc} | Type: {malware_printable or malware} | Threat: {threat}"
-            iocs = {}
-            if ":" in ioc and ioc.count(".") == 3:
-                iocs["ipv4"] = [ioc.split(":")[0]]
-            elif ioc.startswith("http"):
-                iocs["url"] = [ioc]
-            elif "." in ioc and " " not in ioc:
-                iocs["domain"] = [ioc.lower()]
-            else:
-                iocs = extract_iocs(ioc, source="ThreatFox")
+            iocs = _threatfox_ioc(ioc, ioc_type)
             items.append({
                 "title": f"ThreatFox: {ioc[:60]} ({malware_printable or malware})",
                 "description": desc,
@@ -1062,7 +1228,7 @@ def fetch_fedora() -> list[dict]:
                 pub = parse_date(update.get("date_submitted", ""))
                 items.append({
                     "title": f"Fedora: {first_build[:80]} ({update_id})",
-                    "description": clean_html(desc) or f"Fedora security update",
+                    "description": clean_html(desc) or "Fedora security update",
                     "url": update.get("url") or f"https://bodhi.fedoraproject.org/updates/{update_id}",
                     "cve_id": extract_cve_id(title + " " + desc), "source": "Fedora",
                     "category": "advisory", "severity": infer_severity(title, "medium"),
@@ -1105,7 +1271,6 @@ def fetch_archlinux() -> list[dict]:
                 title = issue.get("title", issue.get("id", "Arch Issue"))
                 cve = issue.get("cve", [])
                 cve_id = cve[0] if cve else None
-                desc = issue.get("issue_type", "") + ": " + issue.get("severity", "")
                 pub = parse_date(issue.get("created_at", ""))
                 items.append({
                     "title": f"Arch Linux: {title[:120]}",
@@ -1179,7 +1344,7 @@ def fetch_vmware() -> list[dict]:
             items.append({
                 "title": f"VMware: {title[:150]}",
                 "description": desc,
-                "url": adv.get("url", adv.get("link", f"https://support.broadcom.com/web/ecx/security-advisory?segment=VC")),
+                "url": adv.get("url", adv.get("link", "https://support.broadcom.com/web/ecx/security-advisory?segment=VC")),
                 "cve_id": cve_id, "source": "VMware",
                 "category": "advisory", "severity": infer_severity(title, "high"),
                 "cvss_score": None, "published": pub,
@@ -1778,8 +1943,13 @@ def compute_priority(item: dict) -> dict | None:
     if total_impact:
         score += CONFIG.priority_ssvc_total_bonus
     if poc:
+        # Bonus only — no floor. Flooring every PoC item at 70 pushed it into
+        # "Patch this week" regardless of impact, and PoC-in-GitHub indexes a
+        # lot of empty or scaffold repos. It also flattened the ordering: every
+        # low-CVSS item with a PoC tied at exactly the same score, so the list
+        # stopped ranking. A PoC raises urgency; it does not by itself make a
+        # CVSS 3.1 information leak a weekly-patch item.
         score += CONFIG.priority_poc_bonus
-        score = max(score, 70.0)
     if kev or exploitation == "active":
         score += CONFIG.priority_kev_bonus
         score = max(score, 90.0)
@@ -2071,6 +2241,20 @@ def _source_rank(source: str) -> int:
     return _SOURCE_AUTHORITY.get(source, 10)
 
 
+def sort_for_dedup(items: list[dict]) -> list[dict]:
+    """Order items so that ``deduplicate()``'s "first occurrence wins" rule
+    keeps the RIGHT copy: most authoritative source first, then newest.
+
+    Sorts in place and returns the list. The key is deliberately un-negated —
+    ``reverse=True`` already gives descending order, and negating the rank on
+    top of that silently inverted the whole thing, so the least authoritative
+    copy of a story survived dedup and the NVD/CISA record was discarded.
+    """
+    items.sort(key=lambda x: (_source_rank(x.get("source", "")),
+                              x.get("published", "")), reverse=True)
+    return items
+
+
 def deduplicate(items: list[dict]) -> list[dict]:
     """
     Drop duplicates by (a) same CVE from the same source, (b) identical
@@ -2317,8 +2501,9 @@ def main():
     # record and a blog rewrite of it were equally likely to survive, and the
     # winner changed between runs. Sorting first makes it deterministic;
     # ranking by source authority makes it correct.
-    all_items.sort(key=lambda x: (-_source_rank(x.get("source", "")),
-                                  x.get("published", "")), reverse=True)
+    # The ordering itself lives in sort_for_dedup() so the regression is
+    # actually testable — see TestDeduplication.test_authoritative_copy_survives.
+    sort_for_dedup(all_items)
     before_dedup = len(all_items)
     all_items = deduplicate(all_items)
     log.info(f"Deduplicated {before_dedup} → {len(all_items)} items")
@@ -2354,7 +2539,7 @@ def main():
         for item in all_items:
             if item.get("cve_id"):
                 item["epss_score"] = epss_scores.get(item["cve_id"].upper())
-        log.info(f"  Applied EPSS scores")
+        log.info("  Applied EPSS scores")
 
     # ── CISA KEV (skip if no CVEs in feed this run) ────────────────────────
     cisa_kev = fetch_cisa_kev() if cve_ids else set()

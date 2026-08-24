@@ -6,8 +6,6 @@
 #                                    → With scheduled fetcher
 # ────────────────────────────────────────────────────────────────────
 
-version: "3.9"
-
 services:
   dashboard:
     build:
@@ -16,8 +14,9 @@ services:
     ports:
       - "8080:80"
     volumes:
+      # ./data already contains archive/ — mounting it a second time was a
+      # no-op that only obscured which path won.
       - ./data:/usr/share/nginx/html/data
-      - ./data/archive:/usr/share/nginx/html/data/archive
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "http://localhost:80/"]
@@ -31,7 +30,6 @@ services:
       target: fetcher
     volumes:
       - ./data:/app/data
-      - ./data/archive:/app/data/archive
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}

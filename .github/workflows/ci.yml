@@ -98,6 +98,17 @@ jobs:
           node --check app.js
           node --check service-worker.js
 
+      - name: Reject render-blocking CDN scripts
+        run: |
+          # Mermaid is 3.3 MB and is loaded on demand by app.js (with an SRI
+          # hash). A plain <script src="https://..."> in the head puts that
+          # back on the critical path for every visitor.
+          if grep -nE '<script[^>]+src="https?://' index.html; then
+            echo "::error::External <script> in index.html — load it on demand from app.js instead."
+            exit 1
+          fi
+          echo "No blocking CDN scripts."
+
       - name: Reject inline event handlers
         run: |
           # The CSP sets script-src without 'unsafe-inline', so any onclick=

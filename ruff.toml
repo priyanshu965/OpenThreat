@@ -1,0 +1,28 @@
+# Ruff configuration.
+#
+# The `lint` CI job had been failing on main: 27 findings, none of them
+# watched, which makes the gate worth exactly nothing. The genuine findings
+# (unused imports, unused locals, f-strings with no placeholders) are fixed in
+# the source. What remains is one deliberate style choice, exempted here rather
+# than left red.
+
+target-version = "py311"
+line-length = 100
+
+[lint]
+# Ruff's default rule set (E4/E7/E9 + F), minus the exemption below.
+select = ["E4", "E7", "E9", "F"]
+
+ignore = [
+    # E701: multiple statements on one line (colon).
+    #
+    # Only fires on the aligned threshold ladders in cvss_to_severity() and
+    # compute_priority(), where a one-line-per-band table is the point:
+    #
+    #     if score >= 90:   label = "urgent"
+    #     elif score >= 70: label = "elevated"
+    #
+    # Expanding those to two lines each triples the height of the block and
+    # makes the bands harder to compare, which is the only reason to read it.
+    "E701",
+]

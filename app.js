@@ -21,8 +21,15 @@
 const DATA_URL      = 'data/intel.json';
 const HEALTH_URL    = 'data/source_health_summary.json';
 const TRENDS_URL    = 'data/trends.json';
-const POLL_INTERVAL = 120000;
+// The pipeline publishes hourly, so a 2-minute poll spent ~30 requests an hour
+// per open tab to discover nothing. Ten minutes still surfaces a new run well
+// inside the hour it lands in.
+const POLL_INTERVAL = 600000;
 const PAGE_SIZE     = 40;
+
+// Pinned by version AND by hash — see loadMermaid().
+const MERMAID_SRC = 'https://cdn.jsdelivr.net/npm/mermaid@10.9.3/dist/mermaid.min.js';
+const MERMAID_SRI = 'sha384-R63zfMfSwJF4xCR11wXii+QUsbiBIdiDzDbtxia72oGWfkT7WHJfmD/I/eeHPJyT';
 
 const LS = {
   filter: 'cw_filter', severity: 'cw_severity', sort: 'cw_sort',
@@ -196,7 +203,10 @@ function ingest(data) {
 
 async function loadIntelData() {
   try {
-    const resp = await fetch(`${DATA_URL}?v=${Date.now()}`);
+    // `cache: 'no-cache'` revalidates instead of busting: the browser sends
+    // If-None-Match and the host can answer 304. The old `?v=${Date.now()}`
+    // made every single page load a fresh 184 KB download.
+    const resp = await fetch(DATA_URL, { cache: 'no-cache' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     store.stamp = resp.headers.get('etag') || resp.headers.get('last-modified');
     ingest(await resp.json());
@@ -221,7 +231,7 @@ async function loadIntelData() {
  */
 async function loadHealthSummary() {
   try {
-    const resp = await fetch(`${HEALTH_URL}?v=${Date.now()}`);
+    const resp = await fetch(HEALTH_URL, { cache: 'no-cache' });
     if (!resp.ok) return;
     const data = await resp.json();
     const now = Date.now();
@@ -251,7 +261,7 @@ function initLivePolling() {
       if (!stamp || stamp === store.stamp) return;
 
       const known = new Set(store.items.map((i) => i._key));
-      const fresh = await (await fetch(`${DATA_URL}?v=${Date.now()}`)).json();
+      const fresh = await (await fetch(DATA_URL, { cache: 'no-cache' })).json();
       const incoming = (fresh.items || []).filter((i) => !known.has(itemKey(i)));
       store.stamp = stamp;
 
@@ -586,10 +596,34 @@ function renderCards() {
 }
 
 // ─── Mermaid ──────────────────────────────────────────────────────────────────
+// Loaded ON DEMAND. Mermaid is 3.3 MB and was a render-blocking <script> in the
+// document head, so every visitor paid for it before first paint — to render a
+// diagram that only appears when someone expands a card's attack flow. It is
+// now fetched the first time a graph is actually needed, and never otherwise.
 let mermaidSeq = 0;
+let mermaidPromise = null;
+
+function loadMermaid() {
+  if (typeof mermaid !== 'undefined') return Promise.resolve(true);
+  if (mermaidPromise) return mermaidPromise;
+  mermaidPromise = new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = MERMAID_SRC;
+    // The CSP allows all of cdn.jsdelivr.net, so the SRI hash is the only
+    // thing pinning WHICH bytes are allowed to execute here.
+    s.integrity = MERMAID_SRI;
+    s.crossOrigin = 'anonymous';
+    s.onload = () => { initMermaid(); resolve(typeof mermaid !== 'undefined'); };
+    s.onerror = () => resolve(false);
+    document.head.appendChild(s);
+  });
+  return mermaidPromise;
+}
+
 async function renderGraph(container, source) {
-  if (typeof mermaid === 'undefined') {
-    container.textContent = 'Diagram renderer unavailable';
+  if (!(await loadMermaid())) {
+    // Not a dead end: the raw flow text is readable on its own.
+    container.replaceChildren(el('pre', 'mermaid-raw-fallback', source));
     return;
   }
   try {
@@ -1699,7 +1733,8 @@ function initMermaid() {
 
 document.addEventListener('DOMContentLoaded', () => {
   restoreState();
-  initMermaid();
+  // initMermaid() is no longer called here — loadMermaid() calls it once the
+  // library has actually been fetched, on first diagram render.
   initEvents();
   loadIntelData().then((ok) => { if (ok) initLivePolling(); });
 });

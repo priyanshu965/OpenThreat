@@ -26,8 +26,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="style.css?v=3.0.0" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.3/dist/mermaid.min.js"></script>
-  <script src="app.js?v=3.0.0" defer></script>
+  <!-- Mermaid is NOT loaded here. It is 3.3 MB and was a render-blocking
+       script, so every visitor downloaded and parsed it before first paint for
+       a diagram most never open. app.js fetches it on demand (with an SRI
+       hash) the first time a card's attack flow is expanded. -->
+  <script src="app.js?v=3.1.0" defer></script>
 </head>
 <body>
 

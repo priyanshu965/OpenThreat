@@ -114,8 +114,12 @@ All settings live in `scripts/config.py` and are environment-overridable.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `AI_ENRICH_LIMIT` | `40` | Items enriched per run (batched, so this is cheap) |
+| `AI_ENRICH_LIMIT` | `40` | Scored items enriched per run (batched, so this is cheap) |
+| `AI_ENRICH_UNSCORED_LIMIT` | `12` | Slots reserved for incidents/news, which carry no CVSS/EPSS/KEV of their own |
 | `AI_BATCH_SIZE` | `10` | Items per model call |
+| `AI_CACHE_TTL_DAYS` | `14` | Enrichment is cached by item key across runs — the feed turns over slowly, so without this the same items were re-sent on all 24 daily runs |
+| `AI_CACHE_MAX_ENTRIES` | `5000` | Cap on the enrichment cache |
+| `BRIEF_MAX_AGE_HOURS` | `12` | The brief is reused until it ages out **or** the urgent item set changes |
 | `MAX_ITEMS_PER_SOURCE` | `10` | Per-source cap |
 | `SOURCE_STALE_DAYS` | `30` | Median item age above which a feed is reported `stale` |
 | `ALERT_SEVERITIES` | `critical` | Severities that trigger an alert (KEV/SSVC-active always do) |
@@ -143,10 +147,15 @@ All settings live in `scripts/config.py` and are environment-overridable.
 ├── mitre_ttps.py        ← ATT&CK (504 techniques)
 ├── trends.py            ← 30-day rollup
 ├── exports.py           ← STIX / CSV / RSS + static JSON API
+├── daily_digest.py      ← daily rollup entry point
 └── webhook_post.py      ← alerts AND digest
-📁 tests/                ← 45 unit + 18 integration tests, importing real code
-📄 index.html · style.css · app.js
+📁 tests/                ← 65 unit + 29 integration tests, importing real code
+📄 index.html · style.css · app.js · service-worker.js
 ```
+
+Mermaid is **not** a page dependency. It is 3.3 MB, so `app.js` fetches it from
+the CDN (pinned by version *and* SRI hash) the first time a card's attack flow
+is actually expanded, rather than blocking first paint for every visitor.
 
 ---
 

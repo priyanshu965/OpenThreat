@@ -51,6 +51,28 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
+      # Without this the runner starts every hour with an empty data/.cache,
+      # so every TTL in fetch_intel.py (EPSS bulk 24h, CISA KEV 24h, VulnCheck
+      # 12h, PoC-in-GitHub 6h, Vulnrichment 14d) missed on all 24 daily runs.
+      # Vulnrichment alone is one raw.githubusercontent request PER CVE — ~70 a
+      # run, ~1,700 a day against a rate-limited host. .feed_meta.json is the
+      # ETag/Last-Modified store, so restoring it is what makes the conditional
+      # GETs in fetch_rss() actually conditional. ai_enrich.json inside
+      # data/.cache is what stops the same items being re-sent to Gemini 24x.
+      #
+      # The key rotates per run so the cache is always re-saved with whatever
+      # this run refreshed; restore-keys fall back to the newest earlier copy.
+      # Entries past their TTL are simply re-fetched.
+      - name: Restore intel fetch cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/.cache
+            data/.feed_meta.json
+          key: cyberwatch-fetchcache-${{ github.run_id }}
+          restore-keys: |
+            cyberwatch-fetchcache-
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip

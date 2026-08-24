@@ -1,17 +1,32 @@
-# Keep the repo out of the public web root. Without this, `COPY .` put .git/,
-# scripts/, tests/ and ~38 MB of data/archive into /usr/share/nginx/html —
-# meaning /.git/config was reachable, which on a public fork is full source
-# (and secret) disclosure.
+# ─────────────────────────────────────────────────────────────────────────────
+# .dockerignore applies to the whole BUILD CONTEXT, not per-stage. Both stages
+# below share it, so it cannot simply exclude everything the nginx stage must
+# not serve — the `fetcher` stage needs scripts/ and requirements.txt, and
+# excluding them here made `docker-compose run fetcher` fail at COPY.
+#
+# So: keep the context minimal, keep scripts/ and requirements*.txt IN it, and
+# let the frontend stage copy an explicit file list rather than `COPY .`.
+# That is what actually keeps .git/ and friends out of the public web root
+# (without it, /.git/config was reachable — full source and secret disclosure
+# on a public fork).
+# ─────────────────────────────────────────────────────────────────────────────
+
 .git
 .github
 .gitignore
 .dockerignore
 .editorconfig
-scripts
 tests
+bootstrap.ps1
+
+# Bulky or private data — never needed by either stage.
 data/archive
 data/.cache
 data/*.jsonl
+data/.alert_state.json
+data/.digest_state.json
+data/.feed_meta.json
+
 **/__pycache__
 *.pyc
 .env
@@ -20,4 +35,3 @@ data/*.jsonl
 !README.md
 Dockerfile
 docker-compose.yml
-requirements*.txt

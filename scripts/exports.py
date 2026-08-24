@@ -256,7 +256,6 @@ def _count_by(items, field: str) -> dict:
 
 if __name__ == "__main__":
     # Standalone: regenerate exports from the current intel.json.
-    import sys
     root = Path(__file__).resolve().parent.parent
     intel = json.loads((root / "data/intel.json").read_text(encoding="utf-8"))
     created = write_exports(intel, root / "data/exports")

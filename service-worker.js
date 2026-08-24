@@ -7,7 +7,7 @@
 // failed and the worker never activated: no offline support at all, which was
 // the entire point of shipping one.
 
-const CACHE = "cyberwatch-v3";
+const CACHE = "cyberwatch-v4";
 const PRECACHE = [
   "./",
   "./index.html",
@@ -67,7 +67,8 @@ async function networkFirst(req) {
   try {
     const res = await fetch(req);
     if (res.ok) {
-      // Strip the ?v= cache-buster so the fallback lookup can find this later.
+      // Key on the bare pathname so the offline fallback below can find this
+      // entry regardless of any query string on the original request.
       cache.put(new Request(new URL(req.url).pathname), res.clone());
     }
     return res;
