@@ -50,18 +50,18 @@ jobs:
     steps:
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1          # history is never read here; a full clone grew ~20 MB/day
           token: ${{ secrets.BOT_PAT }}
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-cyberwatch-v2
@@ -81,7 +81,7 @@ jobs:
       # this run refreshed; restore-keys fall back to the newest earlier copy.
       # Entries past their TTL are simply re-fetched.
       - name: Restore intel fetch cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             data/.cache

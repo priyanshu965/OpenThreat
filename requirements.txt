@@ -1,9 +1,15 @@
 # CyberWatch runtime dependencies (pinned for reproducible CI runs).
 # Bump via Dependabot PRs (.github/dependabot.yml).
-requests==2.32.3
-feedparser==6.0.11
+requests==2.34.2
+feedparser==6.0.14
 
 # Gemini. `google-genai` is the current SDK; `google-generativeai` is the
 # deprecated package this project shipped with. fetch_intel imports the new one
 # first and falls back to the old one, so both work during migration.
-google-genai==1.29.0
+#
+# Held on the 1.x line deliberately. 2.x is available, but the Gemini call is
+# the one place where a breaking change degrades SILENTLY - _call_gemini_json
+# catches Exception, returns None, and the run quietly falls through to Groq or
+# to rule-based defaults. A major bump there wants a real API-key smoke test,
+# not a green CI run that never exercises it.
+google-genai==1.47.0
