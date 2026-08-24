@@ -15,7 +15,6 @@
 #   GROQ_API_KEY      ← Groq (failover AI)    https://console.groq.com
 #   VULNCHECK_API_KEY ← VulnCheck KEV superset (optional, free)
 #   OTX_API_KEY       ← AlienVault OTX (optional)
-#   BOT_PAT           ← Classic PAT with 'repo' scope (bypasses branch protection)
 #
 # NOTE: CISA Vulnrichment (SSVC) and the EPSS bulk corpus need no key at all.
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -33,7 +32,8 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write     # commit durable state (archive, alert dedup memory)
+      contents: read      # nothing is committed back - see "Persist state" below
+      issues:   write     # file a pipeline-failure issue (uses GITHUB_TOKEN)
       pages: write        # publish the dashboard + data as a Pages deployment
       id-token: write     # OIDC token actions/deploy-pages exchanges
 
@@ -53,7 +53,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 1          # history is never read here; a full clone grew ~20 MB/day
-          token: ${{ secrets.BOT_PAT }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v7
@@ -86,9 +85,38 @@ jobs:
           path: |
             data/.cache
             data/.feed_meta.json
-          key: cyberwatch-fetchcache-${{ github.run_id }}
+            data/archive
+            data/source_health_summary.json
+            data/.alert_state.json
+            data/.digest_state.json
+          key: cyberwatch-state-${{ github.run_id }}
           restore-keys: |
-            cyberwatch-fetchcache-
+            cyberwatch-state-
+
+      # The cache is the fast path and, being read every hour, is never evicted
+      # in practice. This is the fallback for when it is: the previous run
+      # published the same state as a tarball next to the dashboard. Failing
+      # both, the copy committed in the repo acts as a seed - stale, but enough
+      # for trends and the "new since last run" diff to rebuild themselves.
+      - name: Restore state from the last deployment (cache miss only)
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          if [ -d data/archive ] && [ -n "$(ls -A data/archive 2>/dev/null)" ] \
+             && [ -f data/source_health_summary.json ]; then
+            echo "State present from cache or repo seed - nothing to restore."
+            exit 0
+          fi
+          URL="${DASHBOARD_URL:-https://priyanshu965.github.io/Cyberwatch/}"
+          echo "Cache missed; pulling state from ${URL}data/state.tar.gz"
+          if curl -fsSL --max-time 120 -o /tmp/state.tar.gz "${URL}data/state.tar.gz"; then
+            mkdir -p data && tar -xzf /tmp/state.tar.gz -C data
+            echo "Restored $(ls data/archive 2>/dev/null | wc -l) archive snapshot(s)."
+          else
+            echo "No published state to restore; continuing with whatever the repo carries."
+          fi
+        env:
+          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
 
       - name: Install dependencies
         run: |
@@ -116,56 +144,18 @@ jobs:
         run: |
           python scripts/fetch_intel.py
 
-      - name: Commit updated intel data
+      # ── Persist state WITHOUT committing ─────────────────────────────
+      # This job used to commit on every run, which added ~24 commits a day to
+      # main forever. Nothing read that history back: the next run only needs
+      # the newest state, which the cache above already carries between runs.
+      # The tarball published below is the durable copy, so the commit was pure
+      # cost. main now only moves when a person changes something.
+      - name: Summarise state (not committed)
         run: |
-          git config user.name  "CyberWatch Bot"
-          git config user.email "cyberwatch-bot@users.noreply.github.com"
-
-          # ── Only DURABLE STATE is committed ──────────────────────────
-          # intel.json, exports/, api/ and trends.json are regenerated from
-          # scratch every run and are now published as a Pages deployment
-          # artifact instead (see the deploy steps below). Committing them was
-          # adding ~106 MB/year of history that nothing ever read back: the
-          # feed genuinely changes every hour, so there were no no-op commits
-          # to skip -- 100% of consecutive intel.json versions differed.
-          #
-          # What still has to be committed is state the NEXT run depends on and
-          # cannot recompute, because each run starts from a fresh shallow
-          # clone:
-          #   archive/                  -> trends + the "new since last run" diff
-          #   source_health_summary.json-> 30-day rolling uptime history
-          #   .alert_state.json         -> alert dedup memory
-          #   .digest_state.json        -> digest dedup memory
-          git add data/archive/                     || true
-          git add data/source_health_summary.json   || true
-          git add -f data/.alert_state.json         || true
-          git add -f data/.digest_state.json        || true
-
-          # One-time cleanup: drop the derived files from tracking. Harmless to
-          # re-run once they are gone.
-          git rm -r --cached --ignore-unmatch -q \
-            data/intel.json data/exports data/api data/trends.json || true
-
-          # source_health_history.jsonl is intentionally no longer committed —
-          # it reached 1.8 MB, was rewritten hourly, and the dashboard
-          # downloaded all of it on every page load. Superseded by the rolled-up
-          # data/source_health_summary.json.
-          git rm --cached data/source_health_history.jsonl 2>/dev/null || true
-
-          if git diff --staged --quiet; then
-            echo "No changes detected — skipping commit."
-          else
-            TODAY=$(date -u '+%Y-%m-%d %H:%M UTC')
-            git commit -m "chore: intel update [${TODAY}]"
-            # A manual dispatch overlapping the cron used to fail on a
-            # non-fast-forward push.
-            for attempt in 1 2 3; do
-              git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push && break
-              echo "Push attempt ${attempt} failed; retrying..."
-              sleep $((attempt * 5))
-            done
-            echo "Successfully pushed updated intel data."
-          fi
+          echo "Archive snapshots : $(ls data/archive 2>/dev/null | wc -l)"
+          echo "Health summary    : $(du -h data/source_health_summary.json 2>/dev/null | cut -f1)"
+          echo "State is carried by the actions cache and republished below;"
+          echo "no commit is made to ${GITHUB_REF_NAME}."
 
       # ── Publish the dashboard + fresh data as a Pages deployment ──────
       # The site is assembled here rather than served from the branch, so the
@@ -184,8 +174,15 @@ jobs:
           cp data/source_health_summary.json _site/data/ 2>/dev/null || true
           cp -r data/exports                _site/data/ 2>/dev/null || true
           cp -r data/api                    _site/data/ 2>/dev/null || true
-          # data/archive/ is deliberately NOT published: ~24 MB of daily
-          # snapshots that no page requests.
+          # data/archive/ is not published as loose files - no page requests
+          # them - but it IS published as one tarball, which is what lets a run
+          # rebuild its own state after a cache miss without any git history.
+          tar -czf _site/data/state.tar.gz -C data \
+            $( [ -d data/archive ] && echo archive ) \
+            $( [ -f data/source_health_summary.json ] && echo source_health_summary.json ) \
+            $( [ -f data/.alert_state.json ] && echo .alert_state.json ) \
+            $( [ -f data/.digest_state.json ] && echo .digest_state.json )
+          echo "state.tar.gz: $(du -h _site/data/state.tar.gz | cut -f1)"
           echo "Deploying $(du -sh _site | cut -f1):"
           find _site -type f | sort | sed 's/^/  /'
 
@@ -204,7 +201,7 @@ jobs:
         if: failure()
         id: existing
         env:
-          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           COUNT=$(gh issue list --repo "${{ github.repository }}" \
                     --label pipeline-failure --state open --limit 1 --json number \
@@ -215,7 +212,7 @@ jobs:
         if: failure() && steps.existing.outputs.count == '0'
         uses: dacbd/create-issue-action@v2
         with:
-          token: ${{ secrets.BOT_PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           labels: pipeline-failure
           title: "🚨 Pipeline failure — ${{ github.run_id }}"
           body: |

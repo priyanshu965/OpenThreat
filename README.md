@@ -2,226 +2,167 @@
 
 # 🛡️ CyberWatch
 
-**A free, self-updating cybersecurity threat intelligence dashboard**
-*Aggregates CVEs, advisories, incidents & IOCs, then tells you which handful actually need action today. Runs hourly on GitHub Actions — zero infrastructure.*
+**A self-updating threat intelligence pipeline and dashboard.**
+
+Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 35 configured sources every hour, scores each item against how likely it is to actually be exploited, and renders the result as a static dashboard.
 
 [![CI](https://github.com/priyanshu965/Cyberwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/priyanshu965/Cyberwatch/actions/workflows/ci.yml)
-[![Hourly Update](https://img.shields.io/badge/Updates-Hourly-00ADD8?logo=githubactions&logoColor=white)](https://github.com/priyanshu965/Cyberwatch/actions)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
-[![Dashboard](https://img.shields.io/badge/Dashboard-GitHub%20Pages-222222?logo=githubpages&logoColor=white)](https://priyanshu965.github.io/Cyberwatch/)
+
+**[Live dashboard](https://priyanshu965.github.io/Cyberwatch/)**
 
 </div>
 
 ---
 
-## ✨ What It Does
+## Architecture
 
-| Capability | Detail |
-|---|---|
-| **🎯 Tells you what to do** | Every scored item carries an action — *Patch now* / *Patch this week* / *Next patch cycle* / *Monitor* — derived from CVSS + EPSS + CISA KEV + public PoC + **SSVC** |
-| **🩺 SSVC decision points** | CISA Vulnrichment supplies Exploitation (`none`/`poc`/`active`), Automatable, and Technical Impact. Free, no API key |
-| **🔍 28 live sources** | NVD, CISA, MSRC, GHSA, ZDI, Gentoo, Fedora, Arch, Amazon Linux, CentOS, VMware/Broadcom, OTX, THN, Bleeping Computer, Krebs, SANS, r/netsec, TheRecord, ThreatFox, MalwareBazaar, URLhaus, Spamhaus, Feodo, Dark Reading, SecurityWeek, Cisco Talos, Unit 42, Ransomware.live |
-| **🤖 AI where it earns its keep** | Batched Gemini calls extract affected **vendor/product** (feeds stack matching) and write a one-line *why this matters*; one call per run produces the daily brief |
-| **⚡ Priority scoring** | 0–100 blended score with a rationale you can read, not a black box |
-| **📊 Trends & exports** | 30-day charts + STIX / CSV / JSON / RSS, plus pre-rendered static JSON API endpoints |
-| **🔔 Alerts & digest** | Slack / Discord / Telegram / Email with persistent dedup |
-| **⌨️ Keyboard triage** | `j`/`k`/`e`/`x`/`s`/`w`, a `Ctrl-K` command palette, and dismiss state — "inbox zero" for 250 items |
-| **🔄 Live updates** | The page polls for new intel and offers it, rather than reshuffling under you |
-| **🗺️ MITRE ATT&CK** | 504 techniques, whole-token matched, with a heatmap matrix |
-
----
-
-## 🏗️ Architecture
+The whole system is one Python process that runs on a schedule, plus a static frontend that reads its output. There is no database, no server and no runtime backend. State between runs is limited to what the next run genuinely cannot recompute.
 
 ```
-28 sources ──▶ fetch_intel.main()
-  (RSS + API)          │
-                       ├─ deduplicate()          authority-ranked, deterministic
-                       ├─ map_ttps()             ATT&CK, one compiled regex pass
-                       ├─ extract_iocs()         source-gated (indicator feeds only)
-                       ├─ fetch_epss_scores()    full daily corpus, cached 24h
-                       ├─ fetch_cisa_kev()       + optional VulnCheck KEV superset
-                       ├─ fetch_vulnrichment()   SSVC decision points
-                       ├─ compute_priority()     score ──▶ ACTION
-                       ├─ enrich_with_ai()       batched, schema-constrained
-                       └─ build_daily_brief()    one call over the whole feed
-                                 │
-      ┌───────────────┬──────────┼───────────────┬────────────────┐
-  intel.json      archive/    exports/        data/api/       webhook
-  (current)       (daily)     STIX·CSV·RSS    static JSON     alert + digest
+                      ┌──────────────────────────────────────┐
+   13 RSS feeds  ────▶ │                                      │
+   22 JSON APIs  ────▶ │   fetch_intel.main()                 │
+                      │   ThreadPoolExecutor(max_workers=8)  │
+                      └──────────────────┬───────────────────┘
+                                         │  raw items
+                    ┌────────────────────▼────────────────────┐
+                    │  NORMALISE                              │
+                    │    sort_for_dedup()   authority ranking │
+                    │    deduplicate()      URL + title + CVE │
+                    └────────────────────┬────────────────────┘
+                                         │
+                    ┌────────────────────▼────────────────────┐
+                    │  ENRICH                                 │
+                    │    map_ttps()          ATT&CK, 504 tech │
+                    │    extract_iocs()      source-gated     │
+                    │    fetch_epss_scores() full daily corpus│
+                    │    fetch_cisa_kev()    + VulnCheck KEV  │
+                    │    fetch_vulnrichment()SSVC points      │
+                    │    build_poc_map()     PoC-in-GitHub    │
+                    └────────────────────┬────────────────────┘
+                                         │
+                    ┌────────────────────▼────────────────────┐
+                    │  SCORE                                  │
+                    │    compute_priority()  0-100 + ACTION   │
+                    │    enrich_with_ai()    batched, cached  │
+                    │    build_daily_brief() one call per day │
+                    └────────────────────┬────────────────────┘
+                                         │
+         ┌──────────────┬────────────────┼──────────────┬──────────────┐
+    intel.json      archive/        exports/        data/api/       webhook
+    (full feed)   (daily snapshot)  STIX·CSV·RSS   static JSON    Slack/Discord
 ```
 
----
+## Ingestion
 
-## 🚀 Quick Start
+Sources are declared as data, not code. Feeds live in `RSS_SOURCES` and per-source fetchers are registered in `API_SOURCES`, and both are fanned out across a thread pool. Every fetcher is wrapped in `run_source()`, which catches anything it throws and records a health entry instead of letting one bad feed abort the run. A source that returns nothing, errors, or serves stale content is reported in `source_health` and the pipeline continues.
 
-### 🌐 GitHub Pages
+Around 28 of the 35 typically return data on a given run; the remainder need an optional API key or are degraded that hour, and the run reports which.
 
-```bash
-# 1. Fork the repo
-# 2. Settings → Pages → Source: GitHub Actions      ← not "Deploy from a branch"
-# 3. Add GEMINI_API_KEY under Settings → Secrets → Actions (optional but recommended)
+Health is freshness aware rather than count aware. A feed that reliably returns ten items whose median age is four years is reported `stale`, not `ok`, which is how a long dead source gets caught instead of quietly padding the feed.
+
+HTTP goes through a single pooled `requests.Session` with a retry adapter, so all sources share connections and get uniform backoff on 429 and 5xx. Per feed ETag and Last-Modified values are stored between runs, so unchanged feeds cost a conditional request rather than a full download.
+
+## Normalisation
+
+The same story arrives from several places at once, so items are collapsed on three keys: canonical URL (scheme, `www`, tracking parameters and trailing slash removed), a fuzzy title fingerprint (lowercased, punctuation stripped, filler words dropped, remaining tokens sorted), and CVE paired with source.
+
+Which copy survives is not arbitrary. Items are sorted by source authority before deduplication, so an NVD or CISA record beats an aggregator, which beats a news rewrite of the same advisory. Because dedup keeps the first occurrence, the sort is what makes the outcome both correct and deterministic across runs.
+
+## Enrichment
+
+| Signal | Source | Notes |
+|---|---|---|
+| EPSS | FIRST.org daily corpus | The full gzipped CSV is downloaded once and looked up locally, so every CVE gets a score rather than only those in a cached query |
+| KEV | CISA catalogue | Optional VulnCheck superset when a key is configured |
+| SSVC | CISA Vulnrichment | Exploitation, Automatable and Technical Impact, fetched per CVE and cached for 14 days |
+| Public PoC | PoC-in-GitHub index | Contributes to the score without dominating it |
+| ATT&CK | `mitre_ttps.py` | 504 techniques matched in one compiled regex pass |
+| IOCs | Indicator feeds only | See below |
+
+Keyword matching across severity, category and ATT&CK is whole token. Substring matching is the obvious way to write this and it is wrong: `rce` is a substring of `source`, `force` and `resource`, which is enough to mislabel a third of everything marked critical.
+
+IOC extraction is gated by source. Indicators are taken from feeds that exist to publish indicators (URLhaus, ThreatFox, Feodo, Spamhaus, MalwareBazaar, OTX) or from text that is explicitly defanged. Running a regex over prose in a news article produces the article's own domain, the vendor's domain and the author's email address, none of which are indicators of anything.
+
+## Prioritisation
+
+Each item with any exploitability signal gets a blended 0 to 100 score:
+
+```
+score = 40 × (cvss / 10)              impact
+      + 40 × epss                     probability of exploitation
+      + 25 × ssvc_exploitation        active = 1.0, poc = 0.45, none = 0
+      + 10 if automatable
+      +  5 if technical_impact == total
+      + 15 if a public PoC exists
+      + 20 if listed in CISA KEV
+
+floor of 90 when KEV or SSVC exploitation is active
 ```
 
-> **Why "GitHub Actions" and not a branch:** the dashboard and the feed are
-> published as a Pages *deployment artifact*, assembled fresh by `update.yml`
-> on every run. `data/intel.json` and the exports are therefore **not committed**.
-> They changed every hour and nothing ever read the history back, so tracking
-> them was adding ~106 MB a year to the repository. Every published URL is
-> unchanged — only where the bytes come from moved.
+The score maps to a band, and the band maps to a plain instruction, which is the actual output of the pipeline:
 
-### 🐍 Local
+| Score | Band | Action |
+|---|---|---|
+| 90+ | urgent | Patch now, within 24h |
+| 70 to 89 | elevated | Patch this week |
+| 40 to 69 | moderate | Next patch cycle |
+| below 40 | low | Monitor |
 
-```bash
-pip install -r requirements.txt
-python scripts/fetch_intel.py          # writes data/intel.json (gitignored)
-python -m http.server 8000             # open http://localhost:8000
-```
+Every score ships with a readable rationale (`CISA KEV (actively exploited) · EPSS 42.1% · CVSS 9.8`) so the number can be argued with. Weights are environment overridable through `PRIORITY_*`.
 
-A fresh clone has no `data/intel.json` — run the fetcher once before serving,
-or the page will load with nothing in it.
+Confirmed exploitation floors the score because a CVSS 6.5 that is being used in the wild today outranks a theoretical 9.8. A public PoC only adds to the score. It deliberately does not floor it, since the PoC index carries a lot of empty scaffold repositories, and flooring collapsed the ordering by tying every low impact item at one value.
 
-### 🐳 Docker
+## AI layer
 
-```bash
-docker compose run --rm fetcher        # populate data/ first
-docker compose up -d                   # dashboard on :8080
-```
+Language models are used in the two places regex cannot reach: pulling the affected vendor and product out of prose (which drives stack matching), and writing a one line judgement of why an item matters. A single call per run produces the daily brief, which is a genuine judgement over the whole feed.
 
-Fetch before serving. `data/intel.json` is no longer committed, so on a fresh
-clone the dashboard has nothing to load until a run produces it.
+Calls are batched, with a JSON schema attached so the model cannot return malformed output. Results are cached across runs keyed by item identity, because an enrichment is a property of the item and the feed turns over slowly. The daily brief is regenerated only when it ages out or the set of urgent items changes, so a newly listed KEV entry still forces a rewrite within the hour.
 
-### 🧪 Tests
+Gemini is primary with Groq as failover, and rule based defaults are applied to every item first. If no key is configured, or every provider fails, the run degrades rather than empties.
 
-```bash
-pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v          # 65 unit + 29 schema tests
-RUN_LIVE_TESTS=1 python -m unittest tests.test_integration -v   # live source checks
-```
+## Frontend
 
----
+Vanilla JavaScript, no build step, no framework. `app.js` fetches `intel.json`, filters in memory and renders cards directly to the DOM. Everything sourced from a feed goes through `escapeHTML()`, and the page sets a CSP without `unsafe-inline` for scripts, enforced in CI by a check that rejects inline handlers.
 
-## ⚙️ Configuration
+Mermaid is loaded on demand rather than up front. It is 3.3 MB, and only a minority of visitors ever expand an attack flow diagram, so it is fetched on first use with an SRI hash pinning exactly which bytes are allowed to execute.
 
-All settings live in `scripts/config.py` and are environment-overridable.
+The page polls for new data and offers it through a toast instead of reshuffling the list under whoever is reading. Triage state (dismissed, starred, watchlist, stack) persists in `localStorage`, and the current view is encoded in the URL so a filtered dashboard can be shared.
 
-### Keys (all optional)
+## Configuration
 
-| Variable | What it unlocks |
-|---|---|
-| `GEMINI_API_KEY` | AI enrichment + daily brief. Gemini 3.x Flash-Lite is free-tier |
-| `GROQ_API_KEY` | Failover only — Groq's free tier is 100–2,000 req/day |
-| `VULNCHECK_API_KEY` | VulnCheck KEV superset (free signup) |
-| `NVD_API_KEY` | Higher NVD rate limits |
-| `OTX_API_KEY` / `THREATFOX_API_KEY` / `MB_API_KEY` | Extra indicator feeds |
-| `WEBHOOK_URL` / `WEBHOOK_TYPE` | `slack` · `discord` · `telegram` · `email` |
-| `TELEGRAM_CHAT_ID` | **Required** when `WEBHOOK_TYPE=telegram` |
-| `SMTP_HOST` / `SMTP_TO` / … | Email alerts |
-
-> **CISA Vulnrichment, the EPSS corpus and CISA KEV need no key at all.**
-> Never commit a key. Use GitHub Actions secrets, or a local `.env` (already gitignored).
-> CI fails the build if a credential-shaped string is found in the tree.
-
-### Tuning
+Everything tunable lives in [`scripts/config.py`](scripts/config.py) and can be overridden by environment variable. All API keys are optional, and CISA Vulnrichment, the EPSS corpus and CISA KEV need no key at all.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `AI_ENRICH_LIMIT` | `40` | Scored items enriched per run (batched, so this is cheap) |
-| `AI_ENRICH_UNSCORED_LIMIT` | `12` | Slots reserved for incidents/news, which carry no CVSS/EPSS/KEV of their own |
-| `AI_BATCH_SIZE` | `10` | Items per model call |
-| `AI_CACHE_TTL_DAYS` | `14` | Enrichment is cached by item key across runs — the feed turns over slowly, so without this the same items were re-sent on all 24 daily runs |
-| `AI_CACHE_MAX_ENTRIES` | `5000` | Cap on the enrichment cache |
-| `BRIEF_MAX_AGE_HOURS` | `12` | The brief is reused until it ages out **or** the urgent item set changes |
-| `MAX_ITEMS_PER_SOURCE` | `10` | Per-source cap |
-| `SOURCE_STALE_DAYS` | `30` | Median item age above which a feed is reported `stale` |
-| `ALERT_SEVERITIES` | `critical` | Severities that trigger an alert (KEV/SSVC-active always do) |
-| `ALERT_MIN_PRIORITY` | `0` | Priority floor for alerts; `0` disables |
-| `PRIORITY_CVSS_WEIGHT` | `40` | Score weights… |
-| `PRIORITY_EPSS_WEIGHT` | `40` | |
-| `PRIORITY_KEV_BONUS` | `20` | |
-| `PRIORITY_POC_BONUS` | `15` | |
-| `PRIORITY_SSVC_ACTIVE_BONUS` | `25` | SSVC `Exploitation: active` |
-| `PRIORITY_SSVC_AUTO_BONUS` | `10` | SSVC `Automatable: yes` |
+| `GEMINI_API_KEY` | none | Enables AI enrichment and the daily brief |
+| `GROQ_API_KEY` | none | Failover provider |
+| `WEBHOOK_URL`, `WEBHOOK_TYPE` | none | Alert destination; unset disables alerting |
+| `ALERT_SEVERITIES` | `critical` | What justifies a push; KEV and SSVC active always alert |
+| `MAX_ITEMS_PER_SOURCE` | `10` | Per source cap |
+| `AI_ENRICH_LIMIT` | `40` | Scored items enriched per run |
+| `SOURCE_STALE_DAYS` | `30` | Median age above which a feed is reported stale |
 
----
+## Static JSON API
 
-## 📦 Project Map
-
-```
-📁 .github/workflows/
-├── ci.yml               ← tests + lint + secret scan + frontend checks (every PR)
-├── update.yml           ← hourly pipeline
-├── daily-digest.yml     ← daily rollup
-└── source-health.yml    ← live source validation
-📁 scripts/
-├── fetch_intel.py       ← the pipeline
-├── config.py            ← central config
-├── mitre_ttps.py        ← ATT&CK (504 techniques)
-├── trends.py            ← 30-day rollup
-├── exports.py           ← STIX / CSV / RSS + static JSON API
-└── webhook_post.py      ← alerts AND digest (--mode digest)
-📁 tests/                ← 65 unit + 29 integration tests, importing real code
-📄 index.html · style.css · app.js · service-worker.js
-```
-
-Mermaid is **not** a page dependency. It is 3.3 MB, so `app.js` fetches it from
-the CDN (pinned by version *and* SRI hash) the first time a card's attack flow
-is actually expanded, rather than blocking first paint for every visitor.
-
----
-
-## 📡 Static JSON API
-
-No server. `write_exports()` pre-renders these on every run and `update.yml`
-publishes them in the Pages deployment — cacheable on any CDN. The paths below
-are relative to the dashboard URL and have not changed.
+Pre-rendered on every run and served with the dashboard. Paths are relative to the dashboard URL.
 
 | Endpoint | Contents |
 |---|---|
-| `data/intel.json` | Full feed |
-| `data/api/stats.json` | Counts by severity, category, source, priority |
-| `data/api/urgent.json` | Items labelled urgent or elevated |
-| `data/api/exploited.json` | CISA KEV or SSVC `active` |
-| `data/api/brief.json` | Today's brief |
-| `data/api/health.json` | Per-source health |
-| `data/exports/feed.xml` | RSS |
+| `data/intel.json` | Full feed with all enrichment |
+| `data/api/stats.json` | Counts by severity, category, source and priority band |
+| `data/api/urgent.json` | Items scored urgent or elevated |
+| `data/api/exploited.json` | CISA KEV or SSVC exploitation active |
+| `data/api/brief.json` | Current brief |
 | `data/exports/stix.json` | STIX 2.1 bundle |
-
----
-
-## ⌨️ Keyboard
-
-| Key | Action |
-|---|---|
-| `j` / `k` | Next / previous item |
-| `e` | Expand |
-| `x` | Dismiss |
-| `s` | Star |
-| `w` | Copy as markdown for a ticket |
-| `o` | Open source link |
-| `/` | Search · `Ctrl-K` palette · `?` help |
-
----
-
-## 💡 Notes
-
-- **Source health is freshness-aware.** A feed still returning items but whose median age exceeds `SOURCE_STALE_DAYS` reports `stale`, not `ok`.
-- **IOC extraction is source-gated.** Indicators come from indicator feeds (URLhaus, ThreatFox, Feodo, Spamhaus, MalwareBazaar, OTX) or from defanged text. Prose in a news article is not a threat feed.
-- **Partial failure is fine.** A dead source is recorded in `source_health` and the run continues.
-- **All output is static** — GitHub Pages serves it directly, from a deployment
-  artifact rather than from the branch, so the repository does not grow by a
-  full copy of the feed every hour.
-- **Only durable state is committed.** `data/archive/` (once daily, feeds trends
-  and the "new since last run" diff), `source_health_summary.json` (30-day
-  uptime), and the alert/digest dedup memories — everything a run cannot
-  recompute from scratch, since each run starts from a fresh shallow clone.
+| `data/exports/feed.xml` | RSS |
 
 ---
 
 <div align="center">
 
-Built with **GitHub Actions**, **Python** and **vanilla JS**
-*Stay safe out there.*
+MIT licensed. Built with GitHub Actions, Python and vanilla JavaScript.
 
 </div>
