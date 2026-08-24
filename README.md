@@ -60,17 +60,27 @@
 
 ```bash
 # 1. Fork the repo
-# 2. Settings → Pages → Deploy from main / (root)
+# 2. Settings → Pages → Source: GitHub Actions      ← not "Deploy from a branch"
 # 3. Add GEMINI_API_KEY under Settings → Secrets → Actions (optional but recommended)
 ```
+
+> **Why "GitHub Actions" and not a branch:** the dashboard and the feed are
+> published as a Pages *deployment artifact*, assembled fresh by `update.yml`
+> on every run. `data/intel.json` and the exports are therefore **not committed**.
+> They changed every hour and nothing ever read the history back, so tracking
+> them was adding ~106 MB a year to the repository. Every published URL is
+> unchanged — only where the bytes come from moved.
 
 ### 🐍 Local
 
 ```bash
 pip install -r requirements.txt
-python scripts/fetch_intel.py          # writes data/intel.json
+python scripts/fetch_intel.py          # writes data/intel.json (gitignored)
 python -m http.server 8000             # open http://localhost:8000
 ```
+
+A fresh clone has no `data/intel.json` — run the fetcher once before serving,
+or the page will load with nothing in it.
 
 ### 🐳 Docker
 
@@ -147,8 +157,7 @@ All settings live in `scripts/config.py` and are environment-overridable.
 ├── mitre_ttps.py        ← ATT&CK (504 techniques)
 ├── trends.py            ← 30-day rollup
 ├── exports.py           ← STIX / CSV / RSS + static JSON API
-├── daily_digest.py      ← daily rollup entry point
-└── webhook_post.py      ← alerts AND digest
+└── webhook_post.py      ← alerts AND digest (--mode digest)
 📁 tests/                ← 65 unit + 29 integration tests, importing real code
 📄 index.html · style.css · app.js · service-worker.js
 ```
@@ -161,7 +170,9 @@ is actually expanded, rather than blocking first paint for every visitor.
 
 ## 📡 Static JSON API
 
-No server. `write_exports()` pre-renders these on every run — cacheable on any CDN.
+No server. `write_exports()` pre-renders these on every run and `update.yml`
+publishes them in the Pages deployment — cacheable on any CDN. The paths below
+are relative to the dashboard URL and have not changed.
 
 | Endpoint | Contents |
 |---|---|
@@ -195,7 +206,13 @@ No server. `write_exports()` pre-renders these on every run — cacheable on any
 - **Source health is freshness-aware.** A feed still returning items but whose median age exceeds `SOURCE_STALE_DAYS` reports `stale`, not `ok`.
 - **IOC extraction is source-gated.** Indicators come from indicator feeds (URLhaus, ThreatFox, Feodo, Spamhaus, MalwareBazaar, OTX) or from defanged text. Prose in a news article is not a threat feed.
 - **Partial failure is fine.** A dead source is recorded in `source_health` and the run continues.
-- **All output is static** — GitHub Pages serves it directly.
+- **All output is static** — GitHub Pages serves it directly, from a deployment
+  artifact rather than from the branch, so the repository does not grow by a
+  full copy of the feed every hour.
+- **Only durable state is committed.** `data/archive/` (once daily, feeds trends
+  and the "new since last run" diff), `source_health_summary.json` (30-day
+  uptime), and the alert/digest dedup memories — everything a run cannot
+  recompute from scratch, since each run starts from a fresh shallow clone.
 
 ---
 

@@ -8,9 +8,22 @@ data/.digest_state.json
 # the actions/cache step in update.yml, not from git.
 data/.feed_meta.json
 data/.cache/
+
+# Derived pipeline output. Regenerated from scratch every run and published as
+# a GitHub Pages deployment artifact, not committed - the feed changes every
+# hour and nothing reads the history back, so tracking it added ~106 MB/year.
+# Durable state the next run cannot recompute (data/archive/,
+# source_health_summary.json, the dedup memories) IS still committed.
+data/intel.json
+data/trends.json
+data/exports/
+data/api/
 *.log
 .idea/
 .vscode/
 *.egg-info/
 dist/
 build/
+
+# Assembled by the Pages deploy step in update.yml.
+_site/

@@ -16,6 +16,25 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 INTEL_PATH = PROJECT_ROOT / "data" / "intel.json"
+ARCHIVE_DIR = PROJECT_ROOT / "data" / "archive"
+
+
+def _newest_snapshot():
+    """The document the schema tests below validate.
+
+    intel.json is no longer committed - it is regenerated each run and
+    published as a Pages deploy artifact - so in a fresh CI checkout the newest
+    daily archive snapshot is the committed copy of the same structure.
+    Without this fallback the whole class would silently skip and the output
+    schema would stop being checked at all.
+    """
+    if INTEL_PATH.exists():
+        return INTEL_PATH
+    if ARCHIVE_DIR.exists():
+        snaps = sorted(ARCHIVE_DIR.glob("*.json"), key=lambda p: p.stem, reverse=True)
+        if snaps:
+            return snaps[0]
+    return None
 
 RUN_LIVE = os.environ.get("RUN_LIVE_TESTS") == "1"
 
@@ -29,9 +48,11 @@ class TestIntelJsonSchema(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if not INTEL_PATH.exists():
-            raise unittest.SkipTest("data/intel.json not present")
-        with open(INTEL_PATH, encoding="utf-8") as f:
+        path = _newest_snapshot()
+        if path is None:
+            raise unittest.SkipTest("no intel.json and no archive snapshot to validate")
+        cls.source_path = path
+        with open(path, encoding="utf-8") as f:
             cls.data = json.load(f)
 
     def test_top_level_keys(self):
@@ -39,7 +60,7 @@ class TestIntelJsonSchema(unittest.TestCase):
             self.assertIn(key, self.data)
 
     def test_items_nonempty(self):
-        self.assertGreater(len(self.data["items"]), 0, "intel.json has no items")
+        self.assertGreater(len(self.data["items"]), 0, f"{self.source_path.name} has no items")
 
     def test_item_required_fields(self):
         for item in self.data["items"]:

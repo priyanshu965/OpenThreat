@@ -51,6 +51,12 @@ jobs:
           SMTP_TO:   ${{ secrets.SMTP_TO }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
         run: |
-          python scripts/webhook_post.py data/intel.json --mode digest \
+          # data/intel.json is no longer committed - it is published as a Pages
+          # deploy artifact. resolve_feed.py pulls the live copy, falling back to
+          # the newest committed archive snapshot, so a network blip degrades the
+          # digest to "up to 24h old" instead of failing it.
+          python scripts/resolve_feed.py --out "${RUNNER_TEMP}/intel.json" \
+            --url "${DASHBOARD_URL:-https://priyanshu965.github.io/Cyberwatch/}"
+          python scripts/webhook_post.py "${RUNNER_TEMP}/intel.json" --mode digest \
             --type "${WEBHOOK_TYPE:-slack}" \
             ${{ inputs.dry_run && '--dry-run' || '' }}

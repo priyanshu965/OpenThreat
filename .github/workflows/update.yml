@@ -2,8 +2,13 @@
 # CYBERWATCH DASHBOARD — .github/workflows/update.yml
 #
 # Runs every hour. Fetches fresh threat intel, enriches the top AI_ENRICH_LIMIT
-# items in batches via Gemini (primary) with Groq as failover, writes
-# intel.json + a once-daily archive snapshot, then commits and pushes.
+# items in batches via Gemini (primary) with Groq as failover, then:
+#   - PUBLISHES intel.json + exports + the static API as a Pages deployment
+#   - COMMITS only durable state (daily archive, health summary, dedup memory)
+#
+# The derived data is deliberately not committed. It changes every hour and
+# nothing reads the history back, so committing it added ~106 MB/year.
+# Pages must be set to build_type=workflow for the deploy step to publish.
 #
 # Required Secrets (Settings → Secrets and variables → Actions):
 #   GEMINI_API_KEY    ← Gemini (primary AI)  https://aistudio.google.com
@@ -28,7 +33,19 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write
+      contents: write     # commit durable state (archive, alert dedup memory)
+      pages: write        # publish the dashboard + data as a Pages deployment
+      id-token: write     # OIDC token actions/deploy-pages exchanges
+
+    # Never let two deployments race. A manual dispatch overlapping the cron
+    # used to be a push conflict; with Pages it would be a deployment conflict.
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
 
     steps:
 
@@ -104,14 +121,30 @@ jobs:
           git config user.name  "CyberWatch Bot"
           git config user.email "cyberwatch-bot@users.noreply.github.com"
 
-          git add data/intel.json
+          # ── Only DURABLE STATE is committed ──────────────────────────
+          # intel.json, exports/, api/ and trends.json are regenerated from
+          # scratch every run and are now published as a Pages deployment
+          # artifact instead (see the deploy steps below). Committing them was
+          # adding ~106 MB/year of history that nothing ever read back: the
+          # feed genuinely changes every hour, so there were no no-op commits
+          # to skip -- 100% of consecutive intel.json versions differed.
+          #
+          # What still has to be committed is state the NEXT run depends on and
+          # cannot recompute, because each run starts from a fresh shallow
+          # clone:
+          #   archive/                  -> trends + the "new since last run" diff
+          #   source_health_summary.json-> 30-day rolling uptime history
+          #   .alert_state.json         -> alert dedup memory
+          #   .digest_state.json        -> digest dedup memory
           git add data/archive/                     || true
-          git add data/exports/                     || true
-          git add data/api/                         || true
-          git add data/trends.json                  || true
           git add data/source_health_summary.json   || true
-          git add -f data/.alert_state.json         || true   # persist alert dedup memory
+          git add -f data/.alert_state.json         || true
           git add -f data/.digest_state.json        || true
+
+          # One-time cleanup: drop the derived files from tracking. Harmless to
+          # re-run once they are gone.
+          git rm -r --cached --ignore-unmatch -q \
+            data/intel.json data/exports data/api data/trends.json || true
 
           # source_health_history.jsonl is intentionally no longer committed —
           # it reached 1.8 MB, was rewritten hourly, and the dashboard
@@ -133,6 +166,37 @@ jobs:
             done
             echo "Successfully pushed updated intel data."
           fi
+
+      # ── Publish the dashboard + fresh data as a Pages deployment ──────
+      # The site is assembled here rather than served from the branch, so the
+      # data never enters git history. Paths are unchanged: index.html still
+      # sits at the root and still fetches ./data/intel.json, so nothing in the
+      # frontend or the documented static API URLs moves.
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp index.html app.js style.css service-worker.js manifest.json robots.txt _site/
+          mkdir -p _site/data
+          # Everything the browser and the documented API actually fetch.
+          cp data/intel.json                _site/data/
+          cp data/trends.json               _site/data/ 2>/dev/null || true
+          cp data/source_health_summary.json _site/data/ 2>/dev/null || true
+          cp -r data/exports                _site/data/ 2>/dev/null || true
+          cp -r data/api                    _site/data/ 2>/dev/null || true
+          # data/archive/ is deliberately NOT published: ~24 MB of daily
+          # snapshots that no page requests.
+          echo "Deploying $(du -sh _site | cut -f1):"
+          find _site -type f | sort | sed 's/^/  /'
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
 
       # A sustained outage used to open 24 identical issues a day. Only file one
       # if there isn't already an open pipeline-failure issue.
