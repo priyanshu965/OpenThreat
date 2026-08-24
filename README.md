@@ -145,6 +145,29 @@ Everything tunable lives in [`scripts/config.py`](scripts/config.py) and can be 
 | `AI_ENRICH_LIMIT` | `40` | Scored items enriched per run |
 | `SOURCE_STALE_DAYS` | `30` | Median age above which a feed is reported stale |
 
+## Situational awareness
+
+Beyond the feed, four views turn the raw items into a picture:
+
+- **Threat map.** Current attacker infrastructure by country of origin, from 8
+  keyless feeds (blocklist.de, dataplane.org, the Tor exit list) categorised by
+  observed behaviour: web attackers, intruders, scanners, DDoS amplifiers,
+  anonymizers. ~160k hosts are geolocated and aggregated server-side into a
+  ~28 KB country summary; the raw IPs never reach the browser. IP geolocation
+  is the DB-IP Country Lite corpus (CC BY 4.0), looked up locally.
+- **Landscape.** A "what is the situation now" overview: urgent/KEV/PoC counts,
+  threat-actor momentum (rising vs cooling over 30 days), ATT&CK technique
+  frequency, targeted-sector heat, and KEV velocity.
+- **Sectors.** Every item is tagged with a target sector (Defence, Maritime,
+  Aerospace, Aviation, Healthcare, Energy, Water, Financial, Government,
+  Telecom, Education, Manufacturing, Transport, Corporate) on a confidence
+  ladder: explicit when the source names it, inferred from whole-token keyword
+  rules otherwise, never guessed.
+- **Geopolitics.** Suspected actor origin crossed with target country and
+  sector. Attribution is version-controlled in `data/actor_origins.json`, every
+  origin cites its source, and nothing is asserted — "suspected" unless a
+  government has formally attributed the actor.
+
 ## Static JSON API
 
 Pre-rendered on every run and served with the dashboard. Paths are relative to the dashboard URL.
@@ -158,6 +181,7 @@ Pre-rendered on every run and served with the dashboard. Paths are relative to t
 | `data/api/brief.json` | Current brief |
 | `data/exports/stix.json` | STIX 2.1 bundle |
 | `data/exports/feed.xml` | RSS |
+| `data/api/attack_map.json` | Attacker infrastructure by country and category |
 
 ---
 

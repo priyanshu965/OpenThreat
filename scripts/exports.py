@@ -242,6 +242,13 @@ def _write_static_api(output: dict, api_dir: Path) -> None:
     if output.get("brief"):
         dump("brief.json", output["brief"])
 
+    if output.get("attack_map"):
+        # Written compact rather than indented: it is machine-consumed by the
+        # map, has ~180 country rows, and this keeps it under the size budget.
+        (api_dir / "attack_map.json").write_text(
+            json.dumps(output["attack_map"], ensure_ascii=False,
+                       separators=(",", ":")), encoding="utf-8")
+
     dump("health.json", {"generated": generated, "sources": output.get("source_health", {})})
 
 

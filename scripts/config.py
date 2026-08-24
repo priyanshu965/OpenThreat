@@ -97,6 +97,17 @@ class Config:
     # than "ok" — a dead feed serving a 4-year-old archive is not healthy.
     source_stale_days      = _int("SOURCE_STALE_DAYS", 30)
 
+    # ── Attacker map (geoip + infrastructure feeds) ────────────────────────
+    # DB-IP Country Lite is a monthly file, so a 30-day cache is the natural
+    # cadence; nothing fresher exists to fetch.
+    geoip_ttl_hours        = _int("GEOIP_TTL_HOURS", 24 * 30)
+    # Attacker feeds are large IP lists that change slowly through the day.
+    # 6h keeps them fresh without re-pulling ~7 MB every hour.
+    attacker_feed_ttl_hours = _int("ATTACKER_FEED_TTL_HOURS", 6)
+    enable_attacker_map    = _bool("ENABLE_ATTACKER_MAP", True)
+    # Cap per-feed rows parsed, as a guard against a feed ballooning. 0 = no cap.
+    attacker_feed_max_rows = _int("ATTACKER_FEED_MAX_ROWS", 0)
+
     # ── AI models ──────────────────────────────────────────────────────────
     # Gemini 3.x Flash-Lite is on the free tier and materially better at
     # instruction-following than the 2.5 line this project shipped with.

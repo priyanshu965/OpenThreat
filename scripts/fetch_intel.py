@@ -57,6 +57,24 @@ except ImportError:
     _cspec.loader.exec_module(_cmod)
     CONFIG = _cmod.CONFIG
 
+# Attacker-map modules. Optional: the core feed pipeline stays importable and
+# runnable even if these are missing or their extra deps are unavailable.
+try:
+    from geoip import GeoIP
+    from attacker_feeds import collect_attacker_infrastructure
+except Exception:
+    GeoIP = None
+    collect_attacker_infrastructure = None
+try:
+    from sectors import annotate_sectors, SECTOR_LABELS
+except Exception:
+    annotate_sectors = None
+    SECTOR_LABELS = {}
+try:
+    from geopolitics import build_geopolitics
+except Exception:
+    build_geopolitics = None
+
 # ── MITRE ATT&CK full database ────────────────────────────────────────────────
 try:
     from mitre_ttps import MITRE_TECHNIQUES, TACTIC_ORDER, map_ttps
@@ -1527,6 +1545,7 @@ def fetch_ransomware_live() -> list[dict]:
                 "cvss_score": None, "published": parse_date(when),
                 "iocs": {},
                 "threat_actors_hint": [group] if group else [],
+                "sector_hint": activity if activity and activity != "Not Found" else None,
             })
     except Exception as e:
         log.warning(f"Ransomware.live failed: {e}")
@@ -2459,6 +2478,21 @@ def main():
             pass
     log.info(f"API phase complete — {len(all_items)} items so far")
 
+    # ── Attacker map (independent of items; aggregated server-side) ─────────
+    # Fetches the attacker-infrastructure feeds, geolocates every IP against the
+    # DB-IP corpus, and collapses ~160k addresses into a per-country/category
+    # summary. The IPs never leave this process — only the counts do.
+    attack_map = None
+    if collect_attacker_infrastructure and CONFIG.enable_attacker_map:
+        try:
+            geo = GeoIP.load() if GeoIP else None
+            attack_map = collect_attacker_infrastructure(geo)
+            if attack_map:
+                log.info(f"✓ Attacker map: {attack_map['distinct_ips']} IPs across "
+                         f"{len(attack_map['countries'])} countries")
+        except Exception as e:
+            log.error(f"Attacker map generation failed: {e}")
+
     # ── Roll up source health ───────────────────────────────────────────────
     # Replaces the append-only source_health_history.jsonl, which had grown to
     # 1.8 MB, was committed on every one of 24 daily runs, and was fetched in
@@ -2620,6 +2654,26 @@ def main():
     new_count = mark_new_since_last(all_items)
     log.info(f"  Flagged {new_count} items as new since last run")
 
+    # ── Sector segregation (confidence-laddered; see sectors.py) ────────────
+    sector_breakdown = {}
+    if annotate_sectors:
+        try:
+            sector_breakdown = annotate_sectors(all_items)
+            log.info(f"  Tagged sectors on {sum(sector_breakdown.values())} items "
+                     f"across {len(sector_breakdown)} sectors")
+        except Exception as e:
+            log.warning(f"Sector tagging failed: {e}")
+
+    # ── Geopolitics (suspected actor origin × target; see geopolitics.py) ───
+    geopolitics = None
+    if build_geopolitics:
+        try:
+            geopolitics = build_geopolitics(all_items)
+            log.info(f"  Geopolitics: {len(geopolitics['suspected_origins'])} origins, "
+                     f"{len(geopolitics['attributions'])} attributed actors")
+        except Exception as e:
+            log.warning(f"Geopolitics build failed: {e}")
+
     # ── AI Enrichment ──────────────────────────────────────────────────────
     try:
         all_items = enrich_with_ai(all_items)
@@ -2661,6 +2715,10 @@ def main():
         "brief": daily_brief,
         "source_breakdown": dict(source_counter.most_common()),
         "source_health": source_health,
+        "attack_map": attack_map,
+        "sector_breakdown": sector_breakdown,
+        "sector_labels": SECTOR_LABELS,
+        "geopolitics": geopolitics,
         "items": all_items,
     }
 

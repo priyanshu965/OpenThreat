@@ -1143,3 +1143,144 @@ kbd {
 .badge.prio-elevated { background: var(--high-bg);     color: var(--high);     border-color: var(--high); }
 .badge.prio-moderate { background: var(--medium-bg);   color: var(--medium);   border-color: var(--medium); }
 .badge.prio-low      { background: var(--low-bg);      color: var(--low);      border-color: var(--low); }
+
+/* ─── Attacker map (Phase 02) ────────────────────────────────────────────── */
+.map-view { padding: 4px 0 24px; }
+.map-head { margin-bottom: 16px; }
+.map-title {
+  font-size: 18px; color: var(--text-primary); margin: 0 0 4px;
+  letter-spacing: 0.02em;
+}
+.map-sub { font-size: 12px; color: var(--text-secondary); margin: 0; max-width: 70ch; }
+
+.map-toggles { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 18px; }
+.map-toggle {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px; font-size: 11px; letter-spacing: 0.04em;
+  background: var(--bg-card); color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.map-toggle:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.map-toggle.active { color: var(--text-primary); border-color: var(--accent-cyan); }
+.map-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.map-toggle-label { white-space: nowrap; }
+
+.map-grid { display: grid; grid-template-columns: 1.55fr 1fr; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .map-grid { grid-template-columns: 1fr; } }
+
+.map-canvas {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 4px; padding: 8px; overflow: hidden;
+}
+.symbol-map { width: 100%; height: auto; display: block; }
+.map-grid-line { stroke: var(--border); stroke-width: 0.5; opacity: 0.5; }
+.map-bubble {
+  fill-opacity: 0.55; stroke: var(--bg-base); stroke-width: 0.75;
+  transition: fill-opacity 0.15s;
+}
+.map-bubble:hover { fill-opacity: 0.85; cursor: pointer; }
+
+.map-table-wrap { overflow-x: auto; }
+.map-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.map-table-caption {
+  text-align: left; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-secondary); padding-bottom: 8px; caption-side: top;
+}
+.map-row td { padding: 4px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.map-rank { color: var(--text-muted); font-variant-numeric: tabular-nums; width: 1%; }
+.map-cc {
+  font-family: var(--font-mono, monospace); color: var(--text-code);
+  font-size: 11px; width: 1%;
+}
+.map-name { color: var(--text-primary); white-space: nowrap; }
+.map-bar-cell { width: 45%; }
+.map-bar { height: 8px; border-radius: 2px; min-width: 2px; opacity: 0.8; }
+.map-val {
+  text-align: right; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums; width: 1%; white-space: nowrap;
+}
+
+.map-prov { margin-top: 18px; font-size: 11px; color: var(--text-secondary); }
+.map-prov-summary { cursor: pointer; letter-spacing: 0.04em; }
+.map-prov-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 3px 18px; margin: 10px 0 6px;
+}
+.map-prov-row { display: flex; justify-content: space-between; gap: 10px; }
+.map-prov-feed { color: var(--text-primary); font-family: var(--font-mono, monospace); }
+.map-prov-rows { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.map-attribution { color: var(--text-muted); margin: 8px 0 0; font-style: italic; }
+
+/* ─── Sector list (Phase 03) ─────────────────────────────────────────────── */
+.sector-list { display: flex; flex-direction: column; gap: 2px; }
+.sector-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 5px 8px; background: transparent; border: 1px solid transparent;
+  border-radius: 3px; cursor: pointer; text-align: left; width: 100%;
+  color: var(--text-secondary); font-size: 12px;
+}
+.sector-row:hover { background: var(--bg-card); color: var(--text-primary); }
+.sector-row.active { border-color: var(--accent-cyan); color: var(--text-primary); }
+.sector-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sector-meta { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.sector-explicit { color: var(--accent-cyan); font-size: 8px; line-height: 1; }
+.sector-count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.sector-empty { color: var(--text-muted); font-size: 11px; padding: 4px 8px; margin: 0; }
+
+/* ─── Threat landscape (Phase 04) ────────────────────────────────────────── */
+.landscape-view { padding: 4px 0 24px; }
+.ls-title { font-size: 18px; color: var(--text-primary); margin: 0 0 4px; letter-spacing: 0.02em; }
+.ls-sub { font-size: 12px; color: var(--text-secondary); margin: 0 0 18px; }
+.ls-tiles {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px; margin-bottom: 22px;
+}
+.ls-tile {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 4px; padding: 14px 16px;
+}
+.ls-tile-val {
+  font-size: 26px; color: var(--text-primary); font-weight: 600;
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.ls-tile-label {
+  font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-secondary); margin-top: 4px;
+}
+.ls-tile-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.ls-rising  { color: #e0653f; }
+.ls-cooling { color: #3fae8c; }
+.ls-steady  { color: var(--text-muted); }
+.ls-spark { width: 100%; height: auto; display: block; }
+.ls-kev-bar { fill: var(--accent-orange); opacity: 0.75; }
+
+/* ─── Geopolitical view (Phase 05) ───────────────────────────────────────── */
+.geopol-view { padding: 4px 0 24px; }
+.geo-origins {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px; margin: 16px 0;
+}
+.geo-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; padding: 14px 16px; }
+.geo-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.geo-cc { font-family: var(--font-mono, monospace); color: var(--text-code); font-size: 13px; }
+.geo-country { color: var(--text-primary); font-weight: 600; }
+.geo-count { color: var(--text-muted); font-size: 11px; margin-left: auto; font-variant-numeric: tabular-nums; }
+.geo-pill {
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 2px; border: 1px solid currentColor;
+}
+.geo-suspected  { color: var(--accent-orange); }
+.geo-attributed { color: #d6454f; }
+.geo-actors { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+.geo-line { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
+.geo-src { margin-top: 8px; font-size: 11px; }
+.geo-src-sum { cursor: pointer; color: var(--text-muted); }
+.geo-src-row { color: var(--text-secondary); padding: 3px 0 0 10px; }
+.geo-ledger { margin-top: 18px; font-size: 12px; }
+.geo-ledger-sum { cursor: pointer; color: var(--text-secondary); letter-spacing: 0.04em; }
+.geo-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.geo-trow td { padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.geo-td-actor { color: var(--text-primary); font-weight: 500; white-space: nowrap; }
+.geo-td-cc { font-family: var(--font-mono, monospace); color: var(--text-code); font-size: 11px; white-space: nowrap; }
+.geo-td-src { color: var(--text-muted); font-size: 11px; }

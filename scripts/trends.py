@@ -54,16 +54,26 @@ def build_trends(archive_dir, trends_path, window_days: int = 30) -> dict:
     actor_days = defaultdict(int)       # actor -> # of days it appeared
     ttp_days = defaultdict(lambda: {"name": "", "count": 0})
     source_days = defaultdict(int)
+    sector_days = defaultdict(int)      # sector -> # of item-days observed
     cve_stats = {}                      # cve -> {days_seen, max_priority, kev, last_seen, title}
+    # Actor momentum: split the window in half and compare, so "rising" vs
+    # "cooling" is a real week-over-week signal rather than a raw total.
+    midpoint = len(snapshots) // 2
+    actor_recent = defaultdict(int)
+    actor_prior = defaultdict(int)
+    kev_daily = []
 
-    for date_str, data in snapshots:
+    for idx, (date_str, data) in enumerate(snapshots):
         items = data.get("items", [])
         row = {"date": date_str, "total": len(items),
                "critical": 0, "high": 0, "medium": 0, "low": 0,
                "cve": 0, "incident": 0, "advisory": 0, "news": 0}
         day_actors, day_ttps, day_sources, day_cves = set(), set(), set(), set()
+        day_kev = 0
 
         for item in items:
+            if item.get("sector"):
+                sector_days[item["sector"]] += 1
             sev = _severity(item)
             if sev in row:
                 row[sev] += 1
@@ -72,8 +82,15 @@ def build_trends(archive_dir, trends_path, window_days: int = 30) -> dict:
             if cat in row:
                 row[cat] += 1
 
+            if item.get("cisa_kev"):
+                day_kev += 1
+
             for actor in item.get("threat_actors", []) or []:
                 day_actors.add(actor)
+                if idx >= midpoint:
+                    actor_recent[actor] += 1
+                else:
+                    actor_prior[actor] += 1
             for ttp in item.get("ttps", []) or []:
                 tid = ttp.get("id")
                 if tid:
@@ -108,10 +125,21 @@ def build_trends(archive_dir, trends_path, window_days: int = 30) -> dict:
         for c in day_cves:
             cve_stats[c]["days_seen"] += 1
 
+        kev_daily.append({"date": date_str, "kev": day_kev})
         daily.append(row)
 
+    def _momentum(actor: str) -> str:
+        r, p = actor_recent.get(actor, 0), actor_prior.get(actor, 0)
+        if r > p:
+            return "rising"
+        if r < p:
+            return "cooling"
+        return "steady"
+
     top_actors = sorted(
-        ({"name": a, "count": c} for a, c in actor_days.items()),
+        ({"name": a, "count": c, "recent": actor_recent.get(a, 0),
+          "prior": actor_prior.get(a, 0), "momentum": _momentum(a)}
+         for a, c in actor_days.items()),
         key=lambda x: x["count"], reverse=True,
     )[:10]
 
@@ -141,6 +169,8 @@ def build_trends(archive_dir, trends_path, window_days: int = 30) -> dict:
         "top_actors": top_actors,
         "top_ttps": top_ttps,
         "top_sources": top_sources,
+        "sector_totals": dict(sorted(sector_days.items(), key=lambda kv: -kv[1])),
+        "kev_daily": kev_daily,
         "trending_cves": trending,
     }
 
