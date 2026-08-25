@@ -14,7 +14,7 @@
     GitHub Pages cannot send custom headers, so a Pages deployment has no framing
     protection — that is a platform limit, not something a meta tag can fix.
   -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://services.nvd.nist.gov; worker-src 'self'; base-uri 'self'; form-action 'none'; object-src 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://services.nvd.nist.gov; worker-src 'self'; base-uri 'self'; form-action 'none'; object-src 'none'" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <meta name="theme-color" content="#0d1117" />
   <meta name="description" content="Self-updating cybersecurity threat intelligence dashboard — CVEs, advisories, incidents and IOCs, prioritised by CVSS, EPSS, CISA KEV and SSVC." />
@@ -26,11 +26,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="style.css?v=3.0.0" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
-  <!-- Mermaid is NOT loaded here. It is 3.3 MB and was a render-blocking
-       script, so every visitor downloaded and parsed it before first paint for
-       a diagram most never open. app.js fetches it on demand (with an SRI
-       hash) the first time a card's attack flow is expanded. -->
-  <script src="app.js?v=3.1.0" defer></script>
+  <script src="app.js?v=3.2.0" defer></script>
 </head>
 <body>
 
@@ -155,6 +151,11 @@
       <div class="sidebar-card">
         <div class="sidebar-title">TARGET SECTOR <span class="sidebar-hint">click to filter</span></div>
         <div class="sector-list" id="sector-list"></div>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-title">PROVENANCE <span class="sidebar-hint">who wrote it</span></div>
+        <div class="provenance-list" id="provenance-list"></div>
       </div>
 
       <div class="sidebar-card">

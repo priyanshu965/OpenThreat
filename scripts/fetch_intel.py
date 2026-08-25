@@ -74,6 +74,12 @@ try:
     from geopolitics import build_geopolitics
 except Exception:
     build_geopolitics = None
+try:
+    from provenance import (annotate_provenance, PROVENANCE_LABELS,
+                            PROVENANCE_NOTES, PROVENANCE_ORDER)
+except Exception:
+    annotate_provenance = None
+    PROVENANCE_LABELS, PROVENANCE_NOTES, PROVENANCE_ORDER = {}, {}, []
 
 # ── MITRE ATT&CK full database ────────────────────────────────────────────────
 try:
@@ -161,15 +167,6 @@ _ADAPTER = HTTPAdapter(
 _SESSION.mount("https://", _ADAPTER)
 _SESSION.mount("http://", _ADAPTER)
 
-DEFAULT_WORKFLOW_GRAPH = (
-    "graph LR\n"
-    "    A([Threat Actor]):::actor -->|Recon| B[Initial Access]:::tactic\n"
-    "    B -->|Exploit| C[Execution]:::tactic\n"
-    "    C -->|Persist| D[Impact]:::tactic\n"
-    "    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8\n"
-    "    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8"
-)
-
 # ── RSS Feed Sources (15 total) ───────────────────────────────────────────────
 RSS_SOURCES = [
     {"name": "CISA",             "url": "https://www.cisa.gov/cybersecurity-advisories/all.xml", "category": "advisory", "severity": "high"},
@@ -184,6 +181,17 @@ RSS_SOURCES = [
     {"name": "Unit 42",          "url": "https://feeds.feedburner.com/Unit42",                    "category": "news",     "severity": "high"},
     {"name": "Graham Cluley",    "url": "https://grahamcluley.com/feed/",                         "category": "news",     "severity": "medium"},
     {"name": "ESET WeLiveSecurity","url": "https://welivesecurity.com/feed/",                     "category": "news",     "severity": "medium"},
+    # ── Vendor threat-research blogs ────────────────────────────────────────
+    # Added because the geopolitical view is only as good as actor detection,
+    # and these are the sources that actually NAME groups (APT41, Volt Typhoon,
+    # Sandworm) rather than describing incidents generically. All are free,
+    # keyless, public RSS; verified live before adding.
+    {"name": "Securelist",       "url": "https://securelist.com/feed/",                          "category": "news",     "severity": "medium"},
+    {"name": "Check Point Research", "url": "https://research.checkpoint.com/feed/",             "category": "news",     "severity": "medium"},
+    {"name": "Microsoft Security",   "url": "https://www.microsoft.com/en-us/security/blog/feed/", "category": "news",   "severity": "medium"},
+    {"name": "SentinelOne",      "url": "https://www.sentinelone.com/blog/feed/",                "category": "news",     "severity": "medium"},
+    {"name": "Malwarebytes",     "url": "https://www.malwarebytes.com/blog/feed/index.xml",      "category": "news",     "severity": "medium"},
+    {"name": "Recorded Future",  "url": "https://www.recordedfuture.com/feed",                   "category": "news",     "severity": "medium"},
     {"name": "CyberSecurity News","url": "https://cybersecuritynews.com/feed/",                   "category": "news",     "severity": "medium"},
     # GBHackers removed — feed returns 403 from all automated clients
 ]
@@ -199,7 +207,9 @@ def parse_date(date_str) -> str:
     try:
         if hasattr(date_str, 'tm_year'):
             return datetime(*date_str[:6], tzinfo=timezone.utc).isoformat()
-        for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d"):
+        for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z",
+                    "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%d %H:%M:%S UTC", "%Y-%m-%d"):
             try:
                 return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc).isoformat()
             except ValueError:
@@ -247,35 +257,6 @@ def make_request_text(url: str, headers: dict = None) -> str | None:
     except Exception as e:
         log.warning(f"Text request failed {url}: {e}")
         return None
-
-# ── Attack-flow graph templates ───────────────────────────────────────────────
-# Shipped ONCE in the output document and referenced by `graph_template`.
-# Previously each of 251 items carried a full copy of one of these four
-# strings: 62 KB of payload, 60 KB of it byte-identical duplication.
-_RULE_GRAPHS = {
-    "default": DEFAULT_WORKFLOW_GRAPH,
-    "cve": (
-        "graph LR\n"
-        "    A([Threat Actor]):::actor -->|CVE-Exploit| B[Initial Access]:::tactic\n"
-        "    B -->|Execution| C[Impact]:::tactic\n"
-        "    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8\n"
-        "    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8"
-    ),
-    "incident": (
-        "graph LR\n"
-        "    A([Threat Actor]):::actor -->|Attack| B[Intrusion]:::tactic\n"
-        "    B -->|Breach| C[Impact]:::tactic\n"
-        "    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8\n"
-        "    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8"
-    ),
-    "advisory": (
-        "graph LR\n"
-        "    A([Vendor]):::actor -->|Advisory| B[Patch]:::tactic\n"
-        "    B -->|Mitigation| C[Remediation]:::tactic\n"
-        "    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8\n"
-        "    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8"
-    ),
-}
 
 # ── AI Enrichment ─────────────────────────────────────────────────────────────
 # Design notes (this replaced a per-item, sequential, free-text-JSON design):
@@ -463,9 +444,6 @@ def rule_based_enrich(item: dict) -> None:
     text = f"{item.get('title', '')} {item.get('description', '')}"
     item["severity"]    = infer_severity(text, item.get("severity") or "medium")
     item["category"]    = infer_category(text, item.get("category") or "news")
-    # Graph is referenced by template id; the templates ship once per document
-    # rather than being duplicated onto all 251 items (was 60 KB of dupes).
-    item["graph_template"] = item["category"] if item["category"] in _RULE_GRAPHS else "default"
     item["ai_provider"] = "rule"
 
 
@@ -1149,6 +1127,43 @@ def _threatfox_ioc(ioc: str, ioc_type: str) -> dict[str, list[str]]:
         return extract_iocs(ioc, source="ThreatFox")
     value = ioc.rsplit(":", 1)[0] if kind == "ipv4" and ioc.count(":") == 1 else ioc
     return {kind: [value.lower() if kind in ("domain", "email") else value]}
+
+
+def fetch_sslbl() -> list[dict]:
+    """abuse.ch SSL Certificate Blacklist: SHA1 fingerprints of certs seen on
+    malware C2 infrastructure. Listed in awesome-threat-intelligence; free, no
+    key. The listing reason names the malware family, which is what makes these
+    worth carrying alongside the IOC itself."""
+    log.info("Fetching abuse.ch SSL Blacklist...")
+    items = []
+    try:
+        resp = _SESSION.get("https://sslbl.abuse.ch/blacklist/sslblacklist.csv",
+                            timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        rows = [ln for ln in resp.text.splitlines()
+                if ln and not ln.startswith("#")]
+        # The file is newest-first, so the head is the most recent listings.
+        for line in rows[:MAX_ITEMS_PER_SOURCE]:
+            parts = line.split(",")
+            if len(parts) < 3:
+                continue
+            listed, sha1, reason = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            if len(sha1) != 40:
+                continue
+            items.append({
+                "title": f"SSLBL: {reason} certificate",
+                "description": (f"abuse.ch listed an SSL certificate used by "
+                                f"{reason} infrastructure. SHA1: {sha1}"),
+                "url": f"https://sslbl.abuse.ch/ssl-certificates/sha1/{sha1}/",
+                "cve_id": None, "source": "SSL Blacklist",
+                "category": "incident", "severity": "high",
+                "cvss_score": None, "published": parse_date(listed),
+                "iocs": {"sha1": [sha1]},
+            })
+    except Exception as e:
+        log.warning(f"SSL Blacklist failed: {e}")
+    log.info(f"  Got {len(items)} certificates from SSL Blacklist")
+    return items
 
 
 def fetch_threatfox() -> list[dict]:
@@ -1870,6 +1885,60 @@ THREAT_ACTORS = {
     "FunkSec": ["funksec"],
     "MirrorFace": ["mirrorface"],
     "Salt Typhoon": ["salt typhoon"],
+    # ── Expanded set ────────────────────────────────────────────────────────
+    # The geopolitical view is only as good as actor detection: with ~22 groups
+    # a typical run surfaced a single attributed origin. These are the groups
+    # that actually recur in the feeds this pipeline reads.
+    "Volt Typhoon": ["volt typhoon", "vanguard panda", "bronze silhouette"],
+    "Flax Typhoon": ["flax typhoon", "ethereal panda"],
+    "Silk Typhoon": ["silk typhoon", "hafnium"],
+    "Midnight Blizzard": ["midnight blizzard"],
+    "Star Blizzard": ["star blizzard", "callisto", "seaborgium"],
+    "Secret Blizzard": ["secret blizzard", "turla", "venomous bear", "snake malware"],
+    "Forest Blizzard": ["forest blizzard"],
+    "Kimsuky": ["kimsuky", "velvet chollima", "black banshee", "thallium"],
+    "Andariel": ["andariel", "onyx sleet", "silent chollima"],
+    "BlueNoroff": ["bluenoroff", "sapphire sleet", "stardust chollima"],
+    "Charming Kitten": ["charming kitten", "apt35", "phosphorus", "mint sandstorm"],
+    "MuddyWater": ["muddywater", "mango sandstorm", "static kitten"],
+    "Scattered Spider": ["scattered spider", "octo tempest", "unc3944", "muddled libra"],
+    "APT10": ["apt10", "stone panda", "menupass", "cicada"],
+    "APT27": ["apt27", "emissary panda", "lucky mouse", "bronze union"],
+    "APT37": ["apt37", "reaper", "scarcruft", "ricochet chollima"],
+    "APT38": ["apt38", "bluenoroff group"],
+    "APT39": ["apt39", "chafer", "remix kitten"],
+    "APT40": ["apt40", "leviathan", "kryptonite panda", "gingham typhoon"],
+    "APT43": ["apt43", "kimsuky group", "thallium group"],
+    "Mustang Panda": ["mustang panda", "twill typhoon", "bronze president"],
+    "Gamaredon": ["gamaredon", "primitive bear", "armageddon", "shuckworm"],
+    "TA505": ["ta505", "graceful spider", "evil corp"],
+    "Wizard Spider": ["ryuk"],
+    "Black Basta": ["black basta"],
+    "Play": ["play ransomware", "playcrypt"],
+    "Akira": ["akira ransomware"],
+    "Rhysida": ["rhysida"],
+    "Medusa": ["medusa ransomware", "medusalocker"],
+    "BianLian": ["bianlian"],
+    "Royal": ["royal ransomware"],
+    "Hive": ["hive ransomware"],
+    "Vice Society": ["vice society"],
+    "Qilin": ["qilin", "agenda ransomware"],
+    "INC Ransom": ["inc ransom", "inc ransomware"],
+    "Cl0p": ["cl0p ransomware"],
+    "8Base": ["8base"],
+    "Everest": ["everest ransomware"],
+    "SafePay": ["safepay"],
+    "RansomHub": ["ransomhub"],
+    "Lapsus$": ["lapsus", "lapsus$"],
+    "Anonymous Sudan": ["anonymous sudan"],
+    "Killnet": ["killnet"],
+    "NoName057": ["noname057", "noname057(16)"],
+    "Sidewinder": ["sidewinder", "rattlesnake"],
+    "Transparent Tribe": ["transparent tribe", "apt36", "mythic leopard"],
+    "Patchwork": ["patchwork", "dropping elephant"],
+    "Winnti Group": ["winnti group"],
+    "Storm-0558": ["storm-0558"],
+    "UNC5537": ["unc5537"],
 }
 
 # Pre-compile a word-boundary regex per alias so "apt" no longer matches
@@ -2373,6 +2442,7 @@ API_SOURCES = [
     ("PhishTank",      fetch_phishtank),
     ("MalwareBazaar",  fetch_malwarebazaar),
     ("ThreatFox",      fetch_threatfox),
+    ("SSL Blacklist",  fetch_sslbl),
     ("MSRC",           fetch_msrc),
     ("Fedora",         fetch_fedora),
     ("Gentoo",         fetch_gentoo),
@@ -2445,7 +2515,7 @@ def run_source(name: str, fetcher, health: dict) -> list[dict]:
 
 def main():
     log.info("═" * 60)
-    log.info("CYBERWATCH v3.0 — Starting intel pipeline")
+    log.info("CYBERWATCH v3.2 — Starting intel pipeline")
     log.info("═" * 60)
 
     all_items = []
@@ -2664,6 +2734,16 @@ def main():
         except Exception as e:
             log.warning(f"Sector tagging failed: {e}")
 
+    # ── Provenance: who authored each item (see provenance.py) ─────────────
+    provenance_breakdown = {}
+    if annotate_provenance:
+        try:
+            provenance_breakdown = annotate_provenance(all_items)
+            human = sum(1 for i in all_items if i.get("human_authored"))
+            log.info(f"  Provenance tagged: {human}/{len(all_items)} human-authored")
+        except Exception as e:
+            log.warning(f"Provenance tagging failed: {e}")
+
     # ── Geopolitics (suspected actor origin × target; see geopolitics.py) ───
     geopolitics = None
     if build_geopolitics:
@@ -2699,7 +2779,7 @@ def main():
     output = {
         "last_updated": now_utc(),
         "total_items": len(all_items),
-        "pipeline_version": "3.0.0",
+        "pipeline_version": "3.2.0",
         # Honest counts. The old `sources_fetched` included a stub that
         # returned [] by design, and `sources_ok` counted any source that
         # returned anything, however stale.
@@ -2711,7 +2791,6 @@ def main():
         "ai_provider_configured": bool(GROQ_API_KEY) or bool(GEMINI_API_KEY),
         "ai_enriched_count": ai_enriched,
         "new_since_last": new_count,
-        "graph_templates": _RULE_GRAPHS,
         "brief": daily_brief,
         "source_breakdown": dict(source_counter.most_common()),
         "source_health": source_health,
@@ -2719,6 +2798,10 @@ def main():
         "sector_breakdown": sector_breakdown,
         "sector_labels": SECTOR_LABELS,
         "geopolitics": geopolitics,
+        "provenance_breakdown": provenance_breakdown,
+        "provenance_labels": PROVENANCE_LABELS,
+        "provenance_notes": PROVENANCE_NOTES,
+        "provenance_order": PROVENANCE_ORDER,
         "items": all_items,
     }
 

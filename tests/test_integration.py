@@ -116,14 +116,20 @@ class TestIntelJsonSchema(unittest.TestCase):
             if h["status"] == "ok" and age is not None:
                 self.assertLessEqual(age, 400, f"{name} reports ok with median age {age}d")
 
-    def test_graph_templates_shipped_once(self):
-        """Attack-flow graphs are referenced by template id, not duplicated onto
-        every item (that was 60 KB of byte-identical payload)."""
-        self.assertIn("graph_templates", self.data)
-        inline = sum(1 for i in self.data["items"] if i.get("workflow_graph"))
-        ai_enriched = self.data.get("ai_enriched_count", 0)
-        self.assertLessEqual(inline, max(ai_enriched, 5),
-                             "workflow_graph should only be inline for AI-enriched items")
+    def test_no_attack_flow_graphs(self):
+        """The attack-flow diagram was removed: all four templates rendered the
+        same "Threat Actor -> Initial Access -> Impact" boilerplate on every
+        card, so the diagram carried no information while costing a 3.3 MB CDN
+        dependency and a CSP hole. This asserts it stays gone."""
+        # Archive snapshots produced before the removal legitimately still
+        # carry it, so only assert against output from 3.2.0 onwards.
+        version = str(self.data.get("pipeline_version", "0"))
+        if version < "3.2":
+            self.skipTest(f"snapshot predates the removal (v{version})")
+        self.assertNotIn("graph_templates", self.data)
+        for item in self.data["items"]:
+            self.assertNotIn("graph_template", item)
+            self.assertNotIn("workflow_graph", item)
 
     def test_no_redundant_rule_summaries(self):
         """Rule-based items must not carry an ai_summary that merely repeats

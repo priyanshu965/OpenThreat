@@ -117,7 +117,8 @@ def build_geopolitics(items: list[dict]) -> dict:
     origins = load_actor_origins()
 
     origin_activity = defaultdict(lambda: {"country": "", "confidence": "", "count": 0,
-                                           "actors": set(), "sources": set()})
+                                           "actors": set(), "sources": set(),
+                                           "motives": defaultdict(int)})
     origin_vs_sector = defaultdict(lambda: defaultdict(int))
     target_country_hits = defaultdict(int)
     origin_vs_target = defaultdict(lambda: defaultdict(int))
@@ -140,6 +141,11 @@ def build_geopolitics(items: list[dict]) -> dict:
             row["count"] += 1
             row["actors"].add(actor)
             row["sources"].add(info.get("source", ""))
+            # Motive matters for honesty: a criminal ransomware crew hosted in a
+            # country is NOT the same claim as state-sponsored activity, and
+            # collapsing the two would be the most misleading thing this view
+            # could do.
+            row["motives"][info.get("motive", "unknown")] += 1
 
             if sector:
                 origin_vs_sector[cc][sector] += 1
@@ -161,7 +167,8 @@ def build_geopolitics(items: list[dict]) -> dict:
             info = origins[actor]
             attributions.append({
                 "actor": actor, "cc": info["cc"], "country": info["country"],
-                "confidence": info["confidence"], "source": info.get("source", ""),
+                "confidence": info["confidence"], "motive": info.get("motive", "unknown"),
+                "source": info.get("source", ""),
             })
 
     origins_out = []
@@ -169,6 +176,7 @@ def build_geopolitics(items: list[dict]) -> dict:
         origins_out.append({
             "cc": cc, "country": row["country"], "confidence": row["confidence"],
             "count": row["count"], "actors": sorted(row["actors"]),
+            "by_motive": dict(row["motives"]),
             "by_sector": dict(origin_vs_sector.get(cc, {})),
             "by_target": dict(origin_vs_target.get(cc, {})),
             "sources": sorted(s for s in row["sources"] if s),

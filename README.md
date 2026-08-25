@@ -4,7 +4,7 @@
 
 **A self-updating threat intelligence pipeline and dashboard.**
 
-Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 35 configured sources every hour, scores each item against how likely it is to actually be exploited, and renders the result as a static dashboard.
+Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 42 configured sources every hour, scores each item against how likely it is to actually be exploited, and renders the result as a static dashboard.
 
 [![CI](https://github.com/priyanshu965/Cyberwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/priyanshu965/Cyberwatch/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -22,8 +22,8 @@ The whole system is one Python process that runs on a schedule, plus a static fr
 
 ```
                       ┌──────────────────────────────────────┐
-   13 RSS feeds  ────▶ │                                      │
-   22 JSON APIs  ────▶ │   fetch_intel.main()                 │
+   19 RSS feeds  ────▶ │                                      │
+   23 JSON APIs  ────▶ │   fetch_intel.main()                 │
                       │   ThreadPoolExecutor(max_workers=8)  │
                       └──────────────────┬───────────────────┘
                                          │  raw items
@@ -59,7 +59,7 @@ The whole system is one Python process that runs on a schedule, plus a static fr
 
 Sources are declared as data, not code. Feeds live in `RSS_SOURCES` and per-source fetchers are registered in `API_SOURCES`, and both are fanned out across a thread pool. Every fetcher is wrapped in `run_source()`, which catches anything it throws and records a health entry instead of letting one bad feed abort the run. A source that returns nothing, errors, or serves stale content is reported in `source_health` and the pipeline continues.
 
-Around 28 of the 35 typically return data on a given run; the remainder need an optional API key or are degraded that hour, and the run reports which.
+Most return data on a given run; the remainder need an optional API key or are degraded that hour, and the run reports which.
 
 Health is freshness aware rather than count aware. A feed that reliably returns ten items whose median age is four years is reported `stale`, not `ok`, which is how a long dead source gets caught instead of quietly padding the feed.
 
@@ -164,9 +164,16 @@ Beyond the feed, four views turn the raw items into a picture:
   ladder: explicit when the source names it, inferred from whole-token keyword
   rules otherwise, never guessed.
 - **Geopolitics.** Suspected actor origin crossed with target country and
-  sector. Attribution is version-controlled in `data/actor_origins.json`, every
-  origin cites its source, and nothing is asserted — "suspected" unless a
-  government has formally attributed the actor.
+  sector, over 72 tracked groups. Attribution is version-controlled in
+  `data/actor_origins.json`, every origin cites its source, and nothing is
+  asserted: "suspected" unless a government has formally attributed the actor.
+  Motive is shown separately, because a ransomware crew hosted in a country is
+  not the same claim as state-sponsored espionage.
+- **Provenance.** Every item is tagged with who produced it: vendor research,
+  independent researcher, journalism, government, vendor advisory,
+  adversary-authored, or automated feed. Ransomware leak-site posts are the
+  attacker's own words and get their own stream. There is a human-authored
+  filter and a per-item analyst note, stored locally.
 
 ## Static JSON API
 
