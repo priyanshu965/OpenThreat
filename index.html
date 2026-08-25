@@ -52,22 +52,27 @@
       </div>
     </div>
     <div class="header-right">
-      <div class="stat-pill" id="stat-urgent">
+      <button type="button" class="stat-pill is-clickable" id="stat-urgent"
+              data-stat="urgent" title="Show only items actioned Patch now">
         <span class="stat-label">URGENT</span>
         <span class="stat-value" id="count-urgent">—</span>
-      </div>
-      <div class="stat-pill">
+      </button>
+      <button type="button" class="stat-pill is-clickable" data-stat="critical"
+              title="Filter to critical severity">
         <span class="stat-label">CRITICAL</span>
         <span class="stat-value" id="count-critical">—</span>
-      </div>
-      <div class="stat-pill">
+      </button>
+      <button type="button" class="stat-pill is-clickable" data-stat="high"
+              title="Filter to high severity">
         <span class="stat-label">HIGH</span>
         <span class="stat-value" id="count-high">—</span>
-      </div>
-      <div class="stat-pill">
+      </button>
+      <button type="button" class="stat-pill is-clickable" data-stat="total"
+              title="Clear all filters and show everything">
         <span class="stat-label">TOTAL</span>
         <span class="stat-value" id="count-total">—</span>
-      </div>
+      </button>
+      <button class="avatar-btn" id="about-open" title="About Priyanshu" aria-label="About the author"></button>
       <button class="icon-btn" id="palette-open" title="Command palette (Ctrl/Cmd-K)" aria-label="Open command palette">⌘K</button>
     </div>
   </header>
@@ -192,6 +197,7 @@
       <div id="cards-container" class="cards-container" style="display:none;" role="feed" aria-busy="true"></div>
 
       <div id="matrix-view" class="matrix-view" style="display:none;">
+        <div id="matrix-legend-host" class="matrix-legend-host"></div>
         <div class="matrix-legend">
           <span class="legend-item"><span class="legend-dot active-high"></span> High activity (3+)</span>
           <span class="legend-item"><span class="legend-dot active-med"></span> Seen in feed</span>
@@ -207,6 +213,8 @@
       <div id="landscape-view" class="landscape-view" style="display:none;"></div>
 
       <div id="geopol-view" class="geopol-view" style="display:none;"></div>
+
+      <div id="about-view" class="about-view" style="display:none;"></div>
 
       <div id="no-results" class="no-results" style="display:none;">
         <p>No results match your filters.</p>

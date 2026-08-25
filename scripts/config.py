@@ -105,6 +105,10 @@ class Config:
     # 6h keeps them fresh without re-pulling ~7 MB every hour.
     attacker_feed_ttl_hours = _int("ATTACKER_FEED_TTL_HOURS", 6)
     enable_attacker_map    = _bool("ENABLE_ATTACKER_MAP", True)
+    # Dark-web monitoring: ransomware leak-site activity, via the clearnet
+    # mirror of a Tor crawler (we cannot reach .onion from a CI runner).
+    enable_darkweb         = _bool("ENABLE_DARKWEB", True)
+    darkweb_ttl_hours      = _int("DARKWEB_TTL_HOURS", 3)
     # Cap per-feed rows parsed, as a guard against a feed ballooning. 0 = no cap.
     attacker_feed_max_rows = _int("ATTACKER_FEED_MAX_ROWS", 0)
 

@@ -75,6 +75,11 @@ try:
 except Exception:
     build_geopolitics = None
 try:
+    from darkweb import fetch_leak_site_posts, build_darkweb_summary
+except Exception:
+    fetch_leak_site_posts = None
+    build_darkweb_summary = None
+try:
     from provenance import (annotate_provenance, PROVENANCE_LABELS,
                             PROVENANCE_NOTES, PROVENANCE_ORDER)
 except Exception:
@@ -646,7 +651,7 @@ def build_daily_brief(items: list[dict]) -> dict | None:
             picks.append({
                 "title":  item.get("title"),
                 "url":    item.get("url"),
-                "cve_id": item.get("cve_id"),
+                "cve_id": valid_cve_id(item.get("cve_id")),
                 "key":    item_key(item),
                 "reason": str(entry.get("reason", ""))[:300],
             })
@@ -839,7 +844,7 @@ def fetch_nvd_cves() -> list[dict]:
                         products.add(f"{parts[3]}/{parts[4]}")
         items.append({
             "title": f"{cve_id}: {description[:80]}...", "description": description,
-            "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}", "cve_id": cve_id,
+            "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}", "cve_id": valid_cve_id(cve_id),
             "source": "NVD", "category": "cve", "severity": severity,
             "cvss_score": cvss_score, "published": parse_date(cve.get("published", "")),
             "affected_products": sorted(products)[:8],
@@ -1309,7 +1314,7 @@ def fetch_archlinux() -> list[dict]:
                     "title": f"Arch Linux: {title[:120]}",
                     "description": f"Type: {issue.get('issue_type','')} | Severity: {issue.get('severity','')} | Package: {issue.get('package','')}",
                     "url": f"https://security.archlinux.org/{issue.get('id','')}",
-                    "cve_id": cve_id, "source": "Arch Linux",
+                    "cve_id": valid_cve_id(cve_id), "source": "Arch Linux",
                     "category": "advisory", "severity": infer_severity(title, "medium"),
                     "cvss_score": None, "published": pub,
                 })
@@ -1378,7 +1383,7 @@ def fetch_vmware() -> list[dict]:
                 "title": f"VMware: {title[:150]}",
                 "description": desc,
                 "url": adv.get("url", adv.get("link", "https://support.broadcom.com/web/ecx/security-advisory?segment=VC")),
-                "cve_id": cve_id, "source": "VMware",
+                "cve_id": valid_cve_id(cve_id), "source": "VMware",
                 "category": "advisory", "severity": infer_severity(title, "high"),
                 "cvss_score": None, "published": pub,
             })
@@ -1446,7 +1451,7 @@ def fetch_ghsa() -> list[dict]:
                 "title": f"GHSA: {summary[:150]}",
                 "description": desc or summary,
                 "url": adv.get("html_url", ""),
-                "cve_id": adv.get("cve_id"),
+                "cve_id": valid_cve_id(adv.get("cve_id")),
                 "source": "GitHub Advisories", "category": "cve",
                 "severity": sev if sev in ("critical", "high", "medium", "low") else "medium",
                 "cvss_score": cvss,
@@ -1504,7 +1509,7 @@ def fetch_poc_github() -> list[dict]:
             "title": f"PoC released: {cve or name}",
             "description": desc or f"Public proof-of-concept exploit published on GitHub ({stars}★).",
             "url": poc.get("html_url", ""),
-            "cve_id": cve if cve.startswith("CVE-") else None,
+            "cve_id": valid_cve_id(cve),
             "source": "PoC-in-GitHub", "category": "cve", "severity": "high",
             "cvss_score": None,
             "published": parse_date((poc.get("created_at") or "").replace(" ", "T")),
@@ -1573,9 +1578,32 @@ def fetch_ransomware_live() -> list[dict]:
 
 _CACHE_DIR = CONFIG.data_dir / ".cache"
 
+# Cache filenames are partly built from values that arrive over the network
+# (e.g. f"ssvc_{cve_id}.json", where cve_id can come straight from a third-party
+# API response). A hostile or compromised upstream feed returning a cve_id of
+# "CVE-../../../../etc/passwd" would otherwise escape the cache directory and
+# turn _cached_fetch into an arbitrary-file read. We ingest 45 third-party
+# feeds, so "upstream returns something malicious" is squarely in scope.
+#
+# Sanitise at the chokepoint rather than at each call site: every caller is
+# covered, and a future one cannot forget.
+_SAFE_CACHE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_cache_name(name: str) -> str:
+    cleaned = _SAFE_CACHE_NAME.sub("_", str(name)).lstrip(".") or "cache"
+    return cleaned[:120]
+
+
 def _cache_path(name: str) -> Path:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return _CACHE_DIR / name
+    safe = _safe_cache_name(name)
+    path = (_CACHE_DIR / safe).resolve()
+    # Belt and braces: even after sanitising, refuse anything that resolves
+    # outside the cache directory.
+    if not str(path).startswith(str(_CACHE_DIR.resolve())):
+        raise ValueError(f"unsafe cache path for {name!r}")
+    return path
 
 def _cached_fetch(name: str, ttl_hours: int, fetcher) -> str | None:
     """Return cached content (decoded text) if fresh, else call ``fetcher()``
@@ -2137,6 +2165,23 @@ def extract_cve_id(text: str) -> str | None:
     match = re.search(r"CVE-\d{4}-\d{4,7}", text, re.IGNORECASE)
     return match.group(0).upper() if match else None
 
+
+_CVE_EXACT = re.compile(r"^CVE-\d{4}-\d{4,7}$", re.IGNORECASE)
+
+
+def valid_cve_id(value) -> str | None:
+    """Return the normalised CVE id only if it is EXACTLY well-formed.
+
+    Several fetchers take cve_id straight from an upstream API field. A
+    startswith("CVE-") check is not validation: "CVE-../../x" passes it, and
+    that value goes on to build a cache filename. Anything not matching the
+    full pattern is dropped rather than trusted.
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    return text.upper() if _CVE_EXACT.match(text) else None
+
 # ── IOC Extraction Engine ─────────────────────────────────────────────────────
 # Previously this ran over EVERY item's prose, so the STIX/CSV exports ended up
 # publishing gmail.com, redhat.com, cern.ch, `req.query`, `handlers.ts` and two
@@ -2457,6 +2502,9 @@ API_SOURCES = [
     ("Ransomware.live", fetch_ransomware_live),
 ]
 
+if fetch_leak_site_posts:
+    API_SOURCES.append(("RansomLook", fetch_leak_site_posts))
+
 def _median_age_days(items: list[dict]) -> float | None:
     """Median age of an item batch, in days. None when nothing parses."""
     now = datetime.now(timezone.utc)
@@ -2562,6 +2610,18 @@ def main():
                          f"{len(attack_map['countries'])} countries")
         except Exception as e:
             log.error(f"Attacker map generation failed: {e}")
+
+    # ── Dark-web leak-site rollup ──────────────────────────────────────────
+    darkweb = None
+    if build_darkweb_summary:
+        try:
+            darkweb = build_darkweb_summary()
+            if darkweb:
+                log.info(f"✓ Dark web: {darkweb['recent_posts']} recent posts across "
+                         f"{darkweb['distinct_groups_active']} groups, "
+                         f"{darkweb['tracked_leak_sites']} leak sites tracked")
+        except Exception as e:
+            log.warning(f"Dark-web summary failed: {e}")
 
     # ── Roll up source health ───────────────────────────────────────────────
     # Replaces the append-only source_health_history.jsonl, which had grown to
@@ -2795,8 +2855,12 @@ def main():
         "source_breakdown": dict(source_counter.most_common()),
         "source_health": source_health,
         "attack_map": attack_map,
+        "darkweb": darkweb,
         "sector_breakdown": sector_breakdown,
         "sector_labels": SECTOR_LABELS,
+        # Canonical ATT&CK kill-chain order, so the matrix can lay tactics out
+        # left-to-right as the framework intends instead of alphabetically.
+        "tactic_order": TACTIC_ORDER,
         "geopolitics": geopolitics,
         "provenance_breakdown": provenance_breakdown,
         "provenance_labels": PROVENANCE_LABELS,
