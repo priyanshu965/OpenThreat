@@ -111,3 +111,43 @@ class TestPostsToItems(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProvenanceIntegration(unittest.TestCase):
+    """Leak-site posts must land as adversary-authored, not automated-feed.
+
+    Regression: the provenance layer consulted only the source registry, so an
+    unregistered source fell through to the default and the fetcher's explicit
+    hint was discarded — which lost exactly the distinction that matters most
+    about a leak-site post.
+    """
+
+    def setUp(self):
+        import provenance
+        self.p = provenance
+
+    def test_hint_is_honoured(self):
+        item = {"source": "Nowhere", "provenance_hint": self.p.ADVERSARY}
+        self.assertEqual(self.p.classify_provenance(item), self.p.ADVERSARY)
+
+    def test_registry_used_when_no_hint(self):
+        self.assertEqual(
+            self.p.classify_provenance({"source": "RansomLook"}), self.p.ADVERSARY)
+
+    def test_bogus_hint_is_ignored(self):
+        """A fetcher must not be able to invent a provenance class."""
+        item = {"source": "RansomLook", "provenance_hint": "totally-legit"}
+        self.assertEqual(self.p.classify_provenance(item), self.p.ADVERSARY)
+
+    def test_leak_post_end_to_end(self):
+        orig = dw._fetch_json
+        dw._fetch_json = lambda name, url: [
+            {"post_title": "Acme", "group_name": "qilin",
+             "discovered": "2026-08-25 08:00:00.0"}]
+        try:
+            items = dw.fetch_leak_site_posts()
+            self.p.annotate_provenance(items)
+            self.assertEqual(items[0]["provenance"], self.p.ADVERSARY)
+            self.assertTrue(items[0]["human_authored"])
+        finally:
+            dw._fetch_json = orig

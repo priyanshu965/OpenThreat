@@ -121,6 +121,9 @@ _SOURCE_PROVENANCE = {
     "AlienVault OTX": AUTOMATED,
     "AbuseIPDB": AUTOMATED,
     "PhishTank": AUTOMATED,
+    # Leak-site posts are the crew's own marketing, republished. The adversary
+    # is speaking, so this is not an automated indicator feed.
+    "RansomLook": ADVERSARY,
 }
 
 # Which classes were written by a person. Used for the "human-authored" filter.
@@ -128,7 +131,21 @@ HUMAN_AUTHORED = {VENDOR_RESEARCH, INDEPENDENT, JOURNALISM, GOVERNMENT,
                   VENDOR_ADVISORY, ADVERSARY}
 
 
+# Allow-list, so a fetcher hint cannot introduce an arbitrary label.
+_VALID_PROVENANCE = set(HUMAN_AUTHORED) | {AUTOMATED}
+
+
 def classify_provenance(item: dict) -> str:
+    """Source registry first, but a fetcher may override with an explicit hint.
+
+    Some sources carry more than one kind of content, and the fetcher knows
+    which. RansomLook posts are the adversary's own words, which the registry
+    alone would flatten to "automated-feed" and lose the distinction that
+    matters most about them.
+    """
+    hint = item.get("provenance_hint")
+    if hint and hint in _VALID_PROVENANCE:
+        return hint
     return _SOURCE_PROVENANCE.get(item.get("source", ""), AUTOMATED)
 
 
