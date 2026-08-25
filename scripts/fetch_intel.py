@@ -76,12 +76,23 @@ except Exception:
     build_geopolitics = None
 try:
     from darkweb import (fetch_leak_site_posts, build_darkweb_summary,
-                         build_darkweb_index, check_watchlist)
+                         build_darkweb_index, check_watchlist,
+                         build_sector_benchmark)
 except Exception:
     fetch_leak_site_posts = None
     build_darkweb_summary = None
     build_darkweb_index = None
     check_watchlist = None
+    build_sector_benchmark = None
+try:
+    from exposure import build_exposure, build_breach_catalogue
+except Exception:
+    build_exposure = None
+    build_breach_catalogue = None
+try:
+    from attack_surface import build_attack_surface
+except Exception:
+    build_attack_surface = None
 try:
     from provenance import (annotate_provenance, PROVENANCE_LABELS,
                             PROVENANCE_NOTES, PROVENANCE_ORDER)
@@ -113,9 +124,10 @@ try:
 except Exception:
     write_exports = None
 try:
-    from webhook_post import send_alerts
+    from webhook_post import send_alerts, send_watch_alerts
 except Exception:
     send_alerts = None
+    send_watch_alerts = None
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 class _StructuredAdapter(logging.LoggerAdapter):
@@ -2628,6 +2640,7 @@ def main():
 
     darkweb_index = None
     darkweb_watch_hits = []
+    sector_benchmark = None
     if build_darkweb_index and CONFIG.enable_darkweb_index:
         try:
             darkweb_index = build_darkweb_index()
@@ -2638,8 +2651,38 @@ def main():
                     darkweb_watch_hits = check_watchlist(darkweb_index)
                     if darkweb_watch_hits:
                         log.warning(f"  {len(darkweb_watch_hits)} watchlist term(s) matched")
+                if build_sector_benchmark:
+                    sector_benchmark = build_sector_benchmark(darkweb_index)
+                    if sector_benchmark:
+                        log.info(f"  Sector benchmark: {sector_benchmark['current_total']} "
+                                 f"listings this window vs "
+                                 f"{sector_benchmark['previous_total']} previous")
         except Exception as e:
             log.warning(f"Dark-web index build failed: {e}")
+
+    # -- Your own estate: credential exposure and external attack surface ----
+    exposure = None
+    breach_catalogue = None
+    attack_surface = None
+    domains = CONFIG.domain_list
+    if build_exposure and domains:
+        try:
+            exposure = build_exposure(domains)
+        except Exception as e:
+            log.warning(f"Exposure check failed: {e}")
+    if build_breach_catalogue:
+        try:
+            breach_catalogue = build_breach_catalogue()
+            if breach_catalogue:
+                log.info(f"Breach catalogue: {breach_catalogue['total_breaches']} breaches, "
+                         f"{breach_catalogue['total_accounts']:,} accounts")
+        except Exception as e:
+            log.warning(f"Breach catalogue failed: {e}")
+    if build_attack_surface and domains:
+        try:
+            attack_surface = build_attack_surface(domains)
+        except Exception as e:
+            log.warning(f"Attack-surface discovery failed: {e}")
 
     # ── Roll up source health ───────────────────────────────────────────────
     # Replaces the append-only source_health_history.jsonl, which had grown to
@@ -2875,6 +2918,10 @@ def main():
         "attack_map": attack_map,
         "darkweb": darkweb,
         "darkweb_watch": darkweb_watch_hits,
+        "sector_benchmark": sector_benchmark,
+        "exposure": exposure,
+        "breach_catalogue": breach_catalogue,
+        "attack_surface": attack_surface,
         "sector_breakdown": sector_breakdown,
         "sector_labels": SECTOR_LABELS,
         # Canonical ATT&CK kill-chain order, so the matrix can lay tactics out
@@ -2950,6 +2997,10 @@ def main():
         try:
             sent = send_alerts(output, CONFIG)
             log.info(f"✓ Dispatched {sent} new alert(s)")
+            if send_watch_alerts:
+                watched = send_watch_alerts(output, CONFIG)
+                if watched:
+                    log.warning(f"✓ Dispatched {watched} dark-web watchlist alert(s)")
         except Exception as e:
             log.error(f"Alert dispatch failed: {e}")
 

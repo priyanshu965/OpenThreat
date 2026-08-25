@@ -315,3 +315,69 @@ def check_watchlist(index: dict) -> list[dict]:
             hits.append({"term": term, "count": len(matches), "matches": matches[:10]})
             log.warning(f"  DARK WEB WATCHLIST HIT: '{term}' — {len(matches)} listing(s)")
     return hits
+
+
+# ── Sector benchmarking ───────────────────────────────────────────────────────
+# The index already carries a sector on every listing, so quarter-over-quarter
+# movement per sector costs one pass and no new source. "Healthcare listings are
+# up 40%" is the question a defender in healthcare actually asks.
+
+def build_sector_benchmark(index: dict, window_days: int = 90) -> dict | None:
+    """Compare the most recent window against the one before it, per sector."""
+    if not index or not index.get("victims"):
+        return None
+    from datetime import datetime, timedelta, timezone
+
+    today = datetime.now(timezone.utc).date()
+    cur_from = today - timedelta(days=window_days)
+    prev_from = today - timedelta(days=window_days * 2)
+
+    current: Counter = Counter()
+    previous: Counter = Counter()
+    countries: Counter = Counter()
+
+    for row in index["victims"]:
+        d = row.get("d") or ""
+        if len(d) != 10:
+            continue
+        try:
+            day = datetime.strptime(d, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        sector = (row.get("s") or "").strip() or "Unspecified"
+        if day > cur_from:
+            current[sector] += 1
+            if row.get("c"):
+                countries[row["c"]] += 1
+        elif prev_from < day <= cur_from:
+            previous[sector] += 1
+
+    if not current:
+        return None
+
+    rows = []
+    for sector, now_n in current.most_common(14):
+        then = previous.get(sector, 0)
+        if then:
+            change = round(((now_n - then) / then) * 100)
+        else:
+            change = None                       # no baseline; do not invent one
+        rows.append({
+            "sector": sector, "current": now_n, "previous": then,
+            "change_pct": change,
+            "direction": ("up" if change is not None and change > 5 else
+                          "down" if change is not None and change < -5 else
+                          "flat" if change is not None else "new"),
+        })
+
+    return {
+        "generated": now_utc(),
+        "window_days": window_days,
+        "current_total": sum(current.values()),
+        "previous_total": sum(previous.values()),
+        "sectors": rows,
+        "top_countries": [{"cc": c, "count": n} for c, n in countries.most_common(10)],
+        "note": (f"Leak-site listings in the last {window_days} days against the "
+                 f"{window_days} before. Sectors with no prior listings show as "
+                 f"new rather than a percentage."),
+    }

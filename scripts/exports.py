@@ -208,6 +208,16 @@ def write_exports(output: dict, export_dir: Path, darkweb_index: dict = None) ->
     # The dark-web index is ~550 KB and only the Dark Web view needs it, so it
     # is published as its own file and lazily fetched rather than riding in
     # intel.json on every page load.
+    # Own-estate artefacts: only the relevant views need them.
+    for key, fname in (("sector_benchmark", "sector_benchmark.json"),
+                       ("exposure", "exposure.json"),
+                       ("breach_catalogue", "breaches.json"),
+                       ("attack_surface", "attack_surface.json")):
+        if output.get(key):
+            (api_dir / fname).write_text(
+                json.dumps(output[key], ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8")
+
     if darkweb_index:
         (api_dir / "darkweb_index.json").write_text(
             json.dumps(darkweb_index, ensure_ascii=False, separators=(",", ":")),

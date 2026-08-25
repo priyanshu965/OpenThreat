@@ -286,6 +286,108 @@ def send_alerts(output: dict, config) -> int:
     return 0
 
 
+# -- Dark-web watchlist alerts -------------------------------------------------
+# A standing watch is only monitoring if it can reach you between visits. These
+# reuse the same dedup state as item alerts, keyed on (term, victim, group), so
+# a listing that stays up does not re-page every hour - only genuinely new
+# matches do.
+
+def _watch_key(term: str, match: dict) -> str:
+    return ("dwwatch:" + str(term).strip().lower() + "|" +
+            str(match.get("v", "")).strip().lower() + "|" +
+            str(match.get("g", "")).strip().lower())
+
+
+def build_watch_payload(term: str, matches: list, webhook_type: str,
+                        dashboard_url: str = "") -> dict:
+    """Format a watchlist hit for the configured webhook."""
+    lines = []
+    for m in matches[:10]:
+        bits = [m.get("v") or "unknown victim"]
+        if m.get("g"):
+            bits.append("claimed by " + m["g"])
+        if m.get("d"):
+            bits.append(m["d"])
+        where = " / ".join(x for x in (m.get("c"), m.get("s")) if x)
+        row = "- " + " - ".join(bits)
+        if where:
+            row += " (" + where + ")"
+        lines.append(row)
+    body = "\n".join(lines)
+    n = len(matches)
+    plural = "s" if n != 1 else ""
+    headline = ("Dark-web watchlist hit: " + term + " - " + str(n) +
+                " leak-site listing" + plural)
+    caveat = ("A leak-site listing is the crew's own claim, not a confirmed "
+              "breach. Verify before acting.")
+
+    if webhook_type == "discord":
+        return {"embeds": [{
+            "title": "[dark web] " + headline,
+            "description": body + "\n\n_" + caveat + "_",
+            "color": 0xD6454F,
+            "footer": {"text": "CyberWatch dark-web watch"},
+        }]}
+    if webhook_type == "telegram":
+        return {"text": "*" + headline + "*\n" + body + "\n\n_" + caveat + "_",
+                "parse_mode": "Markdown"}
+    # Slack (and Slack-compatible) blocks.
+    return {"blocks": [
+        {"type": "header",
+         "text": {"type": "plain_text", "text": "Dark-web watchlist hit"}},
+        {"type": "section",
+         "text": {"type": "mrkdwn",
+                  "text": "*" + term + "* - " + str(n) + " leak-site listing" +
+                          plural + "\n" + body}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": caveat}]},
+    ]}
+
+
+def send_watch_alerts(output: dict, config) -> int:
+    """Page on NEW dark-web watchlist matches. Returns how many were sent."""
+    hits = output.get("darkweb_watch") or []
+    if not hits:
+        return 0
+
+    url = config.webhook_url
+    is_email = config.webhook_type == "email"
+    if not url and not is_email:
+        return 0
+
+    state_path = Path(config.alert_state_path)
+    state = _load_state(state_path)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    sent = 0
+
+    for hit in hits:
+        term = hit.get("term", "")
+        matches = hit.get("matches") or []
+        fresh = [m for m in matches if _watch_key(term, m) not in state]
+        if not fresh:
+            continue
+        if is_email:
+            rows = [str(m.get("v")) + " - claimed by " + str(m.get("g")) +
+                    " on " + str(m.get("d")) for m in fresh[:10]]
+            ok = _send_email_payload(config, {
+                "subject": "[CyberWatch] Dark-web watchlist hit: " + term,
+                "body": "\n".join(rows),
+            })
+        else:
+            payload = build_watch_payload(term, fresh, config.webhook_type,
+                                          getattr(config, "dashboard_url", ""))
+            ok = _post_with_retry(url, payload, config.alert_retry_count)
+        if ok:
+            for m in fresh:
+                state[_watch_key(term, m)] = now_iso
+            sent += len(fresh)
+            print("Dark-web watch alert sent for '" + term + "' (" +
+                  str(len(fresh)) + " new)")
+
+    if sent:
+        _save_state(state_path, state, config.alert_state_ttl_days)
+    return sent
+
+
 # ── Daily digest ──────────────────────────────────────────────────────────────
 # Merged in from the former scripts/daily_digest.py, which duplicated this
 # module's payload builders, retry loop and state handling in 241 lines, and

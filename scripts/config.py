@@ -120,6 +120,17 @@ class Config:
     # which is a lot to hand a phone even lazily. Newest-first, so the cap drops
     # the oldest listings - the least useful for exposure monitoring.
     darkweb_index_max      = _int("DARKWEB_INDEX_MAX", 9000)
+
+    # ── Your own exposure (CASM) ───────────────────────────────────────────
+    # Domains you own. Drives infostealer-exposure checks and Certificate
+    # Transparency subdomain discovery.
+    #   MY_DOMAINS="example.com,example.co.uk"
+    my_domains             = _str("MY_DOMAINS", "")
+    enable_exposure        = _bool("ENABLE_EXPOSURE", True)
+    exposure_ttl_hours     = _int("EXPOSURE_TTL_HOURS", 12)
+    enable_attack_surface  = _bool("ENABLE_ATTACK_SURFACE", True)
+    attack_surface_ttl_hours = _int("ATTACK_SURFACE_TTL_HOURS", 24)
+    attack_surface_max_hosts = _int("ATTACK_SURFACE_MAX_HOSTS", 300)
     # Cap per-feed rows parsed, as a guard against a feed ballooning. 0 = no cap.
     attacker_feed_max_rows = _int("ATTACKER_FEED_MAX_ROWS", 0)
 
@@ -174,6 +185,10 @@ class Config:
     priority_ssvc_total_bonus  = _float("PRIORITY_SSVC_TOTAL_BONUS", 5.0)
 
     http_user_agent = _str("HTTP_USER_AGENT", "CyberWatch/3.0 (+https://github.com/priyanshu965/Cyberwatch)")
+
+    @property
+    def domain_list(self) -> list:
+        return [d.strip() for d in self.my_domains.split(",") if d.strip()]
 
     @property
     def alert_severity_set(self) -> set:

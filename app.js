@@ -64,7 +64,7 @@ const store = {
   dismissed: new Set(), starred: new Set(), showDismissed: false,
   lastVisit: null, stamp: null,
   mapCat: null, sector: null, mapPaused: false,
-  darkwebIndex: null, darkwebQuery: '', darkwebWatch: [], provenance: null, humanOnly: false,
+  darkwebIndex: null, darkwebQuery: '', darkwebWatch: [], casm: {}, provenance: null, humanOnly: false,
   notes: {},
 };
 
@@ -2946,6 +2946,11 @@ async function showDarkwebView() {
     host.appendChild(sp);
   }
 
+  // ---- sector benchmark ----------------------------------------------------
+  const bench = await loadJsonOnce('benchmark', EXPOSURE_URLS.benchmark);
+  const bpanel = buildSectorBenchmark(bench);
+  if (bpanel) host.appendChild(bpanel);
+
   // ---- most active crews ---------------------------------------------------
   if (summary && (summary.most_active || []).length) {
     const ap = lsPanel('Most active crews', 'By listings in the recent window.');
@@ -3021,11 +3026,193 @@ function debounceDw(fn, ms) {
   return () => { clearTimeout(dwTimer); dwTimer = setTimeout(fn, ms); };
 }
 
+// --- Exposure view (your own estate) ----------------------------------------
+// The other half of CASM: not "who got hit" but "what of ours is already out
+// there". Infostealer credential exposure, external attack surface from
+// Certificate Transparency, and the public breach catalogue.
+
+const EXPOSURE_URLS = {
+  exposure: 'data/api/exposure.json',
+  surface: 'data/api/attack_surface.json',
+  breaches: 'data/api/breaches.json',
+  benchmark: 'data/api/sector_benchmark.json',
+};
+
+async function loadJsonOnce(key, url) {
+  if (store.casm[key] !== undefined) return store.casm[key];
+  try {
+    const resp = await fetch(url, { cache: 'no-cache' });
+    store.casm[key] = resp.ok ? await resp.json() : null;
+  } catch (_) {
+    store.casm[key] = null;
+  }
+  return store.casm[key];
+}
+
+async function showExposureView() {
+  hideAllViews();
+  const host = $('exposure-view');
+  if (!host) return;
+  host.style.display = 'block';
+  host.replaceChildren(el('p', 'chart-empty', 'Loading exposure…'));
+
+  const [exposure, surface, breaches] = await Promise.all([
+    loadJsonOnce('exposure', EXPOSURE_URLS.exposure),
+    loadJsonOnce('surface', EXPOSURE_URLS.surface),
+    loadJsonOnce('breaches', EXPOSURE_URLS.breaches),
+  ]);
+  host.replaceChildren();
+
+  host.appendChild(el('h2', 'ls-title', 'Exposure — your own estate'));
+  host.appendChild(el('p', 'ls-sub',
+    'What of yours is already circulating, and what of yours is reachable ' +
+    'from the internet. Set MY_DOMAINS in the pipeline to populate this.'));
+
+  if (!exposure && !surface) {
+    const empty = lsPanel('No domains configured',
+      'This view fills once MY_DOMAINS is set on the pipeline.');
+    const code = el('pre', 'ex-code',
+      'MY_DOMAINS="example.com,example.co.uk"\nDARKWEB_WATCH="Example Corp,example.com"');
+    empty.appendChild(code);
+    empty.appendChild(el('p', 'ls-foot',
+      'Set them as repository variables under Settings → Secrets and variables → Actions.'));
+    host.appendChild(empty);
+  }
+
+  // ---- infostealer credential exposure ------------------------------------
+  if (exposure && exposure.domains && exposure.domains.length) {
+    const t = exposure.totals || {};
+    const tiles = el('div', 'ls-tiles');
+    tiles.appendChild(statTile('Employee machines', (t.employees || 0).toLocaleString(),
+      'in infostealer logs'));
+    tiles.appendChild(statTile('User machines', (t.users || 0).toLocaleString(),
+      'customers / visitors'));
+    tiles.appendChild(statTile('Third parties', (t.third_parties || 0).toLocaleString(),
+      'supply chain'));
+    host.appendChild(tiles);
+
+    const panel = lsPanel('Credential exposure',
+      'Machines found in infostealer logs with credentials for these domains. ' +
+      'Employee machines matter most: those are corporate logins already in ' +
+      'criminal hands.');
+    exposure.domains.forEach((d) => {
+      const row = el('div', 'ex-row' + (d.employees ? ' is-bad' : ''));
+      const left = el('div', 'ex-row-left');
+      left.appendChild(el('span', 'ex-domain', d.domain));
+      const detail = [];
+      if (d.employees) detail.push(d.employees.toLocaleString() + ' employee');
+      if (d.users) detail.push(d.users.toLocaleString() + ' user');
+      if (d.third_parties) detail.push(d.third_parties.toLocaleString() + ' third-party');
+      left.appendChild(el('span', 'ex-detail',
+        detail.length ? detail.join(' · ') + ' machine(s)' : 'no exposure found'));
+      if (d.last_employee_compromised) {
+        left.appendChild(el('span', 'ex-date',
+          'Most recent employee compromise: ' + d.last_employee_compromised));
+      }
+      row.appendChild(left);
+      row.appendChild(el('span', 'ex-total', (d.total || 0).toLocaleString()));
+      panel.appendChild(row);
+    });
+    if (exposure.domains[0] && exposure.domains[0].note) {
+      panel.appendChild(el('p', 'ls-foot', exposure.domains[0].note));
+    }
+    host.appendChild(panel);
+  }
+
+  // ---- attack surface ------------------------------------------------------
+  if (surface && surface.domains && surface.domains.length) {
+    const panel = lsPanel('External attack surface',
+      'Hostnames seen in public Certificate Transparency logs. Names like ' +
+      'dev, staging, vpn or admin are surfaced first — those are usually the ' +
+      'shadow IT nobody told you about.');
+    surface.domains.forEach((d) => {
+      const head = el('div', 'ex-surface-head');
+      head.appendChild(el('span', 'ex-domain', d.domain));
+      head.appendChild(el('span', 'ex-detail',
+        d.hostnames.toLocaleString() + ' hostname' + (d.hostnames === 1 ? '' : 's')));
+      panel.appendChild(head);
+
+      if (d.noteworthy && d.noteworthy.length) {
+        const chips = el('div', 'ex-chips');
+        d.noteworthy.forEach((h) => chips.appendChild(el('span', 'ex-chip is-flag', h)));
+        panel.appendChild(chips);
+      }
+      if (d.sample && d.sample.length) {
+        const det = el('details', 'ex-hosts');
+        det.appendChild(el('summary', 'ex-hosts-sum',
+          'All discovered hostnames' + (d.truncated ? ' (first ' + d.sample.length + ')' : '')));
+        const chips = el('div', 'ex-chips');
+        d.sample.forEach((h) => chips.appendChild(el('span', 'ex-chip', h)));
+        det.appendChild(chips);
+        panel.appendChild(det);
+      }
+    });
+    if (surface.note) panel.appendChild(el('p', 'ls-foot', surface.note));
+    host.appendChild(panel);
+  }
+
+  // ---- public breach catalogue --------------------------------------------
+  if (breaches && breaches.recent) {
+    const panel = lsPanel('Public breach catalogue',
+      breaches.total_breaches.toLocaleString() + ' known breaches covering ' +
+      breaches.total_accounts.toLocaleString() + ' accounts. Most recently added first.');
+    const wrap = el('div', 'dw-table-wrap');
+    const table = el('table', 'dw-table');
+    const head = el('tr', 'dw-thead');
+    ['Breach', 'Occurred', 'Accounts', 'Data exposed'].forEach((h) =>
+      head.appendChild(el('th', '', h)));
+    table.appendChild(head);
+    breaches.recent.slice(0, 15).forEach((b) => {
+      const tr = el('tr', 'dw-trow');
+      tr.appendChild(el('td', 'dw-td-victim', b.name || b.domain || '—'));
+      tr.appendChild(el('td', 'dw-td-date', b.date || '—'));
+      tr.appendChild(el('td', 'dw-td-cc', (b.accounts || 0).toLocaleString()));
+      tr.appendChild(el('td', 'dw-td-sector', (b.classes || []).slice(0, 4).join(', ')));
+      table.appendChild(tr);
+    });
+    wrap.appendChild(table);
+    panel.appendChild(wrap);
+    panel.appendChild(el('p', 'ls-foot', 'Source: ' + breaches.source));
+    host.appendChild(panel);
+  }
+}
+
+// --- Sector benchmarking (rendered on the Dark Web view) --------------------
+function buildSectorBenchmark(bench) {
+  if (!bench || !bench.sectors || !bench.sectors.length) return null;
+  const fig = lsPanel('Sector benchmark',
+    bench.note || 'Leak-site listings this window against the previous one.');
+  const max = Math.max(1, ...bench.sectors.map((s) => s.current));
+  const list = el('div', 'ls-bars');
+  bench.sectors.slice(0, 12).forEach((s) => {
+    const row = el('div', 'ls-bar-row');
+    row.appendChild(el('span', 'ls-bar-name', s.sector));
+    const track = el('span', 'ls-bar-track');
+    const fill = el('span', 'ls-bar-fill');
+    fill.style.width = ((s.current / max) * 100) + '%';
+    fill.style.background = s.direction === 'up' ? '#e0653f'
+      : s.direction === 'down' ? '#3fae8c' : SERIES_1;
+    track.appendChild(fill);
+    row.appendChild(track);
+    const arrow = s.direction === 'up' ? '▲' : s.direction === 'down' ? '▼'
+      : s.direction === 'new' ? '＋' : '–';
+    const cls = s.direction === 'up' ? 'ls-up' : s.direction === 'down' ? 'ls-down' : 'ls-flat';
+    const label = s.change_pct === null ? 'new'
+      : (s.change_pct > 0 ? '+' : '') + s.change_pct + '%';
+    const val = el('span', 'ls-bar-val ' + cls, arrow + ' ' + s.current + ' (' + label + ')');
+    val.title = s.current + ' this window vs ' + s.previous + ' previous';
+    row.appendChild(val);
+    list.appendChild(row);
+  });
+  fig.appendChild(list);
+  return fig;
+}
+
 function hideAllViews() {
   // The map runs a rAF loop; leaving the view must stop it or it burns CPU
   // in the background forever.
   if (typeof stopMapAnimation === 'function') stopMapAnimation();
-  ['loading-state', 'error-state', 'cards-container', 'matrix-view', 'trends-view', 'map-view', 'landscape-view', 'geopol-view', 'about-view', 'darkweb-view', 'no-results']
+  ['loading-state', 'error-state', 'cards-container', 'matrix-view', 'trends-view', 'map-view', 'landscape-view', 'geopol-view', 'about-view', 'darkweb-view', 'exposure-view', 'no-results']
     .forEach((id) => { const n = $(id); if (n) n.style.display = 'none'; });
 }
 
@@ -3053,6 +3240,7 @@ function renderAll() {
   if (store.filter === 'geopol') { showGeopolView(); return; }
   if (store.filter === 'about') { showAboutView(); return; }
   if (store.filter === 'darkweb') { showDarkwebView(); return; }
+  if (store.filter === 'exposure') { showExposureView(); return; }
   showContent();
   renderBrief();
   renderCards();
