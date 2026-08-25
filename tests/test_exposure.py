@@ -238,3 +238,69 @@ class TestWatchAlerts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOwnEstateNotPublished(unittest.TestCase):
+    """Own-estate findings must not reach the public site by default.
+
+    The dashboard deploys to a public URL. An inventory of your own
+    dev/staging/vpn hostnames plus credential-exposure counts is exactly the
+    reconnaissance an attacker would otherwise have to perform, so publishing
+    it would hand that over. Industry-wide data (sector benchmark, public
+    breach catalogue) is not sensitive and always publishes.
+    """
+
+    def _write(self, tmp, publish):
+        import exports
+        from config import CONFIG
+        old = CONFIG.publish_own_estate
+        try:
+            CONFIG.publish_own_estate = publish
+            exports.write_exports({
+                "last_updated": "2026-08-25T00:00:00Z", "items": [],
+                "exposure": {"domains": [{"domain": "example.com", "employees": 3,
+                                          "users": 1, "third_parties": 0, "total": 4}],
+                             "totals": {"employees": 3, "users": 1, "third_parties": 0}},
+                "attack_surface": {"domains": [{"domain": "example.com", "hostnames": 2,
+                                                "sample": ["vpn.example.com"],
+                                                "noteworthy": ["vpn.example.com"]}],
+                                   "total_hostnames": 2},
+                "sector_benchmark": {"sectors": [], "current_total": 0, "previous_total": 0},
+                "breach_catalogue": {"recent": [], "total_breaches": 0, "total_accounts": 0},
+            }, tmp / "exports")
+            return tmp / "api"
+        finally:
+            CONFIG.publish_own_estate = old
+
+    def test_withheld_by_default(self):
+        import tempfile
+        from pathlib import Path
+        api = self._write(Path(tempfile.mkdtemp()), False)
+        self.assertFalse((api / "exposure.json").exists(),
+                         "exposure.json was published to the public site")
+        self.assertFalse((api / "attack_surface.json").exists(),
+                         "attack_surface.json was published to the public site")
+
+    def test_industry_wide_data_still_publishes(self):
+        import tempfile
+        from pathlib import Path
+        api = self._write(Path(tempfile.mkdtemp()), False)
+        self.assertTrue((api / "sector_benchmark.json").exists())
+        self.assertTrue((api / "breaches.json").exists())
+
+    def test_opt_in_publishes(self):
+        import tempfile
+        from pathlib import Path
+        api = self._write(Path(tempfile.mkdtemp()), True)
+        self.assertTrue((api / "exposure.json").exists())
+        self.assertTrue((api / "attack_surface.json").exists())
+
+    def test_no_hostname_leaks_into_published_files(self):
+        """Belt and braces: no own-estate hostname may appear in ANY published
+        artefact when publishing is off."""
+        import tempfile
+        from pathlib import Path
+        api = self._write(Path(tempfile.mkdtemp()), False)
+        for f in api.glob("*.json"):
+            text = f.read_text(encoding="utf-8")
+            self.assertNotIn("vpn.example.com", text, f"leaked into {f.name}")

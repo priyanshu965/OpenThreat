@@ -141,6 +141,12 @@ jobs:
           ALERT_MIN_PRIORITY: ${{ vars.ALERT_MIN_PRIORITY }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+          # CASM: your own estate. Without these the exposure and attack-surface
+          # checks have nothing to look at and silently do nothing.
+          MY_DOMAINS:    ${{ vars.MY_DOMAINS }}
+          DARKWEB_WATCH: ${{ vars.DARKWEB_WATCH }}
+          # Own-estate findings stay off the public site unless this is set.
+          PUBLISH_OWN_ESTATE: ${{ vars.PUBLISH_OWN_ESTATE }}
         run: |
           python scripts/fetch_intel.py
 
@@ -248,6 +254,41 @@ jobs:
           print(f"- **Actively exploited (KEV or SSVC):** "
                 f"{sum(1 for i in items if i.get('cisa_kev') or i.get('ssvc_exploitation')=='active')}")
           print(f"- **Payload size:** {p.stat().st_size // 1024} KB")
+          # Own-estate findings are deliberately NOT published to the public
+          # site, so this summary (visible only to repo collaborators) is where
+          # they surface. See CONFIG.publish_own_estate.
+          expo = d.get("exposure") or {}
+          if expo.get("domains"):
+              t = expo.get("totals", {})
+              print("\n### Your exposure (not published publicly)\n")
+              print(f"- **Employee machines in infostealer logs:** {t.get('employees', 0):,}")
+              print(f"- **User machines:** {t.get('users', 0):,}")
+              print(f"- **Third-party machines:** {t.get('third_parties', 0):,}\n")
+              print("| Domain | Employees | Users | Third parties | Last employee compromise |")
+              print("|---|---:|---:|---:|---|")
+              for row in expo["domains"]:
+                  print(f"| `{row['domain']}` | {row['employees']:,} | {row['users']:,} "
+                        f"| {row['third_parties']:,} | {row.get('last_employee_compromised') or '-'} |")
+
+          surf = d.get("attack_surface") or {}
+          if surf.get("domains"):
+              print(f"\n### External attack surface — {surf.get('total_hostnames', 0)} hostnames\n")
+              for row in surf["domains"]:
+                  print(f"**`{row['domain']}`** — {row['hostnames']} hostname(s)")
+                  if row.get("noteworthy"):
+                      print("\nNoteworthy (dev/staging/vpn/admin style):\n")
+                      for h in row["noteworthy"][:25]:
+                          print(f"- `{h}`")
+                  print("")
+
+          watch = d.get("darkweb_watch") or []
+          if watch:
+              print("\n### Dark-web watchlist hits\n")
+              for hit in watch:
+                  print(f"- **{hit['term']}** — {hit['count']} leak-site listing(s)")
+                  for m in (hit.get("matches") or [])[:5]:
+                      print(f"    - {m.get('v')} — claimed by {m.get('g')} on {m.get('d')}")
+
           if d.get("brief"):
               print(f"\n> {d['brief'].get('headline','')}")
           stale = [n for n, h in d.get("source_health", {}).items() if h.get("status") != "ok"]

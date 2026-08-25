@@ -20,6 +20,16 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    from config import CONFIG
+except ImportError:  # pragma: no cover - standalone use
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location(
+        "config", Path(__file__).parent / "config.py")
+    _mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    CONFIG = _mod.CONFIG
 from email.utils import format_datetime
 from xml.sax.saxutils import escape as xml_escape
 
@@ -208,11 +218,17 @@ def write_exports(output: dict, export_dir: Path, darkweb_index: dict = None) ->
     # The dark-web index is ~550 KB and only the Dark Web view needs it, so it
     # is published as its own file and lazily fetched rather than riding in
     # intel.json on every page load.
-    # Own-estate artefacts: only the relevant views need them.
+    # Own-estate artefacts. exposure/attack_surface describe YOUR estate, so
+    # they are withheld from the published site unless explicitly opted in --
+    # see CONFIG.publish_own_estate. sector_benchmark and breaches are industry
+    # -wide public data and always publish.
+    _own_estate = {"exposure", "attack_surface"}
     for key, fname in (("sector_benchmark", "sector_benchmark.json"),
                        ("exposure", "exposure.json"),
                        ("breach_catalogue", "breaches.json"),
                        ("attack_surface", "attack_surface.json")):
+        if key in _own_estate and not CONFIG.publish_own_estate:
+            continue
         if output.get(key):
             (api_dir / fname).write_text(
                 json.dumps(output[key], ensure_ascii=False, separators=(",", ":")),

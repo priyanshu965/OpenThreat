@@ -131,6 +131,13 @@ class Config:
     enable_attack_surface  = _bool("ENABLE_ATTACK_SURFACE", True)
     attack_surface_ttl_hours = _int("ATTACK_SURFACE_TTL_HOURS", 24)
     attack_surface_max_hosts = _int("ATTACK_SURFACE_MAX_HOSTS", 300)
+    # Own-estate findings are NOT published by default. The dashboard deploys to
+    # a public URL, and an inventory of your own dev/staging/vpn hostnames plus
+    # credential-exposure counts is precisely the reconnaissance an attacker
+    # would otherwise have to do themselves. The data still reaches you through
+    # the run summary and webhook alerts; it just does not get a public URL.
+    # Set PUBLISH_OWN_ESTATE=1 only if the dashboard is genuinely private.
+    publish_own_estate     = _bool("PUBLISH_OWN_ESTATE", False)
     # Cap per-feed rows parsed, as a guard against a feed ballooning. 0 = no cap.
     attacker_feed_max_rows = _int("ATTACKER_FEED_MAX_ROWS", 0)
 
