@@ -151,3 +151,107 @@ class TestProvenanceIntegration(unittest.TestCase):
             self.assertTrue(items[0]["human_authored"])
         finally:
             dw._fetch_json = orig
+
+
+class TestExposureIndex(unittest.TestCase):
+    """The CASM-style searchable index and the standing watch."""
+
+    def setUp(self):
+        self._orig = dw._fetch_json
+
+        def fake(name, url):
+            if "victims_" in name:
+                return [
+                    {"victim": "Acme Manufacturing Ltd", "group": "qilin",
+                     "attackdate": "2026-08-20", "country": "US", "activity": "Manufacturing"},
+                    {"victim": "Contoso Health", "group": "beast",
+                     "attackdate": "2026-08-19", "country": "GB", "activity": "Healthcare"},
+                ]
+            if "posts" in name:
+                return {"posts": [
+                    {"post_title": "Acme Manufacturing Ltd", "group_name": "qilin",
+                     "discovered": "2026-08-20 10:00:00.0"},          # dupe
+                    {"post_title": "Northwind Traders", "group_name": "play",
+                     "discovered": "2026-08-18 10:00:00.0"},
+                ]}
+            return None
+
+        dw._fetch_json = fake
+
+    def tearDown(self):
+        dw._fetch_json = self._orig
+
+    def test_index_merges_and_dedupes(self):
+        idx = dw.build_darkweb_index()
+        names = sorted(r["v"] for r in idx["victims"])
+        self.assertEqual(names, ["Acme Manufacturing Ltd", "Contoso Health",
+                                 "Northwind Traders"])
+        self.assertEqual(idx["count"], 3)
+
+    def test_index_is_newest_first(self):
+        idx = dw.build_darkweb_index()
+        dates = [r["d"] for r in idx["victims"]]
+        self.assertEqual(dates, sorted(dates, reverse=True))
+
+    def test_internal_src_field_not_published(self):
+        for row in dw.build_darkweb_index()["victims"]:
+            self.assertNotIn("src", row)
+
+    def test_coverage_declares_the_gaps(self):
+        """A search tool that implies total coverage gives false assurance."""
+        cov = dw.build_darkweb_index()["coverage"]
+        blob = " ".join(cov["does_not_cover"]).lower()
+        for gap in ("forum", "credential", "paste"):
+            self.assertIn(gap, blob)
+        self.assertIn("not evidence of safety", cov["caveat"].lower())
+
+    def test_search_is_case_and_punctuation_insensitive(self):
+        idx = dw.build_darkweb_index()
+        for q in ("acme", "ACME", "Acme  Manufacturing", "acme-manufacturing"):
+            self.assertTrue(dw.search_index(idx, q), q)
+
+    def test_search_miss_returns_empty(self):
+        self.assertEqual(dw.search_index(dw.build_darkweb_index(), "notpresentxyz"), [])
+
+    def test_search_blank_term_returns_empty(self):
+        idx = dw.build_darkweb_index()
+        for q in ("", "   ", None):
+            self.assertEqual(dw.search_index(idx, q), [])
+
+    def test_search_respects_limit(self):
+        idx = dw.build_darkweb_index()
+        self.assertEqual(len(dw.search_index(idx, "a", limit=1)), 1)
+
+    def test_watchlist_reports_hits(self):
+        from config import CONFIG
+        old = CONFIG.darkweb_watch
+        try:
+            CONFIG.darkweb_watch = "Acme, NotPresentCo"
+            hits = dw.check_watchlist(dw.build_darkweb_index())
+            self.assertEqual(len(hits), 1)
+            self.assertEqual(hits[0]["term"], "Acme")
+            self.assertEqual(hits[0]["count"], 1)
+        finally:
+            CONFIG.darkweb_watch = old
+
+    def test_watchlist_empty_when_unconfigured(self):
+        from config import CONFIG
+        old = CONFIG.darkweb_watch
+        try:
+            CONFIG.darkweb_watch = ""
+            self.assertEqual(dw.check_watchlist(dw.build_darkweb_index()), [])
+        finally:
+            CONFIG.darkweb_watch = old
+
+    def test_index_cap_keeps_newest(self):
+        from config import CONFIG
+        old = CONFIG.darkweb_index_max
+        try:
+            CONFIG.darkweb_index_max = 2
+            idx = dw.build_darkweb_index()
+            self.assertEqual(idx["count"], 2)
+            self.assertTrue(idx["capped"])
+            self.assertEqual(idx["total_available"], 3)
+            self.assertEqual(idx["victims"][0]["d"], "2026-08-20")   # newest kept
+        finally:
+            CONFIG.darkweb_index_max = old

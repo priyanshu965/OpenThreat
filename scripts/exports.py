@@ -183,7 +183,7 @@ def _write_rss(output: dict, path: Path, limit: int = 60) -> None:
     path.write_text("\n".join(parts), encoding="utf-8")
 
 
-def write_exports(output: dict, export_dir: Path) -> list[str]:
+def write_exports(output: dict, export_dir: Path, darkweb_index: dict = None) -> list[str]:
     """Write all export artifacts. Returns the list of filenames created."""
     export_dir = Path(export_dir)
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -204,6 +204,14 @@ def write_exports(output: dict, export_dir: Path) -> list[str]:
     api_dir = export_dir.parent / "api"
     api_dir.mkdir(parents=True, exist_ok=True)
     _write_static_api(output, api_dir)
+
+    # The dark-web index is ~550 KB and only the Dark Web view needs it, so it
+    # is published as its own file and lazily fetched rather than riding in
+    # intel.json on every page load.
+    if darkweb_index:
+        (api_dir / "darkweb_index.json").write_text(
+            json.dumps(darkweb_index, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8")
 
     return ["iocs.csv", "iocs.json", "stix.json", "feed.xml", "api/*.json"]
 

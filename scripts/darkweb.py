@@ -174,3 +174,144 @@ def build_darkweb_summary() -> dict | None:
             "confirmed breach."
         ),
     }
+
+
+# ── Searchable exposure index (CASM-style) ────────────────────────────────────
+# The dashboard is static, and ransomware.live rate-limits to 1 request/minute,
+# so interactive search cannot call an API at view time. Instead the pipeline
+# builds a compact index once per run and the browser searches it locally. That
+# removes the rate limit from the interactive path entirely.
+
+_RW_VICTIMS_YEAR = "https://api.ransomware.live/v2/victims/{year}"
+_RANSOMLOOK_POSTS = "https://www.ransomlook.io/api/posts"
+
+# What this index does and does NOT cover. Stated in the payload so the UI
+# cannot quietly imply more coverage than exists: a company absent from these
+# sources means "not in our leak-site corpus", NOT "no dark-web exposure".
+COVERAGE = {
+    "covers": [
+        "Ransomware and extortion leak-site victim listings",
+        "600+ leak sites tracked by RansomLook on Tor",
+        "Victim, claiming group, date, and where published, country and sector",
+    ],
+    "does_not_cover": [
+        "Criminal forums, marketplaces and Telegram channels",
+        "Credential dumps, combolists and infostealer logs",
+        "Paste sites and open buckets",
+        "Anything not published to a ransomware leak site",
+    ],
+    "caveat": (
+        "A listing is the crew's own claim, not a confirmed breach. Absence "
+        "from this index is not evidence of safety - it only means the name "
+        "does not appear in the leak-site sources we track."
+    ),
+}
+
+
+def _norm(text) -> str:
+    """Fold a name for matching: lowercase, collapse punctuation and spacing."""
+    return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
+
+
+def build_darkweb_index() -> dict | None:
+    """Merge the leak-site corpora into one compact, searchable index."""
+    if not CONFIG.enable_darkweb:
+        return None
+
+    entries: dict[tuple, dict] = {}
+
+    # ransomware.live: multi-year, and carries country + sector.
+    from datetime import datetime, timezone
+    year = datetime.now(timezone.utc).year
+    for y in (year, year - 1):
+        data = _fetch_json(f"darkweb_victims_{y}.json", _RW_VICTIMS_YEAR.format(year=y))
+        if not isinstance(data, list):
+            continue
+        for v in data:
+            victim = str(v.get("victim") or "").strip()
+            group = str(v.get("group") or "").strip()
+            if not victim:
+                continue
+            key = (_norm(victim), _norm(group))
+            entries.setdefault(key, {
+                "v": victim[:120], "g": group[:60],
+                "d": (v.get("attackdate") or v.get("discovered") or "")[:10],
+                "c": (v.get("country") or "")[:2],
+                "s": (v.get("activity") or "")[:60],
+                "src": "ransomware.live",
+            })
+
+    # RansomLook: different site coverage, last ~30 days.
+    posts = _fetch_json("darkweb_posts.json", _RANSOMLOOK_POSTS)
+    if isinstance(posts, dict):
+        posts = posts.get("posts", [])
+    if isinstance(posts, list):
+        for p in posts:
+            victim = str(p.get("post_title") or "").strip()
+            group = str(p.get("group_name") or "").strip()
+            if not victim:
+                continue
+            key = (_norm(victim), _norm(group))
+            entries.setdefault(key, {
+                "v": victim[:120], "g": group[:60],
+                "d": _iso(p.get("discovered"))[:10],
+                "c": "", "s": "", "src": "ransomlook",
+            })
+
+    if not entries:
+        return None
+
+    rows = sorted(entries.values(), key=lambda r: r.get("d") or "", reverse=True)
+    total = len(rows)
+    cap = CONFIG.darkweb_index_max
+    if cap and total > cap:
+        rows = rows[:cap]
+    # "src" is provenance for our own bookkeeping, not something the search UI
+    # renders, so it does not need to be shipped to every visitor.
+    for r in rows:
+        r.pop("src", None)
+    dates = [r["d"] for r in rows if r.get("d")]
+    return {
+        "generated": now_utc(),
+        "count": len(rows),
+        "total_available": total,
+        "capped": total > len(rows),
+        "from": min(dates) if dates else None,
+        "to": max(dates) if dates else None,
+        "coverage": COVERAGE,
+        "victims": rows,
+    }
+
+
+def search_index(index: dict, term: str, limit: int = 50) -> list[dict]:
+    """Substring match over folded victim names. Shared by the pipeline
+    watchlist and mirrored by the browser, so both agree on what a hit is."""
+    q = _norm(term)
+    if not q or not index:
+        return []
+    out = []
+    for row in index.get("victims", []):
+        if q in _norm(row.get("v")):
+            out.append(row)
+            if len(out) >= limit:
+                break
+    return out
+
+
+def check_watchlist(index: dict) -> list[dict]:
+    """CASM-style standing monitoring: check configured names every run.
+
+    This is the continuous half of the feature. Interactive search answers
+    "is this name listed right now"; the watchlist answers "tell me when it
+    becomes listed", which is what actually matters for monitoring.
+    """
+    terms = [t.strip() for t in (CONFIG.darkweb_watch or "").split(",") if t.strip()]
+    if not terms or not index:
+        return []
+    hits = []
+    for term in terms:
+        matches = search_index(index, term, limit=25)
+        if matches:
+            hits.append({"term": term, "count": len(matches), "matches": matches[:10]})
+            log.warning(f"  DARK WEB WATCHLIST HIT: '{term}' — {len(matches)} listing(s)")
+    return hits

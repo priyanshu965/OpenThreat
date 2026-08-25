@@ -109,6 +109,17 @@ class Config:
     # mirror of a Tor crawler (we cannot reach .onion from a CI runner).
     enable_darkweb         = _bool("ENABLE_DARKWEB", True)
     darkweb_ttl_hours      = _int("DARKWEB_TTL_HOURS", 3)
+    # CASM-style standing watch: comma-separated names checked against the
+    # leak-site index every run. Hits are logged, surfaced and alertable.
+    #   DARKWEB_WATCH="Acme Corp,Acme Ltd,acme.com"
+    darkweb_watch          = _str("DARKWEB_WATCH", "")
+    # The searchable index is published separately and lazily loaded by the
+    # dashboard, so it never inflates intel.json.
+    enable_darkweb_index   = _bool("ENABLE_DARKWEB_INDEX", True)
+    # Cap on published index size. The full corpus is ~14.7k listings / 1.6 MB,
+    # which is a lot to hand a phone even lazily. Newest-first, so the cap drops
+    # the oldest listings - the least useful for exposure monitoring.
+    darkweb_index_max      = _int("DARKWEB_INDEX_MAX", 9000)
     # Cap per-feed rows parsed, as a guard against a feed ballooning. 0 = no cap.
     attacker_feed_max_rows = _int("ATTACKER_FEED_MAX_ROWS", 0)
 

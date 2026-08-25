@@ -75,10 +75,13 @@ try:
 except Exception:
     build_geopolitics = None
 try:
-    from darkweb import fetch_leak_site_posts, build_darkweb_summary
+    from darkweb import (fetch_leak_site_posts, build_darkweb_summary,
+                         build_darkweb_index, check_watchlist)
 except Exception:
     fetch_leak_site_posts = None
     build_darkweb_summary = None
+    build_darkweb_index = None
+    check_watchlist = None
 try:
     from provenance import (annotate_provenance, PROVENANCE_LABELS,
                             PROVENANCE_NOTES, PROVENANCE_ORDER)
@@ -2623,6 +2626,21 @@ def main():
         except Exception as e:
             log.warning(f"Dark-web summary failed: {e}")
 
+    darkweb_index = None
+    darkweb_watch_hits = []
+    if build_darkweb_index and CONFIG.enable_darkweb_index:
+        try:
+            darkweb_index = build_darkweb_index()
+            if darkweb_index:
+                log.info(f"✓ Dark-web index: {darkweb_index['count']} victim listings "
+                         f"({darkweb_index['from']} → {darkweb_index['to']})")
+                if check_watchlist:
+                    darkweb_watch_hits = check_watchlist(darkweb_index)
+                    if darkweb_watch_hits:
+                        log.warning(f"  {len(darkweb_watch_hits)} watchlist term(s) matched")
+        except Exception as e:
+            log.warning(f"Dark-web index build failed: {e}")
+
     # ── Roll up source health ───────────────────────────────────────────────
     # Replaces the append-only source_health_history.jsonl, which had grown to
     # 1.8 MB, was committed on every one of 24 daily runs, and was fetched in
@@ -2856,6 +2874,7 @@ def main():
         "source_health": source_health,
         "attack_map": attack_map,
         "darkweb": darkweb,
+        "darkweb_watch": darkweb_watch_hits,
         "sector_breakdown": sector_breakdown,
         "sector_labels": SECTOR_LABELS,
         # Canonical ATT&CK kill-chain order, so the matrix can lay tactics out
@@ -2912,7 +2931,8 @@ def main():
     # ── Machine-readable exports (STIX / CSV / JSON IOCs + RSS feed) ────────
     if write_exports:
         try:
-            written = write_exports(output, CONFIG.export_dir)
+            written = write_exports(output, CONFIG.export_dir,
+                                    darkweb_index=darkweb_index)
             log.info(f"✓ Wrote exports: {', '.join(written)}")
         except Exception as e:
             log.error(f"Export generation failed: {e}")

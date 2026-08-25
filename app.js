@@ -31,7 +31,7 @@ const LS = {
   filter: 'cw_filter', severity: 'cw_severity', sort: 'cw_sort',
   watchlist: 'cw_watchlist', watchlistOnly: 'cw_watchlistOnly',
   stack: 'cw_stack', dismissed: 'cw_dismissed', starred: 'cw_starred',
-  density: 'cw_density', lastVisit: 'cw_lastVisit', notes: 'cw_notes',
+  density: 'cw_density', lastVisit: 'cw_lastVisit', darkwebWatch: 'cw_darkwebWatch', notes: 'cw_notes',
 };
 
 // Severity is ORDINAL (low -> critical), so it takes a one-hue sequential ramp
@@ -63,7 +63,8 @@ const store = {
   watchlist: [], watchlistOnly: false, stack: [],
   dismissed: new Set(), starred: new Set(), showDismissed: false,
   lastVisit: null, stamp: null,
-  mapCat: null, sector: null, mapPaused: false, provenance: null, humanOnly: false,
+  mapCat: null, sector: null, mapPaused: false,
+  darkwebIndex: null, darkwebQuery: '', darkwebWatch: [], provenance: null, humanOnly: false,
   notes: {},
 };
 
@@ -2769,11 +2770,262 @@ function showAboutView() {
   host.appendChild(back);
 }
 
+// --- Dark web view ----------------------------------------------------------
+// Leak-site exposure search, CASM-style. The index is built by the pipeline and
+// lazily fetched here (it is ~550 KB and only this view needs it), so search is
+// instant, local, and never touches a rate-limited API.
+
+const DARKWEB_INDEX_URL = 'data/api/darkweb_index.json';
+
+function dwNorm(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+// Mirrors darkweb.search_index() on the Python side so both agree on a hit.
+function dwSearch(index, term, limit) {
+  const q = dwNorm(term);
+  if (!q || !index || !index.victims) return [];
+  const out = [];
+  for (const row of index.victims) {
+    if (dwNorm(row.v).includes(q)) {
+      out.push(row);
+      if (out.length >= (limit || 100)) break;
+    }
+  }
+  return out;
+}
+
+async function loadDarkwebIndex() {
+  if (store.darkwebIndex !== null) return store.darkwebIndex;
+  try {
+    const resp = await fetch(DARKWEB_INDEX_URL, { cache: 'no-cache' });
+    store.darkwebIndex = resp.ok ? await resp.json() : false;
+  } catch (_) {
+    store.darkwebIndex = false;
+  }
+  return store.darkwebIndex;
+}
+
+async function showDarkwebView() {
+  hideAllViews();
+  const host = $('darkweb-view');
+  if (!host) return;
+  host.style.display = 'block';
+  host.replaceChildren(el('p', 'chart-empty', 'Loading leak-site index…'));
+
+  const index = await loadDarkwebIndex();
+  const summary = (store.meta && store.meta.darkweb) || null;
+  host.replaceChildren();
+
+  host.appendChild(el('h2', 'ls-title', 'Dark web — leak-site exposure'));
+  host.appendChild(el('p', 'ls-sub',
+    'Ransomware and extortion crews publish victims to their own Tor leak ' +
+    'sites. Search that corpus for a company name, or keep a standing watch.'));
+
+  // ---- headline tiles ------------------------------------------------------
+  const tiles = el('div', 'ls-tiles');
+  if (index && index.count) {
+    tiles.appendChild(statTile('Listings indexed', index.count.toLocaleString(),
+      (index.from || '?') + ' → ' + (index.to || '?')));
+  }
+  if (summary) {
+    tiles.appendChild(statTile('Leak sites tracked', summary.tracked_leak_sites.toLocaleString()));
+    tiles.appendChild(statTile('Groups active', String(summary.distinct_groups_active), 'recent window'));
+    tiles.appendChild(statTile('Recent listings', String(summary.recent_posts)));
+  }
+  host.appendChild(tiles);
+
+  // ---- search --------------------------------------------------------------
+  const panel = lsPanel('Exposure search',
+    'Type an organisation name. Matching is on the victim name as the crew ' +
+    'published it, so try short forms and trading names too.');
+
+  const form = el('div', 'dw-search');
+  const input = el('input', 'dw-input');
+  input.type = 'search';
+  input.placeholder = 'e.g. Acme, Contoso Ltd, a supplier name…';
+  input.setAttribute('aria-label', 'Search leak-site listings for an organisation');
+  input.value = store.darkwebQuery || '';
+  form.appendChild(input);
+
+  const watchBtn = el('button', 'dw-watch-btn', '☆ Watch this name');
+  watchBtn.type = 'button';
+  form.appendChild(watchBtn);
+  panel.appendChild(form);
+
+  const results = el('div', 'dw-results');
+  panel.appendChild(results);
+
+  const runSearch = () => {
+    const q = input.value.trim();
+    store.darkwebQuery = q;
+    results.replaceChildren();
+    if (!index) {
+      results.appendChild(el('p', 'chart-empty',
+        'The leak-site index is not published yet — it appears after the next pipeline run.'));
+      return;
+    }
+    if (q.length < 3) {
+      results.appendChild(el('p', 'dw-hint', 'Enter at least 3 characters.'));
+      return;
+    }
+    const hits = dwSearch(index, q, 100);
+    watchBtn.style.display = 'inline-block';
+    if (!hits.length) {
+      const none = el('div', 'dw-none');
+      none.appendChild(el('div', 'dw-none-head', 'No listing found for “' + q + '”'));
+      none.appendChild(el('div', 'dw-none-body',
+        'That name does not appear in the leak sites we track. This is NOT ' +
+        'evidence of safety: it covers ransomware leak sites only, not forums, ' +
+        'markets, credential dumps or infostealer logs.'));
+      results.appendChild(none);
+      return;
+    }
+    results.appendChild(el('div', 'dw-count',
+      hits.length + (hits.length === 100 ? '+ ' : ' ') +
+      'listing' + (hits.length === 1 ? '' : 's') + ' matching “' + q + '”'));
+    results.appendChild(dwTable(hits));
+  };
+
+  input.addEventListener('input', debounceDw(runSearch, 180));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
+  watchBtn.addEventListener('click', () => {
+    const q = input.value.trim();
+    if (q.length < 3) return;
+    if (!store.darkwebWatch.includes(q)) {
+      store.darkwebWatch.push(q);
+      writeLS(LS.darkwebWatch, store.darkwebWatch);
+    }
+    showDarkwebView();
+  });
+  host.appendChild(panel);
+  if (store.darkwebQuery) runSearch();
+
+  // ---- standing watch ------------------------------------------------------
+  const watchPanel = lsPanel('Standing watch',
+    'Names you are watching are re-checked against the index every time the ' +
+    'page loads. For alerting between visits, set DARKWEB_WATCH in the ' +
+    'pipeline so a hit raises a webhook.');
+  if (!store.darkwebWatch.length) {
+    watchPanel.appendChild(el('p', 'dw-hint',
+      'No names watched yet. Search for one and press “Watch this name”.'));
+  } else {
+    store.darkwebWatch.forEach((term) => {
+      const hits = index ? dwSearch(index, term, 50) : [];
+      const row = el('div', 'dw-watch-row' + (hits.length ? ' is-hit' : ''));
+      const left = el('div', 'dw-watch-left');
+      left.appendChild(el('span', 'dw-watch-term', term));
+      left.appendChild(el('span', 'dw-watch-status',
+        hits.length ? hits.length + ' listing' + (hits.length === 1 ? '' : 's') + ' found'
+                    : 'no listing in the tracked corpus'));
+      row.appendChild(left);
+      const rm = el('button', 'dw-watch-rm', 'Remove');
+      rm.type = 'button';
+      rm.addEventListener('click', () => {
+        store.darkwebWatch = store.darkwebWatch.filter((t) => t !== term);
+        writeLS(LS.darkwebWatch, store.darkwebWatch);
+        showDarkwebView();
+      });
+      row.appendChild(rm);
+      watchPanel.appendChild(row);
+      if (hits.length) watchPanel.appendChild(dwTable(hits.slice(0, 5)));
+    });
+  }
+  host.appendChild(watchPanel);
+
+  // ---- pipeline-side watch hits -------------------------------------------
+  const serverHits = (store.meta && store.meta.darkweb_watch) || [];
+  if (serverHits.length) {
+    const sp = lsPanel('Pipeline watchlist hits',
+      'From DARKWEB_WATCH, checked server-side on every run.');
+    serverHits.forEach((h) => {
+      sp.appendChild(el('div', 'dw-watch-row is-hit',
+        h.term + ' — ' + h.count + ' listing' + (h.count === 1 ? '' : 's')));
+      sp.appendChild(dwTable(h.matches || []));
+    });
+    host.appendChild(sp);
+  }
+
+  // ---- most active crews ---------------------------------------------------
+  if (summary && (summary.most_active || []).length) {
+    const ap = lsPanel('Most active crews', 'By listings in the recent window.');
+    const rows = summary.most_active;
+    const max = Math.max(1, ...rows.map((r) => r.posts));
+    const bars = el('div', 'ls-bars');
+    rows.slice(0, 8).forEach((r) => {
+      const line = el('div', 'ls-bar-row');
+      line.appendChild(el('span', 'ls-bar-name', r.group));
+      const track = el('span', 'ls-bar-track');
+      const fill = el('span', 'ls-bar-fill');
+      fill.style.width = ((r.posts / max) * 100) + '%';
+      fill.style.background = '#d6454f';
+      track.appendChild(fill);
+      line.appendChild(track);
+      line.appendChild(el('span', 'ls-bar-val', String(r.posts)));
+      bars.appendChild(line);
+    });
+    ap.appendChild(bars);
+    host.appendChild(ap);
+  }
+
+  // ---- coverage, stated plainly -------------------------------------------
+  const cov = (index && index.coverage) || null;
+  const covPanel = el('details', 'dw-coverage');
+  covPanel.appendChild(el('summary', 'dw-coverage-sum', 'What this does and does not cover'));
+  if (cov) {
+    const yes = el('div', 'dw-cov-block');
+    yes.appendChild(el('div', 'dw-cov-h', 'Covers'));
+    const ul = el('ul', 'dw-cov-list');
+    cov.covers.forEach((c) => ul.appendChild(el('li', '', c)));
+    yes.appendChild(ul);
+    covPanel.appendChild(yes);
+
+    const no = el('div', 'dw-cov-block');
+    no.appendChild(el('div', 'dw-cov-h dw-cov-no', 'Does NOT cover'));
+    const ul2 = el('ul', 'dw-cov-list');
+    cov.does_not_cover.forEach((c) => ul2.appendChild(el('li', '', c)));
+    no.appendChild(ul2);
+    covPanel.appendChild(no);
+
+    covPanel.appendChild(el('p', 'dw-cov-caveat', cov.caveat));
+  }
+  if (summary && summary.collection_note) {
+    covPanel.appendChild(el('p', 'dw-cov-caveat', summary.collection_note));
+  }
+  host.appendChild(covPanel);
+}
+
+function dwTable(rows) {
+  const wrap = el('div', 'dw-table-wrap');
+  const table = el('table', 'dw-table');
+  const head = el('tr', 'dw-thead');
+  ['Victim', 'Claimed by', 'Date', 'Country', 'Sector'].forEach((h) => {
+    head.appendChild(el('th', '', h));
+  });
+  table.appendChild(head);
+  rows.forEach((r) => {
+    const tr = el('tr', 'dw-trow');
+    tr.appendChild(el('td', 'dw-td-victim', r.v || '—'));
+    tr.appendChild(el('td', 'dw-td-group', r.g || '—'));
+    tr.appendChild(el('td', 'dw-td-date', r.d || '—'));
+    tr.appendChild(el('td', 'dw-td-cc', r.c || '—'));
+    tr.appendChild(el('td', 'dw-td-sector', r.s || '—'));
+    table.appendChild(tr);
+  });
+  wrap.appendChild(table);
+  return wrap;
+}
+
+let dwTimer = null;
+function debounceDw(fn, ms) {
+  return () => { clearTimeout(dwTimer); dwTimer = setTimeout(fn, ms); };
+}
+
 function hideAllViews() {
   // The map runs a rAF loop; leaving the view must stop it or it burns CPU
   // in the background forever.
   if (typeof stopMapAnimation === 'function') stopMapAnimation();
-  ['loading-state', 'error-state', 'cards-container', 'matrix-view', 'trends-view', 'map-view', 'landscape-view', 'geopol-view', 'about-view', 'no-results']
+  ['loading-state', 'error-state', 'cards-container', 'matrix-view', 'trends-view', 'map-view', 'landscape-view', 'geopol-view', 'about-view', 'darkweb-view', 'no-results']
     .forEach((id) => { const n = $(id); if (n) n.style.display = 'none'; });
 }
 
@@ -2800,6 +3052,7 @@ function renderAll() {
   if (store.filter === 'landscape') { showLandscapeView(); return; }
   if (store.filter === 'geopol') { showGeopolView(); return; }
   if (store.filter === 'about') { showAboutView(); return; }
+  if (store.filter === 'darkweb') { showDarkwebView(); return; }
   showContent();
   renderBrief();
   renderCards();
@@ -3400,6 +3653,7 @@ function restoreState() {
   store.stack = readLS(LS.stack, []) || [];
   store.dismissed = new Set(readLS(LS.dismissed, []) || []);
   store.starred = new Set(readLS(LS.starred, []) || []);
+  store.darkwebWatch = readLS(LS.darkwebWatch, []) || [];
   store.lastVisit = readLS(LS.lastVisit, null);
   store.notes = readLS(LS.notes, {}) || {};
   writeLS(LS.lastVisit, new Date().toISOString());
