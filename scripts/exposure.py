@@ -129,6 +129,7 @@ def build_exposure(domains: list[str]) -> dict | None:
     if not CONFIG.enable_exposure:
         return None
     checked = []
+    failed = []
     for raw in domains:
         result = check_domain_exposure(raw)
         if result:
@@ -136,6 +137,21 @@ def build_exposure(domains: list[str]) -> dict | None:
             if result["employees"]:
                 log.warning(f"  EXPOSURE: {result['domain']} — "
                             f"{result['employees']} employee machine(s) in stealer logs")
+        else:
+            failed.append(raw)
+
+    # Always say what happened. Silence made "checked and clean" indistinguishable
+    # from "never ran", and for a monitoring feature the second one masquerading
+    # as the first is the dangerous direction.
+    if checked:
+        tot_e = sum(c["employees"] for c in checked)
+        tot_u = sum(c["users"] for c in checked)
+        tot_t = sum(c["third_parties"] for c in checked)
+        log.info(f"Exposure: checked {len(checked)} domain(s) — "
+                 f"{tot_e} employee, {tot_u} user, {tot_t} third-party machine(s)")
+    if failed:
+        log.warning(f"Exposure: {len(failed)} domain(s) returned no data: "
+                    f"{', '.join(failed)}")
     if not checked:
         return None
     return {

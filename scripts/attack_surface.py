@@ -125,18 +125,32 @@ def build_attack_surface(domains: list[str]) -> dict | None:
     if not CONFIG.enable_attack_surface or not domains:
         return None
     out = []
+    failed = []
     for raw in domains:
         res = discover_subdomains(raw)
         if res:
             out.append(res)
             log.info(f"  attack surface: {res['domain']} — {res['hostnames']} hostname(s), "
                      f"{len(res['noteworthy'])} noteworthy")
+            for host in res["noteworthy"][:10]:
+                log.warning(f"    SHADOW IT: {host}")
+        else:
+            failed.append(raw)
+
+    # crt.sh 502s often enough that a missing domain is far more likely to mean
+    # "the log was unreachable" than "this domain has no certificates". Say so,
+    # rather than letting an outage read as a clean result.
+    if failed:
+        log.warning(f"Attack surface: crt.sh returned nothing for "
+                    f"{len(failed)} domain(s): {', '.join(failed)} "
+                    f"(usually a crt.sh outage, not an empty estate)")
     if not out:
         return None
     return {
         "generated": now_utc(),
         "domains": out,
         "total_hostnames": sum(d["hostnames"] for d in out),
+        "unavailable": failed,
         "note": ("Discovered from public Certificate Transparency logs. "
                  "CyberWatch does not probe, scan or resolve these hosts."),
     }

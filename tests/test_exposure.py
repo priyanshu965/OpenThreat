@@ -304,3 +304,65 @@ class TestOwnEstateNotPublished(unittest.TestCase):
         for f in api.glob("*.json"):
             text = f.read_text(encoding="utf-8")
             self.assertNotIn("vpn.example.com", text, f"leaked into {f.name}")
+
+
+class TestSilenceIsNeverAmbiguous(unittest.TestCase):
+    """A monitoring check that finds nothing must look different from one that
+    never ran. The reverse — an outage reading as "all clear" — is the failure
+    mode that actually hurts."""
+
+    @staticmethod
+    def _logger_name(mod):
+        lg = getattr(mod.log, "logger", mod.log)
+        return lg.name
+
+    def test_exposure_reports_even_when_clean(self):
+        import logging
+        orig = ex._fetch_json
+        ex._fetch_json = lambda name, url, ttl: {
+            "total": 0, "employees": 0, "users": 0, "third_parties": 0}
+        try:
+            with self.assertLogs(self._logger_name(ex), level=logging.INFO) as cm:
+                ex.build_exposure(["clean.com"])
+            self.assertTrue(any("checked 1 domain" in m for m in cm.output),
+                            "a clean result produced no log line")
+        finally:
+            ex._fetch_json = orig
+
+    def test_exposure_names_domains_that_returned_nothing(self):
+        import logging
+        orig = ex._fetch_json
+        ex._fetch_json = lambda name, url, ttl: None
+        try:
+            with self.assertLogs(self._logger_name(ex), level=logging.WARNING) as cm:
+                ex.build_exposure(["broken.com"])
+            self.assertTrue(any("broken.com" in m for m in cm.output))
+        finally:
+            ex._fetch_json = orig
+
+    def test_attack_surface_flags_an_outage_rather_than_implying_clean(self):
+        import logging
+        orig = asf._cached_fetch
+        asf._cached_fetch = lambda name, ttl, raw: None
+        try:
+            with self.assertLogs(self._logger_name(asf), level=logging.WARNING) as cm:
+                asf.build_attack_surface(["example.com"])
+            joined = " ".join(cm.output)
+            self.assertIn("example.com", joined)
+            self.assertIn("outage", joined.lower())
+        finally:
+            asf._cached_fetch = orig
+
+    def test_shadow_it_hosts_are_logged_individually(self):
+        import json
+        import logging
+        orig = asf._cached_fetch
+        asf._cached_fetch = lambda name, ttl, raw: json.dumps([
+            {"name_value": "dev.example.com", "issuer_name": "O=X"}])
+        try:
+            with self.assertLogs(self._logger_name(asf), level=logging.WARNING) as cm:
+                asf.build_attack_surface(["example.com"])
+            self.assertTrue(any("SHADOW IT" in m and "dev.example.com" in m
+                                for m in cm.output))
+        finally:
+            asf._cached_fetch = orig
