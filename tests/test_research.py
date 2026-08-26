@@ -21,6 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 import backtest as bt                       # noqa: E402
+import kev_catalog                          # noqa: E402
 import campaigns as camp                    # noqa: E402
 import entity_graph as eg                   # noqa: E402
 import exploit_lag as lag                   # noqa: E402
@@ -90,6 +91,57 @@ class TestPriorityComponents(unittest.TestCase):
         self.assertIn('item["priority_components"] = priority["components"]', source,
                       "compute_priority emits components but main() does not "
                       "copy them onto the item, so nothing is published")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+class TestKevCatalogueShape(unittest.TestCase):
+    """A KEV cache without dates must be refetched, not used.
+
+    This shipped: the first v4 deploy restored a legacy `cisa_kev.json` (a bare
+    list of ids, written before dateAdded was kept) from the Actions cache. The
+    loader accepted it and returned records with empty `added`, so the backtest
+    published "0 KEV additions across 564 CVEs" and the lag report published
+    "0% coverage across 1,675 entries". Both looked like findings. Neither was.
+    """
+
+    def _with_cache(self, payload):
+        """Run load_kev against a fake cache, recording refetch attempts."""
+        calls = []
+
+        def fake_cached_fetch(name, ttl_hours, fetcher):
+            calls.append(ttl_hours)
+            # A ttl of 0 means "bypass the cache" — serve the fresh shape.
+            if ttl_hours == 0:
+                return json.dumps({"records": {"CVE-2026-1": {"added": "2026-01-01"}}})
+            return payload
+
+        original = kev_catalog.cached_fetch
+        kev_catalog.cached_fetch = fake_cached_fetch
+        try:
+            return kev_catalog.load_kev(), calls
+        finally:
+            kev_catalog.cached_fetch = original
+
+    def test_legacy_list_cache_forces_a_refetch(self):
+        records, calls = self._with_cache(json.dumps(["CVE-2020-1", "CVE-2020-2"]))
+        self.assertIn(0, calls, "a dateless cache was used instead of refetched")
+        self.assertEqual(records, {"CVE-2026-1": {"added": "2026-01-01"}})
+
+    def test_current_shape_is_used_without_refetching(self):
+        payload = json.dumps({"records": {"CVE-2025-9": {"added": "2025-09-09"}}})
+        records, calls = self._with_cache(payload)
+        self.assertNotIn(0, calls, "a perfectly good cache was thrown away")
+        self.assertEqual(records, {"CVE-2025-9": {"added": "2025-09-09"}})
+
+    def test_corrupt_cache_forces_a_refetch(self):
+        records, calls = self._with_cache("{not json")
+        self.assertIn(0, calls)
+        self.assertTrue(records)
+
+    def test_no_records_key_forces_a_refetch(self):
+        records, calls = self._with_cache(json.dumps({"catalog_version": "2026.08"}))
+        self.assertIn(0, calls)
+        self.assertTrue(records)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

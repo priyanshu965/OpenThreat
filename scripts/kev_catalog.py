@@ -51,24 +51,42 @@ def _fetch_raw() -> tuple[str | None, str | None]:
         return None, str(e)[:300]
 
 
-def load_kev(ttl_hours: float = 24) -> dict:
-    """CVE id -> {added, due, vendor, product, ransomware}. {} when unavailable."""
-    cached = cached_fetch(_CACHE, ttl_hours, _fetch_raw)
+def _parse(cached: str | None):
+    """Records dict, or None when the cache is unusable/legacy."""
     if not cached:
-        return {}
+        return None
     try:
         parsed = json.loads(cached)
     except Exception as e:  # noqa: BLE001
         log.warning(f"CISA KEV cache parse failed: {e}")
-        return {}
-
+        return None
     # Legacy shape: a bare list of CVE ids, written by versions before dates
-    # were kept. Honour it rather than crashing on a warm cache.
-    if isinstance(parsed, list):
-        return {str(c).upper(): {"added": "", "due": "", "vendor": "",
-                                 "product": "", "ransomware": False}
-                for c in parsed if c}
-    return parsed.get("records", {}) if isinstance(parsed, dict) else {}
+    # were kept. Unusable — see load_kev.
+    if not isinstance(parsed, dict):
+        return None
+    return parsed.get("records") or None
+
+
+def load_kev(ttl_hours: float = 24) -> dict:
+    """CVE id -> {added, due, vendor, product, ransomware}. {} when unavailable."""
+    records = _parse(cached_fetch(_CACHE, ttl_hours, _fetch_raw))
+    if records is not None:
+        return records
+
+    # A warm cache in the OLD shape is treated as a MISS, not as data.
+    #
+    # The first version of this returned dateless records for a legacy list so
+    # nothing would crash. Nothing did — it just quietly produced wrong answers
+    # for a full TTL. The first deploy restored a legacy cache from the Actions
+    # cache and published a backtest reading "0 KEV additions in 564 CVEs" and
+    # an exploitation-lag report claiming 0% date coverage across 1,675
+    # entries. Both looked like real findings and neither was.
+    #
+    # Every caller of this module wants the dates. A cache entry without them
+    # is not a cheaper answer, it is a different and wrong one, so re-fetch.
+    log.info("  CISA KEV cache predates dateAdded — refetching")
+    records = _parse(cached_fetch(_CACHE, 0, _fetch_raw))
+    return records or {}
 
 
 def kev_ids(ttl_hours: float = 24) -> set[str]:
