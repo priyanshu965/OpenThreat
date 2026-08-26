@@ -29,7 +29,6 @@ Output: data/intel.json  +  data/archive/YYYY-MM-DD.json
 
 import hashlib
 import json
-import logging
 import os
 import re
 import threading
@@ -41,11 +40,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import csv
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import feedparser
 
 # ── Local modules (support both `python scripts/x.py` and package import) ─────
+# `python -m scripts.fetch_intel` does NOT put scripts/ on sys.path, so the
+# sibling imports below would fail there. One line makes every entry point
+# behave the same instead of giving each import its own importlib fallback.
+import sys                                                            # noqa: E402
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 try:
     from config import CONFIG
 except ImportError:
@@ -100,6 +104,46 @@ except Exception:
     annotate_provenance = None
     PROVENANCE_LABELS, PROVENANCE_NOTES, PROVENANCE_ORDER = {}, {}, []
 
+# ── v4 research + enrichment modules ─────────────────────────────────────────
+# Every one is optional in exactly the same way the modules above are: the core
+# feed still builds if a module is missing, its dependency is unavailable, or
+# the upstream it reads is down.
+from kev_catalog import load_kev as load_kev_catalog                  # noqa: E402
+try:
+    from entity_graph import (load_attack_kb, annotate_malware,
+                              build_entity_graph, canonical_actor_names)
+except Exception:
+    load_attack_kb = annotate_malware = build_entity_graph = None
+    canonical_actor_names = None
+try:
+    from malware import load_families, build_malware_view
+except Exception:
+    load_families = build_malware_view = None
+try:
+    from sigma_rules import load_sigma_index, annotate_detections, build_detection_view
+except Exception:
+    load_sigma_index = annotate_detections = build_detection_view = None
+try:
+    from backtest import build_backtest
+except Exception:
+    build_backtest = None
+try:
+    from source_reliability import build_source_reliability
+except Exception:
+    build_source_reliability = None
+try:
+    from exploit_lag import build_exploit_lag
+except Exception:
+    build_exploit_lag = None
+try:
+    from campaigns import build_campaigns
+except Exception:
+    build_campaigns = None
+try:
+    from timeline import publish_timeline
+except Exception:
+    publish_timeline = None
+
 # ── MITRE ATT&CK full database ────────────────────────────────────────────────
 try:
     from mitre_ttps import MITRE_TECHNIQUES, TACTIC_ORDER, map_ttps
@@ -129,21 +173,26 @@ except Exception:
     send_alerts = None
     send_watch_alerts = None
 
-# ── Logging ───────────────────────────────────────────────────────────────────
-class _StructuredAdapter(logging.LoggerAdapter):
-    """Minimal structured logging: extra kwargs become space-separated key=val."""
-    def process(self, msg, kwargs):
-        extra = kwargs.pop("extra", {})
-        if extra:
-            ctx = " ".join(f"{k}={v}" for k, v in sorted(extra.items()))
-            msg = f"{msg}  [{ctx}]"
-        return msg, kwargs
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S"
+# ── Logging + shared HTTP session + disk cache ────────────────────────────────
+# These all live in fetchlib now, so the satellite modules (darkweb, malware,
+# entity_graph, sigma_rules, …) can share exactly one session and one cache
+# without importing this module — which they could never do successfully, since
+# under `python scripts/fetch_intel.py` this module is `__main__` and
+# `from fetch_intel import _SESSION` would import a whole second copy of it.
+# The aliases are re-exported deliberately, not accidentally: the security
+# regression suite pins the cache path-traversal guard through
+# fetch_intel._cache_path / _safe_cache_name / _CACHE_DIR, and several call
+# sites in this file still use the underscored names. Ruff cannot see a test
+# reaching in from another module, hence the explicit noqa.
+from fetchlib import (                                          # noqa: E402,F401
+    log,
+    SESSION as _SESSION,
+    CACHE_DIR as _CACHE_DIR,
+    safe_cache_name as _safe_cache_name,
+    cache_path as _cache_path,
+    cached_fetch as _cached_fetch,
+    StructuredAdapter as _StructuredAdapter,
 )
-log = _StructuredAdapter(logging.getLogger("cyberwatch"), {})
 
 # ── Configuration (see scripts/config.py; override via env vars) ──────────────
 PROJECT_ROOT         = CONFIG.project_root
@@ -171,21 +220,6 @@ VULNCHECK_API_KEY   = CONFIG.vulncheck_api_key
 AI_BATCH_SIZE       = CONFIG.ai_batch_size
 
 HEADERS = {"User-Agent": CONFIG.http_user_agent}
-
-# ── Shared HTTP session ───────────────────────────────────────────────────────
-# Every fetcher used to open a fresh TCP+TLS connection (~37 handshakes/run).
-# One pooled session with a retry adapter removes that, and gives every source
-# uniform backoff on 429/5xx instead of a hard failure.
-_SESSION = requests.Session()
-_SESSION.headers.update(HEADERS)
-_ADAPTER = HTTPAdapter(
-    pool_connections=16, pool_maxsize=16,
-    max_retries=Retry(total=2, backoff_factor=0.6, respect_retry_after_header=True,
-                      status_forcelist=[429, 500, 502, 503, 504],
-                      allowed_methods=frozenset(["GET", "POST"])),
-)
-_SESSION.mount("https://", _ADAPTER)
-_SESSION.mount("http://", _ADAPTER)
 
 # ── RSS Feed Sources (15 total) ───────────────────────────────────────────────
 RSS_SOURCES = [
@@ -1588,64 +1622,11 @@ def fetch_ransomware_live() -> list[dict]:
     return items
 
 # ── Cached external data ──────────────────────────────────────────────────────
-# EPSS scores and CISA KEV change at most daily. Cache them on disk so we don't
-# re-fetch the same ~200 KB payloads every single pipeline run.
-
-_CACHE_DIR = CONFIG.data_dir / ".cache"
-
-# Cache filenames are partly built from values that arrive over the network
-# (e.g. f"ssvc_{cve_id}.json", where cve_id can come straight from a third-party
-# API response). A hostile or compromised upstream feed returning a cve_id of
-# "CVE-../../../../etc/passwd" would otherwise escape the cache directory and
-# turn _cached_fetch into an arbitrary-file read. We ingest 45 third-party
-# feeds, so "upstream returns something malicious" is squarely in scope.
-#
-# Sanitise at the chokepoint rather than at each call site: every caller is
-# covered, and a future one cannot forget.
-_SAFE_CACHE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-def _safe_cache_name(name: str) -> str:
-    cleaned = _SAFE_CACHE_NAME.sub("_", str(name)).lstrip(".") or "cache"
-    return cleaned[:120]
-
-
-def _cache_path(name: str) -> Path:
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    safe = _safe_cache_name(name)
-    path = (_CACHE_DIR / safe).resolve()
-    # Belt and braces: even after sanitising, refuse anything that resolves
-    # outside the cache directory.
-    if not str(path).startswith(str(_CACHE_DIR.resolve())):
-        raise ValueError(f"unsafe cache path for {name!r}")
-    return path
-
-def _cached_fetch(name: str, ttl_hours: int, fetcher) -> str | None:
-    """Return cached content (decoded text) if fresh, else call ``fetcher()``
-    and cache the result atomically (write to tmp, then rename). ``fetcher``
-    must return ``(content_str, None)`` on success or ``(None, error_str)``
-    on failure."""
-    path = _cache_path(name)
-    # Check freshness.
-    if path.exists():
-        age = time.time() - path.stat().st_mtime
-        if age < ttl_hours * 3600:
-            log.info(f"  Cache HIT for {name} ({(age / 3600):.1f}h old)")
-            return path.read_text(encoding="utf-8")
-    # Fetch.
-    content, err = fetcher()
-    if content is not None:
-        # Atomic write: temp file → rename to avoid partial reads.
-        tmp = path.with_suffix(f".{os.getpid()}.tmp")
-        tmp.write_text(content, encoding="utf-8")
-        tmp.replace(path)
-        return content
-    # Fetch failed; try stale cache as fallback.
-    if path.exists():
-        log.warning(f"  Fetch failed for {name}, using stale cache: {err}")
-        return path.read_text(encoding="utf-8")
-    log.warning(f"  Fetch failed for {name} (no cache): {err}")
-    return None
+# EPSS scores and CISA KEV change at most daily, so they are read through the
+# shared on-disk cache rather than re-fetched every run. _cache_path,
+# _safe_cache_name and _cached_fetch are imported from fetchlib at the top of
+# this module; the aliases keep every existing call site (and the security
+# regression tests that pin the path-traversal guard) unchanged.
 
 # ── EPSS Scoring (bulk daily CSV) ─────────────────────────────────────────────
 # The previous implementation cached the API response under a single filename
@@ -1731,15 +1712,16 @@ def fetch_epss_scores(cve_ids: list[str]) -> dict[str, float]:
 # ── CISA KEV (+ optional VulnCheck KEV superset) ──────────────────────────────
 
 def fetch_cisa_kev() -> set[str]:
+    """CVE ids in CISA KEV, plus the VulnCheck superset when a key is set.
+
+    The catalogue itself (with dateAdded, due date and the ransomware flag)
+    lives in kev_catalog.load_kev(); the dates are what the backtest, the
+    exploitation-lag timeline and the source-reliability scoring all read.
+    """
     log.info("Fetching CISA KEV catalog...")
-    cached = _cached_fetch("cisa_kev.json", 24, _fetch_cisa_kev_raw)
-    kev: set[str] = set()
-    if cached:
-        try:
-            kev = set(json.loads(cached))
-            log.info(f"  {len(kev)} CVEs in CISA KEV")
-        except Exception as e:
-            log.warning(f"CISA KEV cache parse failed: {e}")
+    kev = set(load_kev_catalog())
+    if kev:
+        log.info(f"  {len(kev)} CVEs in CISA KEV")
 
     extra = fetch_vulncheck_kev()
     if extra:
@@ -1747,19 +1729,6 @@ def fetch_cisa_kev() -> set[str]:
         log.info(f"  VulnCheck KEV adds {len(new)} CVEs CISA has not listed")
         kev |= extra
     return kev
-
-
-def _fetch_cisa_kev_raw() -> tuple[str | None, str | None]:
-    try:
-        resp = _SESSION.get(
-            "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
-            timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
-        cves = [v.get("cveID", "").upper() for v in data.get("vulnerabilities", []) if v.get("cveID")]
-        return json.dumps(cves), None
-    except Exception as e:
-        return None, str(e)
 
 
 # ── VulnCheck KEV ─────────────────────────────────────────────────────────────
@@ -2064,15 +2033,40 @@ def compute_priority(item: dict) -> dict | None:
     except (TypeError, ValueError):
         epss_val = 0.0
 
-    score = (CONFIG.priority_cvss_weight * (cvss_val / 10.0)
-             + CONFIG.priority_epss_weight * epss_val)
+    # Every term is recorded as it is added. The dashboard lets a reader click
+    # the score open and see the arithmetic, and reconstructing it in
+    # JavaScript from the weights would be a second implementation of this
+    # function that could drift from it silently.
+    components: list[dict] = []
+
+    def _add(label: str, points: float, detail: str = "") -> None:
+        if points:
+            components.append({"label": label, "points": round(points, 1),
+                               "detail": detail})
+
+    cvss_points = CONFIG.priority_cvss_weight * (cvss_val / 10.0)
+    epss_points = CONFIG.priority_epss_weight * epss_val
+    score = cvss_points + epss_points
+    if cvss is not None:
+        _add("Impact (CVSS)", cvss_points,
+             f"{cvss_val:.1f}/10 x {CONFIG.priority_cvss_weight:g} weight")
+    if epss is not None:
+        _add("Exploit probability (EPSS)", epss_points,
+             f"{epss_val * 100:.1f}% x {CONFIG.priority_epss_weight:g} weight")
 
     if exploitation in _SSVC_EXPLOITATION_WEIGHT:
-        score += CONFIG.priority_ssvc_active_bonus * _SSVC_EXPLOITATION_WEIGHT[exploitation]
+        bonus = CONFIG.priority_ssvc_active_bonus * _SSVC_EXPLOITATION_WEIGHT[exploitation]
+        score += bonus
+        _add(f"SSVC exploitation: {exploitation}", bonus,
+             f"{CONFIG.priority_ssvc_active_bonus:g} x "
+             f"{_SSVC_EXPLOITATION_WEIGHT[exploitation]:g}")
     if automatable:
         score += CONFIG.priority_ssvc_auto_bonus
+        _add("SSVC automatable", CONFIG.priority_ssvc_auto_bonus,
+             "exploitable at scale, unattended")
     if total_impact:
         score += CONFIG.priority_ssvc_total_bonus
+        _add("SSVC total technical impact", CONFIG.priority_ssvc_total_bonus)
     if poc:
         # Bonus only — no floor. Flooring every PoC item at 70 pushed it into
         # "Patch this week" regardless of impact, and PoC-in-GitHub indexes a
@@ -2081,11 +2075,25 @@ def compute_priority(item: dict) -> dict | None:
         # stopped ranking. A PoC raises urgency; it does not by itself make a
         # CVSS 3.1 information leak a weekly-patch item.
         score += CONFIG.priority_poc_bonus
+        _add("Public PoC on GitHub", CONFIG.priority_poc_bonus,
+             "raises urgency; deliberately does not floor the score")
     if kev or exploitation == "active":
         score += CONFIG.priority_kev_bonus
-        score = max(score, 90.0)
+        _add("CISA KEV listing" if kev else "Active exploitation (SSVC)",
+             CONFIG.priority_kev_bonus, "confirmed exploitation in the wild")
+        if score < 90.0:
+            components.append({
+                "label": "Confirmed-exploitation floor", "points": round(90.0 - score, 1),
+                "detail": "a CVSS 6.5 exploited today outranks a theoretical 9.8",
+            })
+            score = 90.0
 
+    raw_total = score
     score = round(max(0.0, min(100.0, score)), 1)
+    if raw_total > 100.0:
+        components.append({"label": "Capped at 100",
+                           "points": round(100.0 - raw_total, 1),
+                           "detail": f"raw total was {raw_total:.1f}"})
 
     if score >= 90:   label = "urgent"
     elif score >= 70: label = "elevated"
@@ -2112,7 +2120,8 @@ def compute_priority(item: dict) -> dict | None:
 
     action, action_detail = _ACTION_BY_LABEL[label]
     return {"score": score, "label": label, "rationale": " · ".join(reasons),
-            "action": action, "action_detail": action_detail}
+            "action": action, "action_detail": action_detail,
+            "components": components}
 
 
 # Keyword sets for rule-based classification. Matched as WHOLE TOKENS — the
@@ -2578,7 +2587,7 @@ def run_source(name: str, fetcher, health: dict) -> list[dict]:
 
 def main():
     log.info("═" * 60)
-    log.info("CYBERWATCH v3.2 — Starting intel pipeline")
+    log.info("CYBERWATCH v4.0 — Starting intel pipeline")
     log.info("═" * 60)
 
     all_items = []
@@ -2803,6 +2812,46 @@ def main():
             actor_count += 1
     log.info(f"  Detected threat actors in {actor_count} items")
 
+    # Leak-site fetchers hand us the crew's own spelling, so one run carried
+    # 'Qilin' and 'qilin' as two actors and split every count that keys on the
+    # name. Collapse case variants before anything downstream counts them.
+    if canonical_actor_names:
+        renamed = canonical_actor_names(all_items)
+        if renamed:
+            log.info(f"  Collapsed {renamed} threat-actor case variant(s)")
+
+    # ── ATT&CK knowledge base + malware family entities ────────────────────
+    attack_kb = {}
+    malware_families = {}
+    if load_attack_kb and CONFIG.enable_entity_graph:
+        try:
+            attack_kb = load_attack_kb() or {}
+        except Exception as e:
+            log.warning(f"ATT&CK knowledge base unavailable: {e}")
+    if load_families:
+        try:
+            malware_families = load_families()
+        except Exception as e:
+            log.warning(f"Malpedia family table unavailable: {e}")
+    if annotate_malware and (attack_kb or malware_families):
+        try:
+            tagged = annotate_malware(all_items, attack_kb, malware_families)
+            log.info(f"  Named malware families on {tagged} items")
+        except Exception as e:
+            log.warning(f"Malware tagging failed: {e}")
+
+    # ── Detection coverage (SigmaHQ) ───────────────────────────────────────
+    sigma_index = {}
+    if load_sigma_index and CONFIG.enable_sigma:
+        try:
+            sigma_index = load_sigma_index() or {}
+            if sigma_index and annotate_detections:
+                covered = annotate_detections(all_items, sigma_index)
+                log.info(f"  Detection rules available for {covered} items "
+                         f"({sigma_index.get('rules_indexed', 0)} Sigma rules indexed)")
+        except Exception as e:
+            log.warning(f"Sigma index unavailable: {e}")
+
     # ── CISA Vulnrichment SSVC decision points ─────────────────────────────
     ssvc_map = fetch_vulnrichment(cve_ids) if cve_ids else {}
     if ssvc_map:
@@ -2838,6 +2887,9 @@ def main():
             item["priority_rationale"] = priority["rationale"]
             item["action"]             = priority["action"]
             item["action_detail"]      = priority["action_detail"]
+            # The per-term arithmetic, so the dashboard can open the score up
+            # instead of reimplementing the scorer in JavaScript.
+            item["priority_components"] = priority["components"]
             prioritized += 1
     log.info(f"  Scored priority for {prioritized} items")
 
@@ -2892,6 +2944,92 @@ def main():
     except Exception as e:
         log.warning(f"Daily brief generation failed: {e}")
 
+    # ── Connected intelligence: graph, malware view, detections, campaigns ──
+    # These all run on the finished item list, so they see every enrichment.
+    entity_graph = None
+    if build_entity_graph and CONFIG.enable_entity_graph:
+        try:
+            entity_graph = build_entity_graph(all_items, attack_kb, malware_families,
+                                              CONFIG.graph_max_nodes)
+            if entity_graph:
+                c = entity_graph["counts"]
+                log.info(f"✓ Entity graph: {c['actors']} actors, {c['software']} software, "
+                         f"{c['techniques']} techniques, {c['edges']} edges "
+                         f"({c['known_edges']} from ATT&CK, {c['observed_edges']} observed)")
+        except Exception as e:
+            log.warning(f"Entity graph build failed: {e}")
+
+    malware_view = None
+    if build_malware_view:
+        try:
+            malware_view = build_malware_view(all_items, malware_families,
+                                              attack_kb.get("software", {}))
+            if malware_view:
+                log.info(f"✓ Malware families: {malware_view['count']} named this run "
+                         f"(of {malware_view['corpus_size']} known)")
+        except Exception as e:
+            log.warning(f"Malware view failed: {e}")
+
+    detections = None
+    if build_detection_view and sigma_index:
+        try:
+            detections = build_detection_view(
+                all_items, sigma_index, attack_kb.get("technique_names", {}))
+            if detections:
+                log.info(f"✓ Detections: {detections['coverage_pct']}% of observed "
+                         f"technique activity has a public Sigma rule "
+                         f"({detections['techniques_uncovered']} techniques uncovered)")
+        except Exception as e:
+            log.warning(f"Detection view failed: {e}")
+
+    campaign_view = None
+    if build_campaigns and CONFIG.enable_campaigns:
+        try:
+            campaign_view = build_campaigns(all_items)
+        except Exception as e:
+            log.warning(f"Campaign clustering failed: {e}")
+
+    # ── Research: does the score work, which sources matter, how long do you
+    #    actually have? All three read the archive and the KEV dates, so they
+    #    cost one already-cached fetch and some arithmetic.
+    kev_records = {}
+    try:
+        kev_records = load_kev_catalog()
+    except Exception as e:
+        log.warning(f"KEV catalogue unavailable for research modules: {e}")
+
+    backtest_result = None
+    if build_backtest and CONFIG.enable_backtest and kev_records:
+        try:
+            backtest_result = build_backtest(ARCHIVE_DIR, kev_records)
+        except Exception as e:
+            log.warning(f"Backtest failed: {e}")
+
+    reliability = None
+    if build_source_reliability and CONFIG.enable_source_reliability and kev_records:
+        try:
+            reliability = build_source_reliability(ARCHIVE_DIR, kev_records)
+        except Exception as e:
+            log.warning(f"Source reliability failed: {e}")
+
+    lag = None
+    if build_exploit_lag and CONFIG.enable_exploit_lag and kev_records:
+        try:
+            from exploit_lag import backfill_published_dates, seed_published_dates
+            seeded = seed_published_dates(all_items)
+            if seeded:
+                log.info(f"  Seeded {seeded} CVE publication date(s) from NVD items")
+            backfill_published_dates(list(kev_records))
+            poc_dates = {}
+            for poc in _fetch_recent_pocs():
+                cve = (poc.get("cve_id") or "").upper()
+                created = poc.get("created_at") or ""
+                if cve and created and cve not in poc_dates:
+                    poc_dates[cve] = created.replace(" ", "T")
+            lag = build_exploit_lag(kev_records, poc_dates)
+        except Exception as e:
+            log.warning(f"Exploitation-lag build failed: {e}")
+
     # ── Source breakdown ───────────────────────────────────────────────────
     source_counter = Counter(i.get("source", "Unknown") for i in all_items)
 
@@ -2900,7 +3038,7 @@ def main():
     output = {
         "last_updated": now_utc(),
         "total_items": len(all_items),
-        "pipeline_version": "3.2.0",
+        "pipeline_version": "4.0.0",
         # Honest counts. The old `sources_fetched` included a stub that
         # returned [] by design, and `sources_ok` counted any source that
         # returned anything, however stale.
@@ -2932,10 +3070,62 @@ def main():
         "provenance_labels": PROVENANCE_LABELS,
         "provenance_notes": PROVENANCE_NOTES,
         "provenance_order": PROVENANCE_ORDER,
+        # The weights the scores above were computed with. Published so the
+        # dashboard's score breakdown can name them, and so an archived
+        # snapshot stays interpretable after the weights are retuned.
+        "priority_weights": {
+            "cvss": CONFIG.priority_cvss_weight,
+            "epss": CONFIG.priority_epss_weight,
+            "kev": CONFIG.priority_kev_bonus,
+            "poc": CONFIG.priority_poc_bonus,
+            "ssvc_active": CONFIG.priority_ssvc_active_bonus,
+            "ssvc_automatable": CONFIG.priority_ssvc_auto_bonus,
+            "ssvc_total_impact": CONFIG.priority_ssvc_total_bonus,
+        },
+        # Big derived artifacts are published as their own endpoints (see
+        # exports.write_exports) and only summarised here, so intel.json does
+        # not grow by a few hundred KB that most visitors never look at.
+        "research_available": {
+            "graph": bool(entity_graph),
+            "malware": bool(malware_view),
+            "detections": bool(detections),
+            "campaigns": bool(campaign_view),
+            "backtest": bool(backtest_result),
+            "source_reliability": bool(reliability),
+            "exploit_lag": bool(lag),
+        },
+        "campaign_summary": ({"count": campaign_view["count"],
+                              "high_confidence": sum(
+                                  1 for c in campaign_view["campaigns"]
+                                  if c["confidence"] == "high")}
+                             if campaign_view else None),
+        "detection_summary": ({"coverage_pct": detections["coverage_pct"],
+                               "rules_indexed": detections["rules_indexed"],
+                               "uncovered": detections["techniques_uncovered"]}
+                              if detections else None),
+        # Written into the export step, not into intel.json.
+        "entity_graph": entity_graph,
+        "malware_view": malware_view,
+        "detections": detections,
+        "campaigns": campaign_view,
+        "backtest": backtest_result,
+        "source_reliability": reliability,
+        "exploit_lag": lag,
         "items": all_items,
     }
 
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # ── Split the payload: feed vs research artifacts ──────────────────────
+    # The graph, the malware view, the Sigma coverage table, the campaigns and
+    # the three research reports together run to ~600 KB. They are published as
+    # separate lazily-fetched endpoints, so they are removed from what goes
+    # into intel.json and into the daily archive — otherwise every visitor
+    # downloads all of it to read a list of headlines, and 90 archived copies
+    # of a backtest that is recomputed from those very archives get stored.
+    _RESEARCH_KEYS = ("entity_graph", "malware_view", "detections", "campaigns",
+                      "backtest", "source_reliability", "exploit_lag")
+    feed_output = {k: v for k, v in output.items() if k not in _RESEARCH_KEYS}
 
     # ── Archive once per day, not 24x ───────────────────────────────────────
     # The daily snapshot was rewritten every hour and only the final write
@@ -2947,7 +3137,7 @@ def main():
         archive_age_h = (time.time() - archive_path.stat().st_mtime) / 3600.0
     if archive_age_h is None or archive_age_h >= 20:
         with open(archive_path, "w", encoding="utf-8") as f:
-            json.dump(output, f, indent=2, ensure_ascii=False)
+            json.dump(feed_output, f, indent=2, ensure_ascii=False)
         log.info(f"✓ Archived to {archive_path}")
     else:
         log.info(f"Archive for {today_str} is {archive_age_h:.1f}h old — skipping rewrite")
@@ -2956,7 +3146,7 @@ def main():
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = OUTPUT_PATH.with_suffix(f".{os.getpid()}.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
+        json.dump(feed_output, f, indent=2, ensure_ascii=False)
     tmp.replace(OUTPUT_PATH)   # atomic on POSIX, near-atomic on Windows
     log.info(f"✓ Wrote {len(all_items)} items to {OUTPUT_PATH}")
 
@@ -2983,6 +3173,23 @@ def main():
             log.info(f"✓ Wrote exports: {', '.join(written)}")
         except Exception as e:
             log.error(f"Export generation failed: {e}")
+
+    # ── Time machine: publish a slim snapshot per archived day ─────────────
+    # data/archive/ has held 90 days of history that no page could ever open,
+    # because the archives are not published and a full snapshot is ~270 KB.
+    # This writes a ~60 KB reduced copy per day plus an index, which is what
+    # the date slider and the day-to-day diff read.
+    if publish_timeline and CONFIG.enable_timeline:
+        try:
+            tl = publish_timeline(ARCHIVE_DIR, CONFIG.data_dir / "api", feed_output)
+            arch = tl.get("archive", {})
+            if arch.get("days", 0) < min(30, ARCHIVE_RETENTION_DAYS):
+                log.warning(
+                    f"Archive holds only {arch.get('days', 0)} day(s). Trends, the "
+                    f"sector benchmark and the backtest all read it, so a cache "
+                    f"eviction shows up here first.")
+        except Exception as e:
+            log.error(f"Timeline publish failed: {e}")
 
     # ── Historical trends (aggregated from the archive) ────────────────────
     if build_trends:

@@ -7,12 +7,18 @@
 // failed and the worker never activated: no offline support at all, which was
 // the entire point of shipping one.
 
-const CACHE = "cyberwatch-v4";
+// Bump on every release. The activate handler deletes every cache whose name
+// is not this one, which is what stops old versioned entries accumulating now
+// that staleWhileRevalidate keys on the full URL including ?v=.
+const CACHE = "cyberwatch-v5";
 const PRECACHE = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
+  "./js/query.js",
+  "./js/research.js",
+  "./js/timetravel.js",
   "./manifest.json",
 ];
 
@@ -52,14 +58,29 @@ self.addEventListener("fetch", (e) => {
 
 async function staleWhileRevalidate(req) {
   const cache = await caches.open(CACHE);
-  const hit = await cache.match(req, { ignoreSearch: true });
+
+  // Exact match FIRST, query string included.
+  //
+  // This used to be `cache.match(req, { ignoreSearch: true })`, which made the
+  // asset versioning in index.html (`app.js?v=4.0.1`) inert: every version of
+  // a file collapsed onto one cache entry, so after a deploy a returning
+  // visitor was served the OLD app.js against the NEW data and kept it until
+  // some later load happened to revalidate. A version in the URL only forces a
+  // reload if the cache treats it as a different URL.
+  const exact = await cache.match(req);
   const fetching = fetch(req)
     .then((res) => {
       if (res && res.ok) cache.put(req, res.clone());
       return res;
     })
-    .catch(() => hit);
-  return hit || fetching;
+    .catch(async () => {
+      // Offline. NOW the search-agnostic lookup is the right thing: a
+      // previous version of the file beats a blank page, and the precache
+      // stores unversioned URLs.
+      if (exact) return exact;
+      return cache.match(req, { ignoreSearch: true });
+    });
+  return exact || fetching;
 }
 
 async function networkFirst(req) {

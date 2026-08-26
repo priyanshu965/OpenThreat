@@ -26,18 +26,13 @@ from collections import Counter
 
 from config import CONFIG
 
-try:
-    from fetch_intel import _SESSION, _cached_fetch, log, now_utc
-except Exception:  # pragma: no cover - standalone/tests
-    import logging
-    from datetime import datetime, timezone
-    import requests
-    log = logging.getLogger("cyberwatch.attack_surface")
-    _SESSION = requests.Session()
-    _cached_fetch = None
-
-    def now_utc() -> str:
-        return datetime.now(timezone.utc).isoformat()
+# The pooled session and the disk cache live in fetchlib so every module shares
+# one of each. This used to be a `from fetch_intel import ...` inside a
+# try/except that ALWAYS fell through in production (fetch_intel imports this
+# module before it defines those names, and running the pipeline as a script
+# makes it `__main__` anyway) — so the fallback ran with `_cached_fetch = None`
+# and this module re-downloaded everything on all 24 daily runs.
+from fetchlib import SESSION as _SESSION, cached_fetch as _cached_fetch, log, now_utc  # noqa: F401,E402
 
 _CRTSH = "https://crt.sh/?q=%25.{domain}&output=json"
 

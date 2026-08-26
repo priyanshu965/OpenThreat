@@ -32,7 +32,43 @@ const LS = {
   watchlist: 'cw_watchlist', watchlistOnly: 'cw_watchlistOnly',
   stack: 'cw_stack', dismissed: 'cw_dismissed', starred: 'cw_starred',
   density: 'cw_density', lastVisit: 'cw_lastVisit', darkwebWatch: 'cw_darkwebWatch', notes: 'cw_notes',
+  view: 'cw_view', reviewed: 'cw_reviewed', saved: 'cw_saved', theme: 'cw_theme',
+  lastSeen: 'cw_lastSeen',
 };
+
+// Endpoints published by the pipeline, fetched on demand. Every one of these is
+// its own file precisely so opening the feed does not download the graph, the
+// Sigma coverage table and three research reports nobody asked for.
+const API = {
+  graph:       'data/api/graph.json',
+  malware:     'data/api/malware.json',
+  detections:  'data/api/sigma.json',
+  campaigns:   'data/api/campaigns.json',
+  backtest:    'data/api/backtest.json',
+  reliability: 'data/api/source_reliability.json',
+  lag:         'data/api/exploit_lag.json',
+  timeline:    'data/api/timeline.json',
+  day:         (date) => `data/api/day/${date}.json`,
+};
+
+// VIEWS replace the screen. FEED FILTERS narrow the list in place. Keeping the
+// two in separate vocabularies is the whole point of the v4 navigation: the old
+// build had them in one 16-button strip where clicking NEWS filtered a list and
+// clicking THREAT MAP discarded it.
+const VIEWS = ['feed', 'map', 'landscape', 'matrix', 'graph', 'campaigns',
+  'detections', 'malware', 'geopol', 'darkweb', 'exposure', 'trends',
+  'research', 'about', 'diff'];
+
+const FEED_FILTERS = ['verdicts', 'all', 'fresh', 'exploited', 'stack', 'cve',
+  'incident', 'advisory', 'news', 'iocs', 'starred', 'urgent'];
+
+// Verdict bands, in the order a triage list should present them. This ordering
+// IS the product: "what do I do today", not "what happened".
+const BAND_ORDER = { urgent: 0, elevated: 1, moderate: 2, low: 3 };
+
+// A visit is a session. Reloading the page three times in ten minutes is one
+// visit, so NEW must not reset each time — see rollVisit().
+const VISIT_GAP_MS = 30 * 60 * 1000;
 
 // Severity is ORDINAL (low -> critical), so it takes a one-hue sequential ramp
 // rather than four categorical hues. The previous four-hue set failed the
@@ -58,14 +94,28 @@ const CATEGORIES = ['cve', 'incident', 'advisory', 'news'];
 const store = {
   items: [], filtered: [], meta: {}, brief: null,
   health: {}, staleness: {}, trends: null,
-  filter: 'all', severity: null, query: '', sort: 'priority',
-  renderLimit: PAGE_SIZE, cursor: -1, density: 'comfortable',
+  view: 'feed',
+  // "Verdicts" is the default because it is the answer to the question the tool
+  // exists to answer. On a typical run 251 of 320 items carry no verdict at
+  // all, so an unfiltered feed buries the 9 things that need doing today under
+  // 78% noise.
+  filter: 'verdicts', severity: null, query: '', sort: 'priority',
+  renderLimit: PAGE_SIZE, cursor: -1, density: 'compact',
   watchlist: [], watchlistOnly: false, stack: [],
   dismissed: new Set(), starred: new Set(), showDismissed: false,
+  reviewed: new Set(),
   lastVisit: null, stamp: null,
   mapCat: null, sector: null, mapPaused: false,
   darkwebIndex: null, darkwebQuery: '', darkwebWatch: [], casm: {}, provenance: null, humanOnly: false,
-  notes: {},
+  notes: {}, saved: [], theme: 'auto',
+  // Time machine. `day` is null when looking at today; otherwise it holds the
+  // date string being displayed and `liveItems` keeps today's feed aside.
+  day: null, liveItems: null, timeline: null, dayCache: {},
+  diffFrom: null, diffTo: null,
+  // Parsed structured query (js/query.js). Null when the search box holds
+  // plain text or is empty.
+  parsedQuery: null,
+  research: {},          // lazily-fetched endpoint cache, keyed by API name
 };
 
 // ─── Safe DOM helpers ─────────────────────────────────────────────────────────
@@ -168,19 +218,33 @@ function readUrlState() {
   const hash = location.hash.slice(1);
   if (!hash || hash.startsWith('cve-')) return;
   const params = new URLSearchParams(hash);
-  if (params.get('filter')) store.filter = params.get('filter');
+  const view = params.get('view');
+  if (view && VIEWS.includes(view)) store.view = view;
+  const filter = params.get('filter');
+  if (filter && FEED_FILTERS.includes(filter)) store.filter = filter;
   if (params.get('severity')) store.severity = params.get('severity');
+  if (params.get('sector')) store.sector = params.get('sector');
+  if (params.get('provenance')) store.provenance = params.get('provenance');
   if (params.get('q')) store.query = params.get('q');
   if (params.get('sort')) store.sort = params.get('sort');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(params.get('day') || '')) store.day = params.get('day');
+}
+
+function urlStateParams() {
+  const params = new URLSearchParams();
+  if (store.view && store.view !== 'feed') params.set('view', store.view);
+  if (store.filter && store.filter !== 'verdicts') params.set('filter', store.filter);
+  if (store.severity) params.set('severity', store.severity);
+  if (store.sector) params.set('sector', store.sector);
+  if (store.provenance) params.set('provenance', store.provenance);
+  if (store.query) params.set('q', store.query);
+  if (store.sort !== 'priority') params.set('sort', store.sort);
+  if (store.day) params.set('day', store.day);
+  return params;
 }
 
 function writeUrlState() {
-  const params = new URLSearchParams();
-  if (store.filter && store.filter !== 'all') params.set('filter', store.filter);
-  if (store.severity) params.set('severity', store.severity);
-  if (store.query) params.set('q', store.query);
-  if (store.sort !== 'priority') params.set('sort', store.sort);
-  const next = params.toString();
+  const next = urlStateParams().toString();
   history.replaceState(null, '', next ? `#${next}` : location.pathname + location.search);
 }
 
@@ -247,6 +311,9 @@ async function loadHealthSummary() {
 function initLivePolling() {
   setInterval(async () => {
     if (document.hidden) return;
+    // Never swap the feed out from under someone reading an archived day.
+    // The toast would offer "12 new items" for a day three weeks ago.
+    if (store.day) return;
     try {
       const head = await fetch(DATA_URL, { method: 'HEAD', cache: 'no-store' });
       const stamp = head.headers.get('etag') || head.headers.get('last-modified');
@@ -289,6 +356,60 @@ function showToast(message, actionLabel, onAction) {
   toastTimer = setTimeout(() => host.replaceChildren(), 30000);
 }
 
+// ─── "New to you" ─────────────────────────────────────────────────────────────
+/**
+ * `is_new` from the pipeline means "not in the previous run", and the pipeline
+ * runs hourly — which is why 205 of 320 items shipped with a NEW badge. Two
+ * thirds of a feed shouting NEW is the same as none of it doing so.
+ *
+ * lastVisit was already being written to localStorage and then never read.
+ * This is the read: new means published since YOUR last visit.
+ */
+function isNewToYou(item) {
+  if (!store.lastVisit) return item.is_new === true;
+  const published = Date.parse(item.published || '');
+  if (Number.isNaN(published)) return false;
+  return published > Date.parse(store.lastVisit);
+}
+
+/**
+ * One line per card explaining why it is on screen. With stack matching,
+ * watchlists, sectors, severity and a query all narrowing at once, an item's
+ * presence stops being self-evident.
+ */
+function whyShown(item) {
+  const reasons = [];
+  if (store.filter === 'stack' || matchesStack(item)) {
+    const hay = [item.title, item.description, ...(item.vendors || []),
+      ...(item.products || []), ...(item.affected_products || [])].join(' ').toLowerCase();
+    const hit = store.stack.find((t) => hay.includes(t.toLowerCase()));
+    if (hit) reasons.push(`matches your stack: ${hit}`);
+  }
+  if (store.watchlistOnly || matchesWatchlist(item)) {
+    const hay = `${item.title} ${item.description} ${item.cve_id || ''}`.toLowerCase();
+    const hit = store.watchlist.find((t) => hay.includes(t.toLowerCase()));
+    if (hit) reasons.push(`watchlist: ${hit}`);
+  }
+  if (store.filter === 'verdicts' && item.priority_label) {
+    reasons.push(`scored ${item.priority_label} (P${Math.round(item.priority_score || 0)})`);
+  }
+  if (store.filter === 'exploited') {
+    if (item.cisa_kev) reasons.push('listed in CISA KEV');
+    else if (item.ssvc_exploitation === 'active') reasons.push('SSVC: exploitation active');
+    else if (item.has_poc) reasons.push('public PoC exists');
+  }
+  if (store.filter === 'fresh') reasons.push('published since your last visit');
+  if (store.sector && item.sector === store.sector) reasons.push(`sector: ${item.sector}`);
+  if (store.severity) reasons.push(`severity: ${store.severity}`);
+  if (store.provenance) reasons.push(`provenance: ${item.provenance}`);
+  if (store.query && !store.parsedQuery) reasons.push(`matches "${store.query}"`);
+  if (store.parsedQuery && typeof queryExplain === 'function') {
+    const q = queryExplain(store.parsedQuery);
+    if (q) reasons.push(q);
+  }
+  return reasons.slice(0, 3).join(' · ');
+}
+
 // ─── Filtering ────────────────────────────────────────────────────────────────
 function applyFilters() {
   const q = store.query.trim().toLowerCase();
@@ -305,6 +426,11 @@ function applyFilters() {
     list = list.filter((i) => store.starred.has(i._key));
   } else if (store.filter === 'urgent') {
     list = list.filter((i) => i.priority_label === 'urgent');
+  } else if (store.filter === 'verdicts') {
+    // The 69 items the tool has an opinion about, not the 320 it collected.
+    list = list.filter((i) => !!i.priority_label);
+  } else if (store.filter === 'fresh') {
+    list = list.filter(isNewToYou);
   } else if (store.filter === 'exploited') {
     list = list.filter((i) => i.cisa_kev || i.ssvc_exploitation === 'active' || i.has_poc);
   } else if (CATEGORIES.includes(store.filter)) {
@@ -323,19 +449,30 @@ function applyFilters() {
   if (store.humanOnly) {
     list = list.filter((i) => i.human_authored);
   }
-  if (q) {
+
+  // A structured query (js/query.js) replaces the substring search entirely —
+  // "epss > 0.5 and not kev" is not a phrase to look for in a title.
+  if (store.parsedQuery && typeof queryMatches === 'function') {
+    list = list.filter((i) => queryMatches(store.parsedQuery, i));
+  } else if (q) {
     list = list.filter((i) => (
-      `${i.title} ${i.description} ${i.cve_id || ''} ${i.source} ${(i.vendors || []).join(' ')}`
+      `${i.title} ${i.description} ${i.cve_id || ''} ${i.source} `
+      + `${(i.vendors || []).join(' ')} ${(i.malware || []).join(' ')} `
+      + `${(i.threat_actors || []).join(' ')}`
     ).toLowerCase().includes(q));
   }
 
   list = list.slice();
   if (store.sort === 'priority') {
-    // Priority-first is the default now. `severity` is inferred from headline
-    // keywords and is the weakest signal in the payload; priority_score blends
-    // CVSS, EPSS, KEV, public PoC and SSVC, and is the defensible one.
-    list.sort((a, b) => (b.priority_score || 0) - (a.priority_score || 0)
-      || String(b.published || '').localeCompare(String(a.published || '')));
+    // Band first, then score. Sorting by raw score alone put a P89 "elevated"
+    // above nothing in particular; ordering by band makes the list read as
+    // "patch now, then this week, then next cycle, then monitor", which is
+    // the order a person actually works in.
+    list.sort((a, b) => (
+      (BAND_ORDER[a.priority_label] ?? 9) - (BAND_ORDER[b.priority_label] ?? 9)
+      || (b.priority_score || 0) - (a.priority_score || 0)
+      || String(b.published || '').localeCompare(String(a.published || ''))
+    ));
   } else {
     list.sort((a, b) => String(b.published || '').localeCompare(String(a.published || '')));
   }
@@ -380,6 +517,83 @@ function buildIocSection(item) {
   return wrap;
 }
 
+/**
+ * The score, opened up.
+ *
+ * priority_rationale reads "CISA KEV · EPSS 2.5% · CVSS 9.8" — the inputs, but
+ * not what each was worth. The pipeline now emits `priority_components` with
+ * the points every term contributed, so the arithmetic can be shown rather
+ * than reimplemented in JavaScript (a second implementation of the scorer is a
+ * second thing to drift).
+ */
+function buildScoreBreakdown(item) {
+  const box = el('div', 'score-breakdown');
+  const parts = item.priority_components || [];
+  if (!parts.length) {
+    box.appendChild(el('p', 'score-note',
+      item.priority_rationale || 'No component breakdown was published for this item.'));
+    return box;
+  }
+  const table = el('div', 'score-rows');
+  parts.forEach((part) => {
+    const row = el('div', 'score-row');
+    row.appendChild(el('span', 'score-label', part.label));
+    if (part.detail) row.appendChild(el('span', 'score-detail', part.detail));
+    const pts = Number(part.points) || 0;
+    row.appendChild(el('span', `score-points${pts < 0 ? ' is-negative' : ''}`,
+      `${pts > 0 ? '+' : ''}${pts.toFixed(1)}`));
+    table.appendChild(row);
+  });
+  const total = el('div', 'score-row score-total');
+  total.appendChild(el('span', 'score-label', 'Priority score'));
+  total.appendChild(el('span', 'score-points',
+    String(Math.round(item.priority_score || 0))));
+  table.appendChild(total);
+  box.appendChild(table);
+
+  const band = el('p', 'score-note',
+    `${(item.priority_label || '').toUpperCase()} band → ${item.action || ''}. `
+    + 'Bands: 90+ urgent, 70-89 elevated, 40-69 moderate, below 40 low.');
+  box.appendChild(band);
+  return box;
+}
+
+/** Small "how sure is this" pills. Computed everywhere, shown nowhere until now. */
+function buildConfidence(item) {
+  const wrap = el('div', 'card-confidence');
+  let any = false;
+  if (item.sector_confidence) {
+    const pill = el('span', `conf-pill conf-${item.sector_confidence}`,
+      `sector: ${item.sector_confidence}`);
+    pill.title = item.sector_confidence === 'explicit'
+      ? 'The source named the sector.'
+      : 'Inferred from whole-token keyword rules — a signal, not a fact.';
+    wrap.appendChild(pill); any = true;
+  }
+  if (item.ai_confidence != null) {
+    const level = item.ai_confidence >= 0.75 ? 'high'
+      : item.ai_confidence >= 0.45 ? 'medium' : 'low';
+    const pill = el('span', `conf-pill conf-${level}`,
+      `analysis: ${Math.round(item.ai_confidence * 100)}%`);
+    pill.title = "The model's own stated confidence in its summary.";
+    wrap.appendChild(pill); any = true;
+  }
+  if (item.cvss_source) {
+    const pill = el('span', 'conf-pill conf-inferred', `CVSS via ${item.cvss_source}`);
+    pill.title = 'The CNA left CVSS blank; this came from CISA ADP enrichment.';
+    wrap.appendChild(pill); any = true;
+  }
+  if (item.provenance) {
+    const labels = (store.meta && store.meta.provenance_labels) || {};
+    const notes = (store.meta && store.meta.provenance_notes) || {};
+    const pill = el('span', 'conf-pill prov-dot-' + item.provenance,
+      labels[item.provenance] || item.provenance);
+    pill.title = notes[item.provenance] || '';
+    wrap.appendChild(pill); any = true;
+  }
+  return any ? wrap : null;
+}
+
 function buildCard(item, index) {
   const card = el('div', 'intel-card');
   card.dataset.key = item._key;
@@ -387,12 +601,31 @@ function buildCard(item, index) {
   card.dataset.category = item.category || 'news';
 
   const severity = (item.severity || 'medium').toLowerCase();
-  const isNew = item.is_new === true;
+  const isNew = isNewToYou(item);
   if (isNew) card.classList.add('new-item');
   if (item._justArrived) card.classList.add('just-arrived');
   if (matchesWatchlist(item)) card.classList.add('watchlist-hit');
   if (store.starred.has(item._key)) card.classList.add('starred');
   if (store.dismissed.has(item._key)) card.classList.add('is-dismissed');
+  if (store.reviewed.has(item._key)) card.classList.add('is-reviewed');
+
+  // ── Scan row ────────────────────────────────────────────────────────────
+  // One line carrying the three things a triage pass needs: how bad, what to
+  // do, what it is. Everything else lives behind expansion. The old card was
+  // 224px tall, which put two items on a screen and made a 320-item feed 160
+  // screens long.
+  const scan = el('div', 'card-scan');
+  const band = item.priority_label || null;
+  const rail = el('span', `card-rail prio-${band || severity}`);
+  rail.setAttribute('aria-hidden', 'true');
+  scan.appendChild(rail);
+
+  const verdict = el('span', `card-verdict prio-${band || 'none'}`);
+  verdict.textContent = band ? (item.action || band.toUpperCase()) : severity.toUpperCase();
+  verdict.title = band
+    ? (item.action_detail || item.priority_rationale || '')
+    : 'No exploitability signal — severity inferred from headline keywords';
+  scan.appendChild(verdict);
 
   const top = el('div', 'card-top');
   const title = el('p', 'card-title');
@@ -408,7 +641,13 @@ function buildCard(item, index) {
   }
 
   const badges = el('span', 'card-badges');
-  if (isNew) badges.appendChild(el('span', 'new-item-badge', 'NEW'));
+  if (isNew) {
+    const badge = el('span', 'new-item-badge', 'NEW');
+    badge.title = store.lastVisit
+      ? `Published since your last visit (${new Date(store.lastVisit).toLocaleString()})`
+      : 'New since the last pipeline run';
+    badges.appendChild(badge);
+  }
   if (item.cisa_kev) {
     const kev = el('span', 'cisa-kev-badge', 'KEV');
     kev.title = 'CISA Known Exploited Vulnerabilities catalogue';
@@ -448,40 +687,62 @@ function buildCard(item, index) {
   }
   title.appendChild(badges);
   top.appendChild(title);
+  scan.appendChild(top);
 
-  if (item.priority_label) {
-    const badge = el('span', `badge prio-badge prio-${item.priority_label}`,
-      item.priority_label.toUpperCase());
-    badge.title = item.priority_rationale
-      || 'Blended priority: CVSS + EPSS + KEV + public PoC + SSVC';
-    top.appendChild(badge);
+  // The score is a control, not a decoration: clicking it opens the arithmetic.
+  if (item.priority_score != null) {
+    const score = el('button', `card-score prio-${item.priority_label || 'low'}`,
+      String(Math.round(item.priority_score)));
+    score.type = 'button';
+    score.dataset.act = 'score';
+    score.title = `${item.priority_rationale || 'Blended priority score'}\nClick for the breakdown`;
+    score.setAttribute('aria-label', `Priority ${Math.round(item.priority_score)} — show breakdown`);
+    scan.appendChild(score);
   } else {
-    const badge = el('span', `badge ${severity}`, severity.toUpperCase());
+    const badge = el('span', `card-score sev-${severity}`, severity.slice(0, 3).toUpperCase());
     badge.title = 'Severity inferred from headline keywords — weaker than a priority score';
-    top.appendChild(badge);
+    scan.appendChild(badge);
   }
-  card.appendChild(top);
+  card.appendChild(scan);
 
-  // The action line is the point of the priority score: a decision, not a number.
-  if (item.action) {
+  // "Why am I seeing this?" — one line, only when filters are doing work.
+  const why = whyShown(item);
+  if (why) {
+    const line = el('div', 'card-why');
+    line.appendChild(el('span', 'why-ico', '↳'));
+    line.appendChild(el('span', 'why-text', why));
+    card.appendChild(line);
+  }
+
+  // ── Everything below is behind expansion ────────────────────────────────
+  const detail = el('div', 'card-detail');
+
+  if (item.action_detail) {
     const action = el('div', `card-action prio-${item.priority_label || 'low'}`);
-    action.appendChild(el('span', 'action-verb', item.action));
-    if (item.action_detail) action.appendChild(el('span', 'action-detail', item.action_detail));
-    card.appendChild(action);
+    action.appendChild(el('span', 'action-verb', item.action || ''));
+    action.appendChild(el('span', 'action-detail', item.action_detail));
+    detail.appendChild(action);
   }
 
-  if (item.threat_actors && item.threat_actors.length) {
+  if ((item.threat_actors && item.threat_actors.length)
+      || (item.malware && item.malware.length)) {
     const actors = el('div', 'card-actors');
-    item.threat_actors.slice(0, 3).forEach((actor) => {
+    (item.threat_actors || []).slice(0, 3).forEach((actor) => {
       const chip = el('span', 'threat-actor-badge', actor);
       chip.dataset.actor = actor;
-      chip.title = `Filter by ${actor}`;
+      chip.title = `Open ${actor} in the entity graph`;
       actors.appendChild(chip);
     });
-    card.appendChild(actors);
+    (item.malware || []).slice(0, 4).forEach((family) => {
+      const chip = el('span', 'malware-badge', family);
+      chip.dataset.malware = family;
+      chip.title = `Open the ${family} family`;
+      actors.appendChild(chip);
+    });
+    detail.appendChild(actors);
   }
 
-  if (item.description) card.appendChild(el('p', 'card-description', item.description));
+  if (item.description) detail.appendChild(el('p', 'card-description', item.description));
 
   const meta = el('div', 'card-meta');
   if (item.cve_id) {
@@ -519,45 +780,144 @@ function buildCard(item, index) {
     cwe.title = item.cwe_name || item.cwe;
     meta.appendChild(cwe);
   }
+  if (item.detection_rule_count) {
+    const det = el('span', 'meta-tag meta-detect',
+      `${item.detection_rule_count} SIGMA`);
+    det.dataset.act = 'detections';
+    det.title = `${item.detection_rule_count} public Sigma rules cover this item's `
+      + `techniques (${(item.detection_techniques || []).join(', ')}) — open Detections`;
+    meta.appendChild(det);
+  }
   if (item.published) meta.appendChild(el('span', 'meta-date', timeAgo(new Date(item.published))));
-  card.appendChild(meta);
+  detail.appendChild(meta);
 
-  if (item.iocs && Object.keys(item.iocs).length) card.appendChild(buildIocSection(item));
+  const confidence = buildConfidence(item);
+  if (confidence) detail.appendChild(confidence);
+
+  if (item.iocs && Object.keys(item.iocs).length) detail.appendChild(buildIocSection(item));
 
   const analysis = el('div', 'analysis-section');
   const header = el('div', 'analysis-header');
   const enriched = item.ai_provider && item.ai_provider !== 'rule';
   header.appendChild(el('span', 'analysis-label', enriched ? 'AI THREAT ANALYSIS' : 'SUMMARY'));
   if (item.ai_model) header.appendChild(el('span', 'analysis-model', item.ai_model));
-  if (item.provenance) {
-    const labels = (store.meta && store.meta.provenance_labels) || {};
-    const notes = (store.meta && store.meta.provenance_notes) || {};
-    const badge = el('span', 'prov-badge prov-dot-' + item.provenance,
-                     labels[item.provenance] || item.provenance);
-    badge.title = notes[item.provenance] || '';
-    header.appendChild(badge);
-  }
   analysis.appendChild(header);
   analysis.appendChild(el('p', 'analysis-summary', displaySummary(item)));
   if (item.why_it_matters) analysis.appendChild(el('p', 'analysis-why', item.why_it_matters));
   analysis.appendChild(buildNoteEditor(item));
+  detail.appendChild(analysis);
 
-  card.appendChild(analysis);
+  // The score breakdown lives collapsed inside the card, revealed by the
+  // score button rather than by expanding the whole row.
+  const breakdown = el('div', 'card-score-panel');
+  breakdown.style.display = 'none';
+  breakdown.appendChild(buildScoreBreakdown(item));
+  detail.appendChild(breakdown);
 
   const actions = el('div', 'card-actions');
   const star = el('button', 'card-btn', store.starred.has(item._key) ? '★ Starred' : '☆ Star');
   star.dataset.act = 'star';
+  const review = el('button', 'card-btn',
+    store.reviewed.has(item._key) ? '✓ Reviewed' : '○ Mark reviewed');
+  review.dataset.act = 'review';
+  review.title = 'Counts toward the triage progress bar';
   const dismiss = el('button', 'card-btn',
     store.dismissed.has(item._key) ? '↩ Restore' : '✕ Dismiss');
   dismiss.dataset.act = 'dismiss';
   const copy = el('button', 'card-btn', '⧉ Copy');
   copy.dataset.act = 'copy';
   copy.title = 'Copy as markdown for a ticket';
-  actions.append(star, dismiss, copy);
-  actions.appendChild(el('span', 'card-expand-hint', '▼ EXPAND'));
-  card.appendChild(actions);
+  actions.append(star, review, dismiss, copy);
+  detail.appendChild(actions);
+
+  card.appendChild(detail);
+  card.appendChild(el('span', 'card-expand-hint', '▼'));
 
   return card;
+}
+
+/**
+ * Triage progress.
+ *
+ * An item is REVIEWED when you act on it: star, dismiss, or mark it. The point
+ * is that a verdict list is finishable — nine actionable items is a list you
+ * can get to the end of, and a feed that never acknowledges the end is a feed
+ * you never finish. This is the difference between a dashboard you glance at
+ * and one you work.
+ */
+function triageProgress() {
+  const list = store.filtered;
+  const done = list.filter((i) => store.reviewed.has(i._key)
+    || store.starred.has(i._key) || store.dismissed.has(i._key)).length;
+  return { done, total: list.length };
+}
+
+function renderTriageBar() {
+  const host = $('triage-bar');
+  if (!host) return;
+  const showFor = ['verdicts', 'urgent', 'exploited', 'stack', 'fresh'];
+  if (store.view !== 'feed' || !showFor.includes(store.filter) || !store.filtered.length) {
+    host.style.display = 'none';
+    return;
+  }
+  const { done, total } = triageProgress();
+  host.style.display = 'flex';
+  host.replaceChildren();
+
+  const label = el('span', 'triage-label', `${done} of ${total} reviewed`);
+  const track = el('span', 'triage-track');
+  const fill = el('span', 'triage-fill');
+  fill.style.width = `${total ? (done / total) * 100 : 0}%`;
+  track.appendChild(fill);
+  host.append(label, track);
+
+  if (done >= total && total > 0) {
+    host.classList.add('is-complete');
+  } else {
+    host.classList.remove('is-complete');
+    const next = el('button', 'triage-next', 'NEXT UNREVIEWED →');
+    next.type = 'button';
+    next.id = 'triage-next';
+    host.appendChild(next);
+  }
+  if (done) {
+    const reset = el('button', 'triage-reset', 'RESET');
+    reset.type = 'button';
+    reset.id = 'triage-reset';
+    reset.title = 'Clear review marks for the items on screen';
+    host.appendChild(reset);
+  }
+}
+
+function renderTriageDone() {
+  const host = $('triage-done');
+  if (!host) return;
+  const showFor = ['verdicts', 'urgent', 'exploited', 'stack', 'fresh'];
+  const { done, total } = triageProgress();
+  if (store.view !== 'feed' || !showFor.includes(store.filter)
+      || total === 0 || done < total) {
+    host.style.display = 'none';
+    return;
+  }
+  host.style.display = 'block';
+  host.replaceChildren();
+  host.appendChild(el('div', 'done-mark', '✓'));
+  host.appendChild(el('p', 'done-title', 'Triage complete'));
+  host.appendChild(el('p', 'done-sub',
+    `You have been through all ${total} item${total === 1 ? '' : 's'} the tool `
+    + 'has an opinion about today.'));
+
+  const rest = store.items.filter((i) => !i.priority_label
+    && !store.dismissed.has(i._key)).length;
+  const row = el('div', 'done-actions');
+  const browse = el('button', 'done-btn', `Browse the other ${rest} items`);
+  browse.type = 'button';
+  browse.dataset.act = 'browse-rest';
+  const research = el('button', 'done-btn ghost', 'Open Research');
+  research.type = 'button';
+  research.dataset.act = 'open-research';
+  row.append(browse, research);
+  host.appendChild(row);
 }
 
 function renderCards() {
@@ -575,13 +935,19 @@ function renderCards() {
   if (count) {
     const total = store.filtered.length;
     const hidden = store.dismissed.size;
+    const scope = store.day ? `${store.day} · ` : '';
+    const verdictNote = store.filter === 'verdicts'
+      ? ` · ${store.items.length - total} items with no verdict hidden` : '';
     count.textContent = total === 0
       ? 'No items match'
-      : `Showing ${Math.min(store.renderLimit, total)} of ${total}`
-        + (hidden && !store.showDismissed ? ` · ${hidden} dismissed` : '');
+      : `${scope}Showing ${Math.min(store.renderLimit, total)} of ${total}`
+        + (hidden && !store.showDismissed ? ` · ${hidden} dismissed` : '')
+        + verdictNote;
   }
   const noResults = $('no-results');
   if (noResults) noResults.style.display = store.filtered.length ? 'none' : 'block';
+  renderTriageBar();
+  renderTriageDone();
 
   // Restore the keyboard cursor onto the freshly-rendered cards.
   if (store.cursor >= 0) {
@@ -2766,7 +3132,7 @@ function showAboutView() {
 
   const back = el('button', 'pf-back', '← Back to the feed');
   back.type = 'button';
-  back.addEventListener('click', () => { store.filter = 'all'; update(); });
+  back.addEventListener('click', () => { store.filter = 'all'; setView('feed'); });
   host.appendChild(back);
 }
 
@@ -3208,18 +3574,88 @@ function buildSectorBenchmark(bench) {
   return fig;
 }
 
+const VIEW_NODES = ['loading-state', 'error-state', 'cards-container', 'matrix-view',
+  'trends-view', 'map-view', 'landscape-view', 'geopol-view', 'about-view',
+  'darkweb-view', 'exposure-view', 'no-results', 'graph-view', 'campaigns-view',
+  'detections-view', 'malware-view', 'research-view', 'diff-view',
+  'triage-bar', 'triage-done'];
+
 function hideAllViews() {
   // The map runs a rAF loop; leaving the view must stop it or it burns CPU
   // in the background forever.
   if (typeof stopMapAnimation === 'function') stopMapAnimation();
-  ['loading-state', 'error-state', 'cards-container', 'matrix-view', 'trends-view', 'map-view', 'landscape-view', 'geopol-view', 'about-view', 'darkweb-view', 'exposure-view', 'no-results']
-    .forEach((id) => { const n = $(id); if (n) n.style.display = 'none'; });
+  VIEW_NODES.forEach((id) => { const n = $(id); if (n) n.style.display = 'none'; });
 }
 
 function showContent() {
   hideAllViews();
   const container = $('cards-container');
   if (container) container.style.display = 'grid';
+}
+
+/**
+ * Show one of the v4 views, rendering it through a builder that may need to
+ * fetch its data first. Keeps the loading/error handling in one place instead
+ * of repeating it in seven view functions.
+ */
+async function showLazyView(nodeId, apiKey, builder, emptyMessage) {
+  hideAllViews();
+  const host = $(nodeId);
+  if (!host) return;
+  host.style.display = 'block';
+  host.replaceChildren(el('div', 'view-loading', 'Loading…'));
+  let data = store.research[apiKey];
+  if (data === undefined) {
+    try {
+      const resp = await fetch(API[apiKey], { cache: 'no-cache' });
+      data = resp.ok ? await resp.json() : null;
+    } catch (_) { data = null; }
+    store.research[apiKey] = data;
+  }
+  // The view may have changed while the fetch was in flight.
+  if (host.style.display === 'none') return;
+  host.replaceChildren();
+  if (!data) {
+    host.appendChild(emptyState(emptyMessage));
+    return;
+  }
+  try {
+    builder(host, data);
+  } catch (err) {
+    host.replaceChildren(emptyState(`Could not render this view: ${err.message}`));
+  }
+}
+
+function emptyState(message) {
+  const box = el('div', 'view-empty');
+  box.appendChild(el('p', 'view-empty-icon', '◌'));
+  box.appendChild(el('p', 'view-empty-text', message));
+  return box;
+}
+
+// ─── Theme ────────────────────────────────────────────────────────────────────
+// Three states, not two: `auto` follows the OS, and light and dark are explicit
+// overrides. A tool read for long stretches in a bright room needs a light
+// mode, and the CSS was already fully tokenised, so this is a token swap
+// rather than a restyle.
+const THEME_CYCLE = { auto: 'light', light: 'dark', dark: 'auto' };
+const THEME_ICON = { auto: '◐', light: '☀', dark: '☾' };
+
+function applyTheme() {
+  const root = document.documentElement;
+  if (store.theme === 'auto') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', store.theme);
+  const btn = $('theme-toggle');
+  if (btn) {
+    btn.textContent = THEME_ICON[store.theme] || '◐';
+    btn.title = `Theme: ${store.theme} (click for ${THEME_CYCLE[store.theme]})`;
+  }
+}
+
+function cycleTheme() {
+  store.theme = THEME_CYCLE[store.theme] || 'auto';
+  writeLS(LS.theme, store.theme);
+  applyTheme();
 }
 
 function showError(message) {
@@ -3232,23 +3668,74 @@ function showError(message) {
   }
 }
 
+/**
+ * Route on VIEW, not on filter.
+ *
+ * The old build routed both through store.filter, which is exactly why the two
+ * were indistinguishable in the UI: they were the same variable.
+ */
 function renderAll() {
-  if (store.filter === 'matrix') { showMatrixView(); return; }
-  if (store.filter === 'trends') { showTrendsView(); return; }
-  if (store.filter === 'map') { showMapView(); return; }
-  if (store.filter === 'landscape') { showLandscapeView(); return; }
-  if (store.filter === 'geopol') { showGeopolView(); return; }
-  if (store.filter === 'about') { showAboutView(); return; }
-  if (store.filter === 'darkweb') { showDarkwebView(); return; }
-  if (store.filter === 'exposure') { showExposureView(); return; }
+  syncControls();
+  // The header counts and the "updated N minutes ago" line describe the FEED,
+  // not the current view, so they must not depend on the feed being rendered.
+  // They used to be updated only inside renderSidebar(), which the feed branch
+  // alone reaches — so opening the dashboard on a shared #view=graph link left
+  // the header reading "Initializing feed…" and four em-dashes, for a feed
+  // that had in fact loaded fine.
+  updateHeaderStats();
+  switch (store.view) {
+    case 'matrix':     showMatrixView(); return;
+    case 'trends':     showTrendsView(); return;
+    case 'map':        showMapView(); return;
+    case 'landscape':  showLandscapeView(); return;
+    case 'geopol':     showGeopolView(); return;
+    case 'about':      showAboutView(); return;
+    case 'darkweb':    showDarkwebView(); return;
+    case 'exposure':   showExposureView(); return;
+    case 'graph':      showGraphView(); return;
+    case 'campaigns':  showCampaignsView(); return;
+    case 'detections': showDetectionsView(); return;
+    case 'malware':    showMalwareView(); return;
+    case 'research':   showResearchView(); return;
+    case 'diff':       showDiffView(); return;
+    default: break;
+  }
   showContent();
   renderBrief();
   renderCards();
   renderSidebar();
-  syncControls();
+}
+
+/** Count the filters currently narrowing the feed, for the FILTERS badge. */
+function activeFilterCount() {
+  let n = 0;
+  if (store.severity) n += 1;
+  if (store.sector) n += 1;
+  if (store.provenance) n += 1;
+  if (store.humanOnly) n += 1;
+  if (store.watchlistOnly) n += 1;
+  if (store.query) n += 1;
+  return n;
 }
 
 function syncControls() {
+  const inFeed = store.view === 'feed';
+  const controls = $('feed-controls');
+  // Feed filters are meaningless while a map is on screen, so they leave with
+  // the feed rather than sitting there doing nothing.
+  if (controls) controls.style.display = inFeed ? '' : 'none';
+  const brief = $('daily-brief');
+  if (brief && !inFeed) brief.style.display = 'none';
+  // Same for the row carrying "Showing 40 of 66" and the density/sort toggles:
+  // it sat above the entity graph reading "Loading intelligence feed…".
+  const feedHeader = document.querySelector('.feed-header');
+  if (feedHeader) feedHeader.style.display = inFeed ? '' : 'none';
+
+  document.querySelectorAll('.view-btn').forEach((b) => {
+    const active = b.dataset.view === store.view;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-current', active ? 'page' : 'false');
+  });
   document.querySelectorAll('.stat-pill.is-clickable').forEach((p) => {
     const w = p.dataset.stat;
     const active = w === 'urgent' ? store.filter === 'urgent'
@@ -3270,6 +3757,17 @@ function syncControls() {
   if (densityBtn) {
     densityBtn.textContent = store.density === 'compact' ? '▤ COMPACT' : '▥ COMFORTABLE';
   }
+  const filterBadge = $('active-filter-count');
+  if (filterBadge) {
+    const n = activeFilterCount();
+    filterBadge.textContent = n ? String(n) : '';
+    filterBadge.style.display = n ? '' : 'none';
+  }
+  const timeBtn = $('timemachine-open');
+  if (timeBtn) {
+    timeBtn.textContent = store.day ? `🕰 ${store.day}` : '🕰 TODAY';
+    timeBtn.classList.toggle('is-active', !!store.day);
+  }
   const search = $('search-input');
   if (search && search.value !== store.query) search.value = store.query;
 }
@@ -3279,23 +3777,217 @@ function update() {
   renderAll();
 }
 
+/**
+ * Set the search box contents AND re-parse it.
+ *
+ * Anything that writes store.query must go through here, otherwise a
+ * previously-parsed structured query stays armed and silently filters against
+ * a string the user can no longer see.
+ */
+function setQuery(text) {
+  store.query = String(text || '');
+  store.parsedQuery = (store.query && typeof parseQuery === 'function')
+    ? parseQuery(store.query) : null;
+  const input = $('search-input');
+  if (input) input.value = store.query;
+}
+
+/** Return to the feed and re-filter. Used by anything that arms a feed filter. */
+function backToFeed() {
+  if (store.view !== 'feed') {
+    store.view = 'feed';
+    writeLS(LS.view, 'feed');
+  }
+  update();
+}
+
+// Views worth returning to. `diff` is a comparison of two specific dates and
+// `about` is a profile page — reopening the dashboard onto either is landing
+// on someone else's leftovers, not on your dashboard.
+const TRANSIENT_VIEWS = new Set(['diff', 'about']);
+
+/** Switch the primary view. Views replace the screen; filters do not. */
+function setView(view) {
+  if (!VIEWS.includes(view)) return;
+  store.view = view;
+  writeLS(LS.view, TRANSIENT_VIEWS.has(view) ? 'feed' : view);
+  writeUrlState();
+  renderAll();
+}
+
+// ─── Slide-over panels ────────────────────────────────────────────────────────
+const PANEL_IDS = { filters: 'filter-panel', timemachine: 'timemachine-panel', saved: 'saved-panel' };
+
+function openPanel(which) {
+  const node = $(PANEL_IDS[which]);
+  if (!node) return;
+  Object.values(PANEL_IDS).forEach((id) => { const n = $(id); if (n) n.style.display = 'none'; });
+  node.style.display = 'block';
+  document.body.classList.add('panel-open');
+  if (which === 'filters') renderSidebar();
+  if (which === 'saved') { renderSaved(); $('saved-name')?.focus(); }
+  if (which === 'timemachine' && typeof renderTimeMachine === 'function') renderTimeMachine();
+}
+
+function closePanel(which) {
+  const node = which ? $(PANEL_IDS[which]) : null;
+  if (node) node.style.display = 'none';
+  else Object.values(PANEL_IDS).forEach((id) => { const n = $(id); if (n) n.style.display = 'none'; });
+  if (!Object.values(PANEL_IDS).some((id) => $(id) && $(id).style.display === 'block')) {
+    document.body.classList.remove('panel-open');
+  }
+}
+
+function resetFilters() {
+  store.severity = null;
+  store.sector = null;
+  store.provenance = null;
+  store.humanOnly = false;
+  store.watchlistOnly = false;
+  store.query = '';
+  store.parsedQuery = null;
+  writeLS(LS.severity, null);
+  writeLS(LS.watchlistOnly, false);
+  update();
+}
+
+// ─── Entity drawer (actors, malware, techniques) ──────────────────────────────
+function openEntityModal(kind, name) {
+  const modal = $('entity-modal');
+  const body = $('entity-body');
+  const title = $('entity-title');
+  if (!modal || !body) return;
+  modal.style.display = 'flex';
+  if (title) title.textContent = name;
+  body.replaceChildren(el('div', 'modal-loading', 'Gathering what we know…'));
+
+  const related = store.items.filter((i) => (
+    kind === 'actor' ? (i.threat_actors || []).some((a) => a.toLowerCase() === name.toLowerCase())
+      : kind === 'malware' ? (i.malware || []).some((m) => m.toLowerCase() === name.toLowerCase())
+        : (i.ttps || []).some((t) => t.id === name)
+  ));
+
+  body.replaceChildren();
+  const head = el('div', 'entity-head');
+  head.appendChild(el('span', `entity-kind entity-${kind}`, kind.toUpperCase()));
+  head.appendChild(el('span', 'entity-count',
+    `${related.length} item${related.length === 1 ? '' : 's'} in the current feed`));
+  body.appendChild(head);
+
+  // Known facts from the published graph / malware endpoints, when loaded.
+  const graph = store.research.graph;
+  const node = graph && graph.nodes.find(
+    (n) => n.type === kind && n.label.toLowerCase() === name.toLowerCase());
+  if (node) {
+    if (node.aliases && node.aliases.length) {
+      body.appendChild(el('div', 'modal-section-title', 'Also known as'));
+      const chips = el('div', 'entity-chips');
+      node.aliases.forEach((a) => chips.appendChild(el('span', 'entity-chip', a)));
+      body.appendChild(chips);
+    }
+    const linked = graph.edges.filter(
+      (e) => e.source === node.id || e.target === node.id);
+    const known = linked.filter((e) => e.origin === 'attack');
+    const seen = linked.filter((e) => e.origin === 'observed');
+    if (known.length) {
+      body.appendChild(el('div', 'modal-section-title',
+        `Known relationships (MITRE ATT&CK) — ${known.length}`));
+      body.appendChild(edgeList(known, node.id, graph));
+    }
+    if (seen.length) {
+      body.appendChild(el('div', 'modal-section-title',
+        `Observed in this feed — ${seen.length}`));
+      body.appendChild(edgeList(seen, node.id, graph));
+    }
+    if (node.url) {
+      const link = el('a', 'modal-ref-link', 'MITRE ATT&CK profile');
+      link.href = safeUrl(node.url); link.target = '_blank'; link.rel = 'noopener noreferrer';
+      body.appendChild(link);
+    }
+  } else if (!store.research.graph) {
+    body.appendChild(el('p', 'entity-hint',
+      'Open the Graph view once to load ATT&CK relationships for this entity.'));
+  }
+
+  if (related.length) {
+    body.appendChild(el('div', 'modal-section-title', 'In the feed'));
+    const list = el('div', 'entity-items');
+    related.slice(0, 12).forEach((item) => {
+      const row = el('div', 'entity-item');
+      const href = safeUrl(item.url);
+      if (href) {
+        const a = el('a', 'entity-item-title', item.title || '');
+        a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        row.appendChild(a);
+      } else {
+        row.appendChild(el('span', 'entity-item-title', item.title || ''));
+      }
+      row.appendChild(el('span', 'entity-item-meta',
+        `${item.source || ''} · ${item.published ? timeAgo(new Date(item.published)) : ''}`));
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+  }
+
+  const filterBtn = el('button', 'entity-filter-btn', `Filter the feed to ${name}`);
+  filterBtn.type = 'button';
+  filterBtn.dataset.entityFilter = name;
+  body.appendChild(filterBtn);
+}
+
+function edgeList(edges, selfId, graph) {
+  const labels = {};
+  graph.nodes.forEach((n) => { labels[n.id] = n.name ? `${n.label} ${n.name}` : n.label; });
+  const list = el('div', 'edge-list');
+  edges.slice(0, 40).forEach((e) => {
+    const otherId = e.source === selfId ? e.target : e.source;
+    const row = el('div', 'edge-row');
+    row.appendChild(el('span', 'edge-kind', e.kind));
+    row.appendChild(el('span', 'edge-target', labels[otherId] || otherId));
+    if (e.origin === 'observed' && e.weight > 1) {
+      row.appendChild(el('span', 'edge-weight', `x${e.weight}`));
+    }
+    list.appendChild(row);
+  });
+  if (edges.length > 40) {
+    list.appendChild(el('div', 'edge-more', `+${edges.length - 40} more`));
+  }
+  return list;
+}
+
+function closeEntityModal() {
+  const modal = $('entity-modal');
+  if (modal) modal.style.display = 'none';
+}
+
 // ─── Command palette ──────────────────────────────────────────────────────────
 function paletteCommands() {
   const cmds = [
     { label: 'Sort by priority', hint: 'Blended CVSS + EPSS + KEV + SSVC', run: () => { store.sort = 'priority'; writeLS(LS.sort, store.sort); update(); } },
     { label: 'Sort by newest', hint: 'Publication time', run: () => { store.sort = 'latest'; writeLS(LS.sort, store.sort); update(); } },
-    { label: 'Show all items', run: () => { store.filter = 'all'; store.severity = null; update(); } },
+    { label: 'Show all items', hint: 'including the ones with no verdict', run: () => { store.filter = 'all'; store.severity = null; update(); } },
     { label: 'Show actively exploited', hint: 'KEV, SSVC active, or public PoC', run: () => { store.filter = 'exploited'; update(); } },
     { label: 'Show items affecting my stack', run: () => { store.filter = 'stack'; update(); } },
     { label: 'Show starred', run: () => { store.filter = 'starred'; update(); } },
     { label: 'Toggle dismissed items', run: () => { store.showDismissed = !store.showDismissed; update(); } },
     { label: 'Clear all dismissals', run: () => { store.dismissed.clear(); writeLS(LS.dismissed, []); update(); } },
+    { label: "Show today's verdicts", hint: 'the items the tool has an opinion about', run: () => { store.filter = 'verdicts'; update(); } },
+    { label: 'Show what is new to you', hint: 'published since your last visit', run: () => { store.filter = 'fresh'; update(); } },
     { label: 'Toggle density', run: () => toggleDensity() },
-    { label: 'Open ATT&CK matrix', run: () => { store.filter = 'matrix'; renderAll(); } },
-    { label: 'Open trends', run: () => { store.filter = 'trends'; renderAll(); } },
+    { label: 'Cycle theme (auto / light / dark)', run: () => cycleTheme() },
+    { label: 'Open filters', run: () => openPanel('filters') },
+    { label: 'Reset all filters', run: () => resetFilters() },
+    { label: 'Open the time machine', hint: 'any of the last 90 days', run: () => openPanel('timemachine') },
+    { label: 'Compare two days', hint: 'what changed', run: () => setView('diff') },
+    { label: 'Save this investigation', run: () => openPanel('saved') },
     { label: 'Copy shareable link', run: () => copyText(location.href, 'Link copied') },
     { label: 'Export current view as CSV', run: () => exportCsv() },
+    { label: 'Export analyst notes as markdown', run: () => exportNotes() },
+    { label: 'Clear review marks', run: () => { store.reviewed.clear(); writeLS(LS.reviewed, []); update(); } },
   ];
+  VIEWS.filter((v) => v !== 'about' && v !== 'diff').forEach((view) => {
+    cmds.push({ label: `Go to ${view}`, hint: 'view', run: () => setView(view) });
+  });
   SEVERITY_ORDER.forEach((sev) => {
     cmds.push({
       label: `Filter: ${sev}`,
@@ -3345,7 +4037,7 @@ function renderPalette(query) {
         paletteMatches.push({
           label: item.cve_id ? `${item.cve_id} — ${item.title}` : item.title,
           hint: item.source,
-          run: () => { store.query = item.cve_id || item.title.slice(0, 40); store.filter = 'all'; update(); },
+          run: () => { setQuery(item.cve_id || item.title.slice(0, 40)); store.filter = 'all'; backToFeed(); },
         });
       });
   }
@@ -3556,11 +4248,92 @@ function initEvents() {
   document.addEventListener('click', (ev) => {
     const t = ev.target;
 
+    // Views replace the screen…
+    const viewBtn = t.closest('.view-btn');
+    if (viewBtn) { setView(viewBtn.dataset.view); return; }
+
+    // …feed filters narrow the list in place. Two vocabularies, two handlers.
     const filterBtn = t.closest('.filter-btn');
     if (filterBtn) {
-      store.filter = filterBtn.dataset.filter;
-      if (store.filter !== 'matrix' && store.filter !== 'trends') update();
-      else { syncControls(); renderAll(); }
+      const next = filterBtn.dataset.filter;
+      if (!FEED_FILTERS.includes(next)) return;
+      store.filter = next;
+      writeLS(LS.filter, next);
+      if (store.view !== 'feed') setView('feed');
+      update();
+      return;
+    }
+
+    const panelBtn = t.closest('[data-close]');
+    if (panelBtn) { closePanel(panelBtn.dataset.close); return; }
+    if (t.closest('#filters-open')) { openPanel('filters'); return; }
+    if (t.closest('#timemachine-open')) { openPanel('timemachine'); return; }
+    if (t.closest('#saved-open')) { openPanel('saved'); return; }
+    if (t.closest('#filters-reset')) { resetFilters(); return; }
+    if (t.closest('#theme-toggle')) { cycleTheme(); return; }
+    if (t.closest('#query-help')) { showQueryHelp(); return; }
+
+    const savedOpen = t.closest('[data-saved]');
+    if (savedOpen) { loadInvestigation(savedOpen.dataset.saved); return; }
+    const savedDel = t.closest('[data-saved-del]');
+    if (savedDel) {
+      store.saved = store.saved.filter((s) => s.name !== savedDel.dataset.savedDel);
+      writeLS(LS.saved, store.saved);
+      renderSaved();
+      return;
+    }
+
+    if (t.closest('#triage-next')) {
+      const idx = store.filtered.findIndex((i) => !store.reviewed.has(i._key)
+        && !store.starred.has(i._key) && !store.dismissed.has(i._key));
+      if (idx >= 0) {
+        if (idx >= store.renderLimit) {
+          store.renderLimit = idx + PAGE_SIZE;
+          renderCards();
+        }
+        store.cursor = idx;
+        const cards = [...document.querySelectorAll('.intel-card')];
+        cards.forEach((c) => c.classList.remove('cursor'));
+        cards[idx]?.classList.add('cursor');
+        cards[idx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+      return;
+    }
+    if (t.closest('#triage-reset')) {
+      store.filtered.forEach((i) => store.reviewed.delete(i._key));
+      writeLS(LS.reviewed, [...store.reviewed]);
+      update();
+      return;
+    }
+
+    const doneBtn = t.closest('.done-btn');
+    if (doneBtn) {
+      if (doneBtn.dataset.act === 'browse-rest') { store.filter = 'all'; update(); }
+      if (doneBtn.dataset.act === 'open-research') setView('research');
+      return;
+    }
+
+    const entityFilter = t.closest('[data-entity-filter]');
+    if (entityFilter) {
+      closeEntityModal();
+      store.query = entityFilter.dataset.entityFilter;
+      store.parsedQuery = null;
+      store.filter = 'all';
+      setView('feed');
+      update();
+      return;
+    }
+
+    const malwareChip = t.closest('.malware-badge');
+    if (malwareChip) {
+      ev.stopPropagation();
+      openEntityModal('malware', malwareChip.dataset.malware);
+      return;
+    }
+
+    const graphNode = t.closest('[data-node-kind]');
+    if (graphNode) {
+      openEntityModal(graphNode.dataset.nodeKind, graphNode.dataset.nodeLabel);
       return;
     }
 
@@ -3574,43 +4347,36 @@ function initEvents() {
     }
 
     const srcRow = t.closest('.src-row');
-    if (srcRow) { store.query = srcRow.dataset.source; update(); return; }
+    if (srcRow) { setQuery(srcRow.dataset.source); backToFeed(); return; }
 
     const statPill = t.closest('.stat-pill.is-clickable');
     if (statPill) {
       const which = statPill.dataset.stat;
       if (which === 'total') {
         store.filter = 'all'; store.severity = null; store.sector = null;
-        store.query = ''; store.watchlistOnly = false;
+        store.provenance = null; store.watchlistOnly = false;
+        setQuery('');
       } else if (which === 'urgent') {
         // Urgent is a priority band, not a severity, so it filters differently.
-        store.filter = store.filter === 'urgent' ? 'all' : 'urgent';
+        store.filter = store.filter === 'urgent' ? 'verdicts' : 'urgent';
         store.severity = null;
       } else {
         store.severity = store.severity === which ? null : which;
-        if (store.filter === 'matrix' || store.filter === 'trends'
-            || store.filter === 'map' || store.filter === 'landscape'
-            || store.filter === 'geopol') {
-          store.filter = 'all';
-        }
       }
-      update();
+      // A severity filter means nothing while a map is on screen, so selecting
+      // one returns to the feed rather than silently arming a hidden filter.
+      backToFeed();
       return;
     }
 
     const catRow = t.closest('.cat-row');
-    if (catRow) { store.filter = catRow.dataset.filter; update(); return; }
+    if (catRow) { store.filter = catRow.dataset.filter; backToFeed(); return; }
 
     const provRow = t.closest('.prov-row');
     if (provRow) {
       const p = provRow.dataset.provenance;
       store.provenance = store.provenance === p ? null : p;
-      if (store.filter === 'map' || store.filter === 'matrix'
-          || store.filter === 'trends' || store.filter === 'landscape'
-          || store.filter === 'geopol') {
-        store.filter = 'all';
-      }
-      update();
+      backToFeed();
       return;
     }
 
@@ -3619,7 +4385,7 @@ function initEvents() {
       const s = lsSector.dataset.sector;
       store.sector = store.sector === s ? null : s;
       store.filter = 'all';
-      update();
+      backToFeed();
       return;
     }
 
@@ -3627,24 +4393,26 @@ function initEvents() {
     if (sectorRow) {
       const sec = sectorRow.dataset.sector;
       store.sector = store.sector === sec ? null : sec;
-      if (store.filter === 'map' || store.filter === 'matrix' || store.filter === 'trends') {
-        store.filter = 'all';
-      }
-      update();
+      backToFeed();
       return;
     }
 
     const actor = t.closest('.threat-actor-badge');
-    if (actor) { store.query = actor.dataset.actor; store.filter = 'all'; update(); return; }
+    if (actor) { ev.stopPropagation(); openEntityModal('actor', actor.dataset.actor); return; }
 
     const source = t.closest('.meta-source');
-    if (source && source.dataset.source) { store.query = source.dataset.source; update(); return; }
+    if (source && source.dataset.source) {
+      ev.stopPropagation();
+      setQuery(`source:"${source.dataset.source}"`);
+      backToFeed();
+      return;
+    }
 
     const cve = t.closest('.cve-id');
     if (cve) { ev.stopPropagation(); openCveModal(cve.dataset.cve); return; }
 
     const tech = t.closest('.tech-cell');
-    if (tech) { store.filter = 'all'; store.query = tech.dataset.technique; update(); return; }
+    if (tech) { store.filter = 'all'; setQuery(tech.dataset.technique); backToFeed(); return; }
 
     const chipX = t.closest('.chip-x');
     if (chipX) {
@@ -3660,6 +4428,24 @@ function initEvents() {
       return;
     }
 
+    // Clicking the score opens the arithmetic behind it, in place.
+    const scoreBtn = t.closest('.card-score[data-act="score"]');
+    if (scoreBtn) {
+      ev.stopPropagation();
+      const card = scoreBtn.closest('.intel-card');
+      const panel = card && card.querySelector('.card-score-panel');
+      if (panel) {
+        const open = panel.style.display !== 'none';
+        panel.style.display = open ? 'none' : 'block';
+        card.classList.toggle('expanded', !open || card.classList.contains('expanded'));
+        scoreBtn.classList.toggle('is-open', !open);
+      }
+      return;
+    }
+
+    const detectTag = t.closest('.meta-detect');
+    if (detectTag) { ev.stopPropagation(); setView('detections'); return; }
+
     const cardBtn = t.closest('.card-btn');
     if (cardBtn) {
       ev.stopPropagation();
@@ -3669,6 +4455,7 @@ function initEvents() {
       const act = cardBtn.dataset.act;
       if (act === 'star') { toggleSet(store.starred, item._key, LS.starred); update(); }
       if (act === 'dismiss') { toggleSet(store.dismissed, item._key, LS.dismissed); update(); }
+      if (act === 'review') { toggleSet(store.reviewed, item._key, LS.reviewed); update(); }
       if (act === 'copy') copyText(itemAsMarkdown(item), 'Copied as markdown');
       return;
     }
@@ -3684,17 +4471,18 @@ function initEvents() {
     }
     if (t.closest('#density-toggle')) { toggleDensity(); return; }
     if (t.closest('#palette-open')) { openPalette(); return; }
-    if (t.closest('.modal-close') || t.classList.contains('modal-overlay')) { closeCveModal(); return; }
+    if (t.closest('.modal-close') || t.classList.contains('modal-overlay')) {
+      closeCveModal();
+      closeEntityModal();
+      return;
+    }
     if (t.closest('#watchlist-only-btn')) {
       store.watchlistOnly = !store.watchlistOnly;
       writeLS(LS.watchlistOnly, store.watchlistOnly);
       update();
       return;
     }
-    if (t.closest('#toggle-sidebar-btn')) {
-      document.querySelector('.sidebar')?.classList.toggle('open');
-      return;
-    }
+    if (t.closest('#filters-open')) { openPanel('filters'); return; }
     if (t.closest('#palette')) {
       if (t.id === 'palette') closePalette();
       return;
@@ -3711,9 +4499,31 @@ function initEvents() {
     search.addEventListener('input', (ev) => {
       clearTimeout(debounce);
       const value = ev.target.value;
-      debounce = setTimeout(() => { store.query = value; update(); }, 180);
+      debounce = setTimeout(() => {
+        store.query = value;
+        // js/query.js turns "exploited VPN items this week" and
+        // "epss > 0.5 and not kev" into a filter set. It returns null for
+        // anything it cannot parse, and applyFilters falls back to substring
+        // search — a query language that swallows a plain keyword search
+        // would be a downgrade.
+        store.parsedQuery = (value && typeof parseQuery === 'function')
+          ? parseQuery(value) : null;
+        const wrapper = search.closest('.search-wrapper');
+        if (wrapper) wrapper.classList.toggle('is-structured', !!store.parsedQuery);
+        if (store.view !== 'feed') { store.view = 'feed'; writeLS(LS.view, 'feed'); }
+        update();
+      }, 180);
     });
   }
+
+  const savedName = document.body;
+  savedName.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    if (ev.target && ev.target.id === 'saved-name') {
+      saveInvestigation(ev.target.value);
+      ev.target.value = '';
+    }
+  });
 
   const watchInput = $('watchlist-input');
   if (watchInput) {
@@ -3768,6 +4578,9 @@ function initEvents() {
   initKeyboard();
 }
 
+let goPending = false;
+let goTimer = null;
+
 /** Gmail-style triage. The point is to make 250 items tractable. */
 function initKeyboard() {
   document.addEventListener('keydown', (ev) => {
@@ -3781,16 +4594,54 @@ function initKeyboard() {
     if (ev.key === 'Escape') {
       closePalette();
       closeCveModal();
+      closeEntityModal();
+      closePanel();
+      const help = $('shortcuts');
+      if (help) help.style.display = 'none';
       if (typing) ev.target.blur();
       return;
     }
     if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+
+    // `g` then a digit jumps between views, the way every list-shaped tool
+    // does it. Chords beat thirteen more single-key bindings.
+    if (goPending) {
+      goPending = false;
+      clearTimeout(goTimer);
+      const idx = Number(ev.key);
+      if (idx >= 1 && idx <= 9) {
+        ev.preventDefault();
+        setView(VIEWS[idx - 1]);
+        return;
+      }
+    }
+    if (ev.key === 'g') {
+      goPending = true;
+      clearTimeout(goTimer);
+      goTimer = setTimeout(() => { goPending = false; }, 1200);
+      return;
+    }
 
     switch (ev.key) {
       case '/':
         ev.preventDefault();
         $('search-input')?.focus();
         break;
+      case 'f': ev.preventDefault(); openPanel('filters'); break;
+      case 't': ev.preventDefault(); openPanel('timemachine'); break;
+      case 'r': {
+        const item = currentItem();
+        if (item) { toggleSet(store.reviewed, item._key, LS.reviewed); update(); }
+        break;
+      }
+      case 'n': {
+        const item = currentItem();
+        if (!item) break;
+        const card = cardForKey(item._key);
+        card?.classList.add('expanded');
+        card?.querySelector('.note-input')?.focus();
+        break;
+      }
       case 'j': ev.preventDefault(); moveCursor(1); break;
       case 'k': ev.preventDefault(); moveCursor(-1); break;
       case 'e': case 'Enter': {
@@ -3831,35 +4682,228 @@ function initKeyboard() {
 }
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
+/**
+ * Decide what "your last visit" means, and keep it stable for this session.
+ *
+ * The naive version — write lastVisit on every load — makes NEW empty as soon
+ * as you refresh, which is worse than the hourly badge it replaces. So two
+ * stamps are kept: `lastSeen` is bumped continuously while the tab is open,
+ * and `lastVisit` only rolls forward to the previous `lastSeen` when the gap
+ * since it exceeds VISIT_GAP_MS. Reloading three times in ten minutes is one
+ * visit; coming back tomorrow is a new one.
+ */
+function rollVisit() {
+  const now = Date.now();
+  const lastSeen = Date.parse(readLS(LS.lastSeen, '') || '');
+  const lastVisit = readLS(LS.lastVisit, null);
+
+  if (!Number.isNaN(lastSeen) && lastSeen && (now - lastSeen) > VISIT_GAP_MS) {
+    store.lastVisit = new Date(lastSeen).toISOString();
+    writeLS(LS.lastVisit, store.lastVisit);
+  } else {
+    store.lastVisit = lastVisit || null;
+  }
+  const bump = () => writeLS(LS.lastSeen, new Date().toISOString());
+  bump();
+  setInterval(bump, 60000);
+  window.addEventListener('pagehide', bump);
+}
+
 function restoreState() {
-  store.filter = readLS(LS.filter, 'all') || 'all';
+  store.theme = readLS(LS.theme, 'auto') || 'auto';
+  const savedView = readLS(LS.view, 'feed');
+  store.view = VIEWS.includes(savedView) ? savedView : 'feed';
+  const savedFilter = readLS(LS.filter, 'verdicts');
+  store.filter = FEED_FILTERS.includes(savedFilter) ? savedFilter : 'verdicts';
   store.severity = readLS(LS.severity, null) || null;
   store.sort = readLS(LS.sort, 'priority') || 'priority';
-  store.density = readLS(LS.density, 'comfortable') || 'comfortable';
+  // Compact by default. Comfortable put ~2 cards on a screen, which made a
+  // 320-item feed roughly 160 screens long; triage wants 15-20 rows visible
+  // and expands only what is interesting.
+  store.density = readLS(LS.density, 'compact') || 'compact';
   store.watchlist = readLS(LS.watchlist, []) || [];
   store.watchlistOnly = readLS(LS.watchlistOnly, false) === true;
   store.stack = readLS(LS.stack, []) || [];
   store.dismissed = new Set(readLS(LS.dismissed, []) || []);
   store.starred = new Set(readLS(LS.starred, []) || []);
+  store.reviewed = new Set(readLS(LS.reviewed, []) || []);
   store.darkwebWatch = readLS(LS.darkwebWatch, []) || [];
-  store.lastVisit = readLS(LS.lastVisit, null);
   store.notes = readLS(LS.notes, {}) || {};
-  writeLS(LS.lastVisit, new Date().toISOString());
+  store.saved = readLS(LS.saved, []) || [];
+  rollVisit();
   readUrlState();
+  applyTheme();
+}
+
+// ─── Saved investigations ─────────────────────────────────────────────────────
+// URL state already made a filter combination shareable; this makes one
+// nameable and returnable-to, which is the half that was missing.
+function currentInvestigation(name) {
+  return {
+    name,
+    saved: new Date().toISOString(),
+    view: store.view,
+    filter: store.filter,
+    severity: store.severity,
+    sector: store.sector,
+    provenance: store.provenance,
+    query: store.query,
+    sort: store.sort,
+    watchlistOnly: store.watchlistOnly,
+    humanOnly: store.humanOnly,
+  };
+}
+
+function saveInvestigation(name) {
+  const clean = String(name || '').trim().slice(0, 60);
+  if (!clean) return;
+  store.saved = store.saved.filter((s) => s.name !== clean);
+  store.saved.unshift(currentInvestigation(clean));
+  store.saved = store.saved.slice(0, 30);
+  writeLS(LS.saved, store.saved);
+  showToast(`Saved "${clean}"`);
+  renderSaved();
+}
+
+function loadInvestigation(name) {
+  const found = store.saved.find((s) => s.name === name);
+  if (!found) return;
+  store.view = VIEWS.includes(found.view) ? found.view : 'feed';
+  store.filter = FEED_FILTERS.includes(found.filter) ? found.filter : 'verdicts';
+  store.severity = found.severity || null;
+  store.sector = found.sector || null;
+  store.provenance = found.provenance || null;
+  store.query = found.query || '';
+  store.sort = found.sort || 'priority';
+  store.watchlistOnly = !!found.watchlistOnly;
+  store.humanOnly = !!found.humanOnly;
+  store.parsedQuery = (store.query && typeof parseQuery === 'function')
+    ? parseQuery(store.query) : null;
+  closePanel('saved');
+  update();
+}
+
+function renderSaved() {
+  const host = $('saved-body');
+  if (!host) return;
+  host.replaceChildren();
+
+  const form = el('div', 'saved-form');
+  const input = el('input', 'watchlist-input');
+  input.id = 'saved-name';
+  input.type = 'text';
+  input.placeholder = 'Name this view and press Enter';
+  input.setAttribute('aria-label', 'Name for the saved investigation');
+  form.appendChild(input);
+  host.appendChild(form);
+
+  const summary = el('p', 'saved-current',
+    `Currently: ${store.view}${store.view === 'feed' ? ` / ${store.filter}` : ''}`
+    + `${store.query ? ` · "${store.query}"` : ''}`
+    + `${store.severity ? ` · ${store.severity}` : ''}`
+    + `${store.sector ? ` · ${store.sector}` : ''}`);
+  host.appendChild(summary);
+
+  if (!store.saved.length) {
+    host.appendChild(el('p', 'saved-empty',
+      'Nothing saved yet. Investigations are stored in this browser only.'));
+    return;
+  }
+  const list = el('div', 'saved-list');
+  store.saved.forEach((entry) => {
+    const row = el('div', 'saved-row');
+    const open = el('button', 'saved-open', entry.name);
+    open.type = 'button';
+    open.dataset.saved = entry.name;
+    const meta = el('span', 'saved-meta',
+      `${entry.view}${entry.view === 'feed' ? ` · ${entry.filter}` : ''}`);
+    const del = el('button', 'saved-del', '×');
+    del.type = 'button';
+    del.dataset.savedDel = entry.name;
+    del.setAttribute('aria-label', `Delete ${entry.name}`);
+    row.append(open, meta, del);
+    list.appendChild(row);
+  });
+  host.appendChild(list);
 }
 
 function initAvatar() {
   const btn = $('about-open');
   if (!btn) return;
   btn.replaceChildren(avatarSvg(28));
-  btn.addEventListener('click', () => { store.filter = 'about'; update(); });
+  btn.addEventListener('click', () => setView('about'));
+}
+
+/** Query syntax, shown from the `?` next to the search box. */
+function showQueryHelp() {
+  const modal = $('entity-modal');
+  const body = $('entity-body');
+  const title = $('entity-title');
+  if (!modal || !body) return;
+  modal.style.display = 'flex';
+  if (title) title.textContent = 'Search & query';
+  body.replaceChildren();
+
+  body.appendChild(el('p', 'query-help-lead',
+    'Type plain words to search, or a structured query. Everything runs in '
+    + 'your browser over the loaded feed — nothing is sent anywhere.'));
+
+  const examples = (typeof queryExamples === 'function') ? queryExamples() : [];
+  if (examples.length) {
+    body.appendChild(el('div', 'modal-section-title', 'Try one'));
+    const list = el('div', 'query-examples');
+    examples.forEach((ex) => {
+      const btn = el('button', 'query-example', ex.q);
+      btn.type = 'button';
+      btn.dataset.queryExample = ex.q;
+      const row = el('div', 'query-example-row');
+      row.appendChild(btn);
+      row.appendChild(el('span', 'query-example-note', ex.note));
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+  }
+
+  body.appendChild(el('div', 'modal-section-title', 'Fields'));
+  const fields = (typeof queryFields === 'function') ? queryFields() : [];
+  const table = el('div', 'query-fields');
+  fields.forEach((f) => {
+    const row = el('div', 'query-field-row');
+    row.appendChild(el('code', 'query-field-name', f.name));
+    row.appendChild(el('span', 'query-field-note', f.note));
+    table.appendChild(row);
+  });
+  body.appendChild(table);
+
+  body.appendChild(el('div', 'modal-section-title', 'Operators'));
+  body.appendChild(el('p', 'query-help-note',
+    'Comparisons: > >= < <= = != · combine with AND / OR / NOT (and parentheses) · '
+    + 'quote phrases with "double quotes" · plain words fall back to substring search.'));
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   restoreState();
   initAvatar();
   initEvents();
-  loadIntelData().then((ok) => { if (ok) initLivePolling(); });
+  document.addEventListener('click', (ev) => {
+    const ex = ev.target.closest('[data-query-example]');
+    if (!ex) return;
+    closeEntityModal();
+    setQuery(ex.dataset.queryExample);
+    store.filter = 'all';
+    backToFeed();
+  });
+  loadIntelData().then((ok) => {
+    if (!ok) return;
+    initLivePolling();
+    // A shared link can name a past day (#day=2026-07-12). Restoring it has to
+    // wait for the live feed, because entering a day parks today's items.
+    if (store.day && typeof enterDay === 'function') {
+      const wanted = store.day;
+      store.day = null;
+      enterDay(wanted);
+    }
+  });
 });
 
 if ('serviceWorker' in navigator) {

@@ -2,9 +2,9 @@
 
 # 🛡️ CyberWatch
 
-**A self-updating threat intelligence pipeline and dashboard.**
+**A self-updating threat intelligence pipeline, dashboard and research bench.**
 
-Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 42 configured sources every hour, scores each item against how likely it is to actually be exploited, and renders the result as a static dashboard.
+Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 43 configured sources every hour, scores each item against how likely it is to actually be exploited, links what it finds into an entity graph, and then — unusually — checks its own scoring against what really happened.
 
 [![CI](https://github.com/priyanshu965/Cyberwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/priyanshu965/Cyberwatch/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -16,14 +16,33 @@ Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 42 co
 
 ---
 
+## What it answers
+
+Most threat feeds answer *what happened*. This one is built to answer **what do I do today**, and then to show its working:
+
+| Question | Where |
+|---|---|
+| What needs action today? | Feed, defaulting to **Verdicts** — the handful of items the tool has an opinion about |
+| Why is this item ranked here? | Click the score. It opens the arithmetic, term by term |
+| Who is behind it, and with what? | **Graph** — actors → malware → techniques → sectors |
+| Are these separate stories or one operation? | **Campaigns** |
+| Can I detect it? | **Detections** — ATT&CK activity crossed with SigmaHQ rules, and the gaps |
+| Does the score actually work? | **Research → Scoring backtest** |
+| Which of my 43 feeds are worth reading? | **Research → Source reliability** |
+| How long is the patch window, really? | **Research → Exploitation lag** |
+| What did the board look like the day this dropped? | **Time machine**, over 90 days of archives |
+| What changed since yesterday? | **Diff**, two dates side by side |
+
+---
+
 ## Architecture
 
-The whole system is one Python process that runs on a schedule, plus a static frontend that reads its output. There is no database, no server and no runtime backend. State between runs is limited to what the next run genuinely cannot recompute.
+One Python process on a schedule, plus a static frontend that reads its output. No database, no server, no runtime backend. State between runs is limited to what the next run genuinely cannot recompute.
 
 ```
                       ┌──────────────────────────────────────┐
    19 RSS feeds  ────▶ │                                      │
-   23 JSON APIs  ────▶ │   fetch_intel.main()                 │
+   24 JSON APIs  ────▶ │   fetch_intel.main()                 │
                       │   ThreadPoolExecutor(max_workers=8)  │
                       └──────────────────┬───────────────────┘
                                          │  raw items
@@ -38,57 +57,96 @@ The whole system is one Python process that runs on a schedule, plus a static fr
                     │    map_ttps()          ATT&CK, 504 tech │
                     │    extract_iocs()      source-gated     │
                     │    fetch_epss_scores() full daily corpus│
-                    │    fetch_cisa_kev()    + VulnCheck KEV  │
+                    │    fetch_cisa_kev()    + dates          │
                     │    fetch_vulnrichment()SSVC points      │
                     │    build_poc_map()     PoC-in-GitHub    │
+                    │    annotate_malware()  ATT&CK+Malpedia  │
+                    │    annotate_detections() SigmaHQ        │
                     └────────────────────┬────────────────────┘
                                          │
                     ┌────────────────────▼────────────────────┐
                     │  SCORE                                  │
                     │    compute_priority()  0-100 + ACTION   │
+                    │                        + components     │
                     │    enrich_with_ai()    batched, cached  │
                     │    build_daily_brief() one call per day │
                     └────────────────────┬────────────────────┘
                                          │
-         ┌──────────────┬────────────────┼──────────────┬──────────────┐
-    intel.json      archive/        exports/        data/api/       webhook
-    (full feed)   (daily snapshot)  STIX·CSV·RSS   static JSON    Slack/Discord
+                    ┌────────────────────▼────────────────────┐
+                    │  CONNECT + MEASURE                      │
+                    │    build_entity_graph()  known+observed │
+                    │    build_campaigns()     clustering     │
+                    │    build_backtest()      does it work?  │
+                    │    build_source_reliability()           │
+                    │    build_exploit_lag()   patch window   │
+                    │    publish_timeline()    90 slim days   │
+                    └────────────────────┬────────────────────┘
+                                         │
+   ┌───────────┬──────────┬──────────────┼───────────┬──────────┬─────────┐
+intel.json  archive/  api/day/*     exports/      data/api/   webhook  state.tar.gz
+(feed only) (snapshot)(time machine)STIX·MISP·CSV static JSON  Slack   (durability)
 ```
+
+`intel.json` carries the **feed**. Everything large and occasional — the graph, the Sigma coverage table, the three research reports — is published as its own endpoint and fetched only when someone opens that view. Folding them into the feed payload would roughly triple what a visitor downloads to read a list of headlines.
+
+---
 
 ## Ingestion
 
-Sources are declared as data, not code. Feeds live in `RSS_SOURCES` and per-source fetchers are registered in `API_SOURCES`, and both are fanned out across a thread pool. Every fetcher is wrapped in `run_source()`, which catches anything it throws and records a health entry instead of letting one bad feed abort the run. A source that returns nothing, errors, or serves stale content is reported in `source_health` and the pipeline continues.
+Sources are declared as data, not code. Feeds live in `RSS_SOURCES` and per-source fetchers are registered in `API_SOURCES`, and both are fanned out across a thread pool. Every fetcher is wrapped in `run_source()`, which catches anything it throws and records a health entry instead of letting one bad feed abort the run.
 
-Most return data on a given run; the remainder need an optional API key or are degraded that hour, and the run reports which.
+Health is freshness aware rather than count aware. A feed that reliably returns ten items whose median age is four years is reported `stale`, not `ok`, which is how a long-dead source gets caught instead of quietly padding the feed.
 
-Health is freshness aware rather than count aware. A feed that reliably returns ten items whose median age is four years is reported `stale`, not `ok`, which is how a long dead source gets caught instead of quietly padding the feed.
+HTTP goes through a single pooled `requests.Session` with a retry adapter, so all sources share connections and get uniform backoff on 429 and 5xx. Per-feed ETag and Last-Modified values are stored between runs, so unchanged feeds cost a conditional request rather than a full download.
 
-HTTP goes through a single pooled `requests.Session` with a retry adapter, so all sources share connections and get uniform backoff on 429 and 5xx. Per feed ETag and Last-Modified values are stored between runs, so unchanged feeds cost a conditional request rather than a full download.
+That session and the on-disk cache live in [`scripts/fetchlib.py`](scripts/fetchlib.py), which every module imports. They used to live in `fetch_intel` and be reached for like this:
+
+```python
+try:
+    from fetch_intel import _SESSION, _cached_fetch, log
+except Exception:
+    ...build a private session, set _cached_fetch = None...
+```
+
+That import can never succeed. `fetch_intel` imports `darkweb` around line 78 and defines `_SESSION` around line 179, so the name does not exist yet; and when the pipeline runs as `python scripts/fetch_intel.py` the module is `__main__`, so the import would load a *second* copy of the whole module. The fallback always fired, which meant the dark-web fetcher ran with caching **disabled** and re-downloaded RansomLook on all 24 daily runs.
+
+---
 
 ## Normalisation
 
-The same story arrives from several places at once, so items are collapsed on three keys: canonical URL (scheme, `www`, tracking parameters and trailing slash removed), a fuzzy title fingerprint (lowercased, punctuation stripped, filler words dropped, remaining tokens sorted), and CVE paired with source.
+The same story arrives from several places at once, so items are collapsed on three keys: canonical URL (scheme, `www`, tracking parameters and trailing slash removed), a fuzzy title fingerprint, and CVE paired with source.
 
-Which copy survives is not arbitrary. Items are sorted by source authority before deduplication, so an NVD or CISA record beats an aggregator, which beats a news rewrite of the same advisory. Because dedup keeps the first occurrence, the sort is what makes the outcome both correct and deterministic across runs.
+Which copy survives is not arbitrary. Items are sorted by source authority before deduplication, so an NVD or CISA record beats an aggregator, which beats a news rewrite of the same advisory.
+
+Threat-actor names are then collapsed **case-insensitively**. Leak-site fetchers hand us the crew's own spelling, so one run carried `Qilin`, `qilin`, `SafePay`, `safepay`, `Dark Project` and `dark project` as six distinct actors — splitting every count that keys on the name, across trends, geopolitics and the graph.
+
+---
 
 ## Enrichment
 
 | Signal | Source | Notes |
 |---|---|---|
-| EPSS | FIRST.org daily corpus | The full gzipped CSV is downloaded once and looked up locally, so every CVE gets a score rather than only those in a cached query |
-| KEV | CISA catalogue | Optional VulnCheck superset when a key is configured |
-| SSVC | CISA Vulnrichment | Exploitation, Automatable and Technical Impact, fetched per CVE and cached for 14 days |
+| EPSS | FIRST.org daily corpus | The full gzipped CSV is downloaded once and looked up locally |
+| KEV | CISA catalogue | Now with `dateAdded`, which is what makes the backtest and the lag timeline possible |
+| SSVC | CISA Vulnrichment | Exploitation, Automatable and Technical Impact, cached 14 days |
 | Public PoC | PoC-in-GitHub index | Contributes to the score without dominating it |
 | ATT&CK | `mitre_ttps.py` | 504 techniques matched in one compiled regex pass |
+| Relationships | MITRE CTI bundle | intrusion-set → uses → malware → technique. 48 MB, reduced to ~380 KB, refreshed monthly |
+| Malware families | Malpedia | ~3,700 families with curated aliases and attribution, refreshed weekly |
+| Detections | SigmaHQ release | 2,876 ATT&CK-tagged rules across 378 techniques, refreshed weekly |
 | IOCs | Indicator feeds only | See below |
 
-Keyword matching across severity, category and ATT&CK is whole token. Substring matching is the obvious way to write this and it is wrong: `rce` is a substring of `source`, `force` and `resource`, which is enough to mislabel a third of everything marked critical.
+Keyword matching across severity, category, sectors and ATT&CK is **whole token**. Substring matching is the obvious way to write this and it is wrong: `rce` is a substring of `source`, `force` and `resource`, which was enough to mislabel a third of everything marked critical.
 
-IOC extraction is gated by source. Indicators are taken from feeds that exist to publish indicators (URLhaus, ThreatFox, Feodo, Spamhaus, MalwareBazaar, OTX) or from text that is explicitly defanged. Running a regex over prose in a news article produces the article's own domain, the vendor's domain and the author's email address, none of which are indicators of anything.
+The same trap appears in malware naming, and it bites harder. ATT&CK ships software genuinely called *Expand*, *Route*, *Chaos*, *Embargo* and *Royal*, so matching family names against prose tagged a story about a shipping embargo as ransomware. Ordinary-English collisions are denylisted; security-distinctive tool names (Mimikatz, Impacket, Rclone, Cobalt Strike) are deliberately kept, because in a security corpus those words really do mean the tool.
+
+IOC extraction is gated by source. Indicators are taken from feeds that exist to publish indicators, or from text that is explicitly defanged. Running a regex over prose in a news article produces the article's own domain, the vendor's domain and the author's email address, none of which are indicators of anything.
+
+---
 
 ## Prioritisation
 
-Each item with any exploitability signal gets a blended 0 to 100 score:
+Each item with any exploitability signal gets a blended 0-100 score:
 
 ```
 score = 40 × (cvss / 10)              impact
@@ -102,8 +160,6 @@ score = 40 × (cvss / 10)              impact
 floor of 90 when KEV or SSVC exploitation is active
 ```
 
-The score maps to a band, and the band maps to a plain instruction, which is the actual output of the pipeline:
-
 | Score | Band | Action |
 |---|---|---|
 | 90+ | urgent | Patch now, within 24h |
@@ -111,29 +167,177 @@ The score maps to a band, and the band maps to a plain instruction, which is the
 | 40 to 69 | moderate | Next patch cycle |
 | below 40 | low | Monitor |
 
-Every score ships with a readable rationale (`CISA KEV (actively exploited) · EPSS 42.1% · CVSS 9.8`) so the number can be argued with. Weights are environment overridable through `PRIORITY_*`.
+Every score now ships with its **components** — the points each term contributed — so clicking the number on a card opens the arithmetic instead of a summary of it:
 
-Confirmed exploitation floors the score because a CVSS 6.5 that is being used in the wild today outranks a theoretical 9.8. A public PoC only adds to the score. It deliberately does not floor it, since the PoC index carries a lot of empty scaffold repositories, and flooring collapsed the ordering by tying every low impact item at one value.
+```
+Impact (CVSS)                9.8/10 x 40 weight          +39.2
+Exploit probability (EPSS)   1.5% x 40 weight             +0.6
+SSVC exploitation: active    25 x 1                      +25.0
+Public PoC on GitHub                                     +15.0
+CISA KEV listing             confirmed exploitation      +20.0
+Confirmed-exploitation floor                             +24.4
+─────────────────────────────────────────────────────────────
+Priority score                                              90
+```
 
-## AI layer
+The floor and the 100-cap are shown as their own terms rather than silently absorbing 40 points, because a score whose largest contributor is invisible is not interrogable.
 
-Language models are used in the two places regex cannot reach: pulling the affected vendor and product out of prose (which drives stack matching), and writing a one line judgement of why an item matters. A single call per run produces the daily brief, which is a genuine judgement over the whole feed.
+---
 
-Calls are batched, with a JSON schema attached so the model cannot return malformed output. Results are cached across runs keyed by item identity, because an enrichment is a property of the item and the feed turns over slowly. The daily brief is regenerated only when it ages out or the set of urgent items changes, so a newly listed KEV entry still forces a rewrite within the hour.
+## Does the score work?
 
-Gemini is primary with Groq as failover, and rule based defaults are applied to every item first. If no key is configured, or every provider fails, the run degrades rather than empties.
+This is the part most threat-intel projects do not do, and it is the reason the archive exists.
+
+There are ~90 daily snapshots carrying a score for every CVE **on the day it was scored**, and CISA KEV records the date each CVE was added. That is enough to ask whether the score saw exploitation coming.
+
+**The method, and the one detail that makes or breaks it:**
+
+- A CVE enters the cohort on the first archived day it was scored.
+- It is **excluded if it was already in KEV that day.** Without this the experiment is circular — the score adds 20 points and floors at 90 for KEV membership, so "high score predicts KEV" would be measuring the arithmetic, not the world.
+- CVEs first scored fewer than `BACKTEST_HORIZON_DAYS` ago are **censored**, not counted as failures. They have not had their chance yet.
+- Average precision is reported rather than ROC-AUC, because the positive class is ~2% of the cohort and ROC-AUC flatters a ranker on data that imbalanced.
+
+**The current result is not flattering, which is the point:**
+
+| Scoring method | Avg precision | Lift over base rate |
+|---|---|---|
+| Blended priority score | 0.031 | 1.7× |
+| CVSS alone | 0.019 | 1.0× |
+| **EPSS alone** | **0.103** | **5.6×** |
+| Public PoC alone | 0.025 | 1.3× |
+
+On 544 evaluable CVEs with a 1.8% base rate, **EPSS alone outperforms the blend by more than 3×**, and a coarse grid search over the CVSS/EPSS weights puts the optimal CVSS weight at **zero**. The flat bonuses appear to be diluting a ranking that EPSS was already doing well.
+
+That is a finding about this project's own scoring, published by the project, in the project. The weights are environment variables (`PRIORITY_CVSS_WEIGHT`, `PRIORITY_EPSS_WEIGHT`, …) precisely so the answer can change the tool rather than just being noted.
+
+**Caveats are shipped with the result**, not buried: KEV listing is a proxy for exploitation, not exploitation itself; a CVE exploited quietly and never listed counts here as a miss; and 90 days is a signal, not a finding.
+
+---
+
+## Which sources are worth reading?
+
+The same archive, the same outcome variable, applied to the 43 feeds. The important distinction is between **coverage** and **early warning**:
+
+- `precision` — of the CVEs a source carried, how many are in KEV at all.
+- `ahead_precision` — the same, restricted to CVEs it carried **before** the listing date.
+
+Only the second is a forecast. Run together they mislead badly: a news site that writes up every KEV addition the day it lands scored a 0.81 "precision" for predicting an announcement it was merely reporting. The first version of this module did exactly that, and the fix is why both numbers are now reported side by side, with median lead time next to them.
+
+A source is ranked by how often it was **first in the whole corpus** to carry a CVE that was later listed, and carried it early. Volume never ranks a source up. Noise ratio — items with no CVE, no score, no actor, no technique and no indicator — is reported next to it, so a feed that publishes steadily and contributes nothing enrichable is visible.
+
+---
+
+## How long is the patch window?
+
+Three dated events per CVE:
+
+```
+published ─────────▶ public PoC ─────────▶ CISA KEV listing
+          (days)                 (days)
+          └──────────── total window ─────────────┘
+```
+
+Publication dates come from the CVE Program API by **incremental backfill** — there is no free bulk feed that is not the entire NVD corpus, so a bounded number of lookups run each hour and every answer is cached permanently. A cold start converges in a couple of days of runs, and the module reports its own coverage instead of pretending.
+
+Current corpus: **1,577 KEV entries with dates (100% coverage)**. The headline median is skewed by old CVEs listed years after disclosure, so the by-quarter trend is the real signal — and it is **shortening**: a median of **8.8 days** across the two most recent quarters against **30.5 days** in the two before them. A 30-day patch SLA written against the older figure no longer describes reality.
+
+---
+
+## Connected intelligence
+
+Every item already carried threat actors, ATT&CK techniques and a target sector, but *independently* — nothing said the APT28 on one row and the T1071 on another were the same story. MITRE's CTI bundle ships the missing half as explicit relationship objects, so the edges cost nothing to obtain:
+
+```
+APT28 ──uses──▶ X-Agent ──implements──▶ T1071 ──seen in──▶ 4 items this week
+  │                                        │
+  └──targets──▶ Government ◀───────────────┘
+```
+
+Two kinds of edge, kept visibly apart because conflating them would be the most misleading thing this project could do:
+
+- **KNOWN** — from MITRE ATT&CK. A curated claim about the world. Drawn solid.
+- **OBSERVED** — from this feed, this window. Actor→sector, technique→item counts. Drawn dashed.
+
+The graph is laid out in columns (actors → malware → techniques → sectors) rather than as a force-directed hairball: the relationships have a natural direction, a spring simulation throws that away, and a deterministic layout does not rearrange itself between visits.
+
+**Campaigns** cluster the feed into operations. Actors seed a cluster; a shared malware family seeds one when no actor is named; and overlapping techniques plus a shared sector may only **extend** an existing cluster, never create one. That last constraint is load-bearing — unconstrained it merges half the feed, because T1566 Phishing and "corporate" co-occur constantly and mean nothing together. Confidence counts independent **sources**, not rows: five items from one feed is one observation repeated.
+
+**Malware families** come from Malpedia, and curated attribution is reported separately from what this feed happened to see alongside a family. They are different kinds of claim.
+
+---
+
+## Detection engineering
+
+Mapping to ATT&CK and stopping there is the least useful place to stop: knowing a technique is active tells a defender nothing they can deploy. SigmaHQ publishes ~2,900 vendor-neutral rules tagged with the same technique ids, so the join turns
+
+> T1566 Phishing — seen 29 times
+
+into
+
+> T1566 Phishing — seen 29 times · 12 detection rules available
+
+The headline number is honest about what it measures: **what share of this week's observed technique activity has a public detection rule behind it** (currently 89%). The **gaps** list — techniques seen in the feed with no public rule at all — is the half worth reading.
+
+Rules are parsed with a small line scanner rather than a YAML library: the four fields needed are flat top-level scalars, and adding a dependency to read four fields is a poor trade. Nothing is extracted to disk, so the classic zip-slip traversal cannot apply.
+
+---
 
 ## Frontend
 
-Vanilla JavaScript, no build step, no framework. `app.js` fetches `intel.json`, filters in memory and renders cards directly to the DOM. Everything sourced from a feed goes through `escapeHTML()`, and the page sets a CSP without `unsafe-inline` for scripts, enforced in CI by a check that rejects inline handlers.
+Vanilla JavaScript, no build step, no framework. `app.js` plus three sibling modules (`js/query.js`, `js/research.js`, `js/timetravel.js`) loaded as classic scripts. Everything sourced from a feed goes through `escapeHTML()` or `textContent`, every URL through `safeUrl()`, and CI rejects `innerHTML`, inline handlers and any widening of the CSP.
 
-Mermaid is loaded on demand rather than up front. It is 3.3 MB, and only a minority of visitors ever expand an attack flow diagram, so it is fetched on first use with an SRI hash pinning exactly which bytes are allowed to execute.
+### Views are not filters
 
-The page polls for new data and offers it through a toast instead of reshuffling the list under whoever is reading. Triage state (dismissed, starred, watchlist, stack) persists in `localStorage`, and the current view is encoded in the URL so a filtered dashboard can be shared.
+The previous build had **sixteen identically-styled buttons in one strip**. Nine narrowed the feed in place; seven replaced the entire screen. Clicking `NEWS` filtered a list, clicking `THREAT MAP` threw the list away, and nothing in the UI distinguished them. Worse, the sector and severity filters stayed armed while a map was on screen, where they meant nothing.
+
+They are now two different pieces of chrome:
+
+- **Views** (Feed · Map · Landscape · ATT&CK · Graph · Campaigns · Detections · Malware · Geopolitics · Dark Web · Exposure · Trends · Research) — a top-level tab strip attached to the header.
+- **Feed filters** — smaller pills, rendered **only inside Feed**, and they leave with it.
+
+### Opening on the nine, not the 320
+
+A typical run collects 315 items, scores 66 of them and marks 4 urgent. The other **249 carry no verdict at all — 79% of the feed**, and on top of that the old NEW badge fired on roughly two-thirds of everything, because it meant "not in the previous hourly run". The tool's whole thesis is "here is the handful that needs action today", and that handful was buried.
+
+- The feed **defaults to Verdicts**: only items the tool has an opinion about, ordered *Patch now → this week → next cycle → monitor*. The rest stay one click away and stop being the front page.
+- **NEW means new to you.** `lastVisit` was already being written to `localStorage` and never read; it is read now. The old badge meant "not in the previous hourly run", which is why it fired on 64% of the feed. A visit is a *session*, so reloading three times in ten minutes does not empty it.
+- **Compact by default.** At 224px per card the old feed put roughly two items on a screen, making 320 items about 160 screens long. One scannable row carries severity, action and title; everything else is behind expansion.
+- **Triage has an end.** `4 of 9 reviewed`, a progress bar, a *next unreviewed* jump, and a real done screen. Nine actionable items is a finishable list; an infinite feed never lets you finish.
+- **"Why am I seeing this?"** — one line per card naming the filter that surfaced it (`matches your stack: Fortinet`).
+
+### A real query layer
+
+```
+epss > 0.5 and not kev and stack and age <= 7d
+```
+
+Fields (`epss`, `cvss`, `score`, `age`, `sigma`, `kev`, `poc`, `exploited`, `stack`, `sector`, `actor`, `malware`, `technique`, …), comparison operators, `AND`/`OR`/`NOT`, parentheses and quoted phrases — evaluated in the browser over the loaded corpus.
+
+On top of it, a natural-language front end rewrites English into that language before parsing:
+
+> *actively exploited things affecting VPNs this week* → `exploited AND "vpn" AND age <= 7d`
+
+**Why this is local and not a model call.** The obvious implementation is one Gemini call per query — the pipeline already pays for Gemini. It cannot be done here. This is a static site with no backend, so calling a model API from the page means shipping the API key to every visitor, where it would be extracted and billed to the project within a day. The alternative is a proxy, and a proxy is a server; the entire architecture of this project is that there is no server. A phrase-rewriting front end handles the vocabulary this domain actually uses, runs in under a millisecond, works offline, costs nothing and cannot leak a key. When it does not understand something it returns `null` and the box falls back to substring search, so it can only ever add.
+
+Ordered rewrite rules have a specific failure mode — a later rule eats a token an earlier one produced, silently, returning a plausible wrong answer — so `tests/query.test.js` pins every one that was found by hand, including a filler rule that deleted the `kev` in *"no KEV listing"* and left a dangling `NOT` that attached itself to the time window, inverting the query.
+
+### The rest
+
+- **Time machine.** 90 days of daily snapshots the dashboard could never open, because archives are not published and a full snapshot is ~270 KB. A reduced ~60 KB copy per day is published instead, with an index, a date slider and a volume sparkline. A past day shows the scores that item carried **then**. Days that predate priority scoring say so rather than showing an empty feed.
+- **Diff.** Two dates side by side: what arrived, what left, and what changed underneath — with **escalations** (gained a KEV listing, moved up a band) sorted to the top, because that is the part worth reading.
+- **Saved investigations.** Name a filter combination and come back to it. URL state already made one shareable; this is the half that was missing.
+- **Analyst notes** per item, exportable with the item.
+- **Confidence surfacing.** `sector_confidence`, `ai_confidence` and CVSS provenance were computed everywhere and shown nowhere; they are pills on the card now.
+- **Light theme.** Three states — auto follows the OS, light and dark are explicit. The sheet was already fully tokenised, so this is a second token block rather than a restyle.
+- **Semantic colour.** Cyan used to mean active state, links, counts and highlights simultaneously. When one hue means four things it stops meaning any of them. Four roles, four tokens: `--ui-active`, `--ui-link`, `--ui-count`, `--ui-accent`.
+- **Three breakpoints** (640 / 900 / 1200), chosen rather than accumulated — the sheet had grown five across twelve media queries, none corresponding to anything in particular.
+- **Mobile.** The header stat pills used to be `display: none` below 640px, removing the only always-visible count of what needs doing.
+
+---
 
 ## Configuration
 
-Everything tunable lives in [`scripts/config.py`](scripts/config.py) and can be overridden by environment variable. All API keys are optional, and CISA Vulnrichment, the EPSS corpus and CISA KEV need no key at all.
+Everything tunable lives in [`scripts/config.py`](scripts/config.py) and can be overridden by environment variable. All API keys are optional; CISA Vulnrichment, the EPSS corpus, CISA KEV, MITRE CTI, Malpedia and SigmaHQ need no key at all.
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -144,36 +348,36 @@ Everything tunable lives in [`scripts/config.py`](scripts/config.py) and can be 
 | `MAX_ITEMS_PER_SOURCE` | `10` | Per source cap |
 | `AI_ENRICH_LIMIT` | `40` | Scored items enriched per run |
 | `SOURCE_STALE_DAYS` | `30` | Median age above which a feed is reported stale |
+| `ENABLE_ENTITY_GRAPH` | `1` | MITRE CTI relationship graph |
+| `ATTACK_KB_TTL_HOURS` | `720` | ATT&CK bundle refresh (48 MB download, monthly) |
+| `ENABLE_SIGMA` | `1` | SigmaHQ detection index |
+| `SIGMA_TTL_HOURS` | `168` | Sigma release refresh |
+| `ENABLE_MALWARE_FAMILIES` | `1` | Malpedia family entities |
+| `ENABLE_BACKTEST` | `1` | Scoring backtest |
+| `BACKTEST_HORIZON_DAYS` | `30` | Days a scored CVE gets to appear in KEV |
+| `ENABLE_SOURCE_RELIABILITY` | `1` | Per-source signal measurement |
+| `ENABLE_EXPLOIT_LAG` | `1` | Publication → PoC → KEV timeline |
+| `CVE_DATE_LOOKUPS_PER_RUN` | `40` | Bounded publication-date backfill |
+| `ENABLE_CAMPAIGNS` | `1` | Campaign clustering |
+| `CAMPAIGN_WINDOW_DAYS` | `14` | Clustering window |
+| `ENABLE_TIMELINE` | `1` | Slim per-day snapshots for the time machine |
+| `TIMELINE_DAYS` | `90` | Days published |
+| `ENABLE_MISP_EXPORT` | `1` | MISP event export |
+| `PUBLISH_OWN_ESTATE` | `0` | Whether your own exposure/attack-surface findings are published |
+
+---
 
 ## Situational awareness
 
-Beyond the feed, four views turn the raw items into a picture:
+Beyond the feed:
 
-- **Threat map.** Current attacker infrastructure by country of origin, from 8
-  keyless feeds (blocklist.de, dataplane.org, the Tor exit list) categorised by
-  observed behaviour: web attackers, intruders, scanners, DDoS amplifiers,
-  anonymizers. ~160k hosts are geolocated and aggregated server-side into a
-  ~28 KB country summary; the raw IPs never reach the browser. IP geolocation
-  is the DB-IP Country Lite corpus (CC BY 4.0), looked up locally.
-- **Landscape.** A "what is the situation now" overview: urgent/KEV/PoC counts,
-  threat-actor momentum (rising vs cooling over 30 days), ATT&CK technique
-  frequency, targeted-sector heat, and KEV velocity.
-- **Sectors.** Every item is tagged with a target sector (Defence, Maritime,
-  Aerospace, Aviation, Healthcare, Energy, Water, Financial, Government,
-  Telecom, Education, Manufacturing, Transport, Corporate) on a confidence
-  ladder: explicit when the source names it, inferred from whole-token keyword
-  rules otherwise, never guessed.
-- **Geopolitics.** Suspected actor origin crossed with target country and
-  sector, over 72 tracked groups. Attribution is version-controlled in
-  `data/actor_origins.json`, every origin cites its source, and nothing is
-  asserted: "suspected" unless a government has formally attributed the actor.
-  Motive is shown separately, because a ransomware crew hosted in a country is
-  not the same claim as state-sponsored espionage.
-- **Provenance.** Every item is tagged with who produced it: vendor research,
-  independent researcher, journalism, government, vendor advisory,
-  adversary-authored, or automated feed. Ransomware leak-site posts are the
-  attacker's own words and get their own stream. There is a human-authored
-  filter and a per-item analyst note, stored locally.
+- **Threat map.** Current attacker infrastructure by country of origin, from 8 keyless feeds, categorised by observed behaviour. ~160k hosts are geolocated and aggregated server-side into a ~28 KB country summary; the raw IPs never reach the browser.
+- **Landscape.** Urgent/KEV/PoC counts, threat-actor momentum, ATT&CK technique frequency, targeted-sector heat, KEV velocity.
+- **Sectors.** Every item tagged with a target sector on a confidence ladder: explicit when the source names it, inferred from whole-token keyword rules otherwise, never guessed.
+- **Geopolitics.** Suspected actor origin crossed with target country and sector, over 72 tracked groups. Attribution is version-controlled, every origin cites its source, and nothing is asserted: "suspected" unless a government has formally attributed the actor.
+- **Provenance.** Who produced each item: vendor research, independent researcher, journalism, government, vendor advisory, adversary-authored, or automated feed. Ransomware leak-site posts are the attacker's own words and get their own stream.
+
+---
 
 ## Static JSON API
 
@@ -186,14 +390,61 @@ Pre-rendered on every run and served with the dashboard. Paths are relative to t
 | `data/api/urgent.json` | Items scored urgent or elevated |
 | `data/api/exploited.json` | CISA KEV or SSVC exploitation active |
 | `data/api/brief.json` | Current brief |
-| `data/exports/stix.json` | STIX 2.1 bundle |
-| `data/exports/feed.xml` | RSS |
 | `data/api/attack_map.json` | Attacker infrastructure by country and category |
+| `data/api/graph.json` | Entity graph: nodes and known/observed edges |
+| `data/api/malware.json` | Malware families named this run |
+| `data/api/sigma.json` | Detection coverage and gaps by technique |
+| `data/api/campaigns.json` | Clustered campaigns with their evidence |
+| `data/api/backtest.json` | Scoring backtest: curves, precision@k, weight search |
+| `data/api/source_reliability.json` | Per-source coverage, early warning, noise |
+| `data/api/exploit_lag.json` | Publication → PoC → KEV latency by quarter |
+| `data/api/timeline.json` | Archive index with per-day counts and digests |
+| `data/api/day/YYYY-MM-DD.json` | One reduced daily snapshot |
+| `data/exports/stix.json` | STIX 2.1 bundle |
+| `data/exports/misp_event.json` | MISP event — the other half of the ecosystem |
+| `data/exports/feed.xml` | RSS |
+
+STIX is what you hand a commercial platform; MISP is what most CERTs and sharing communities actually run. Emitting only one of them makes the project standalone in practice. Both use deterministic `uuid5` ids, so re-importing updates in place instead of creating a duplicate every hour. In the MISP event, `to_ids` — "safe to turn into a detection rule" — is set **only** for indicator feeds: a hash mentioned in a news article is context, and pushing it into an IDS is how false positives reach someone's SOC.
+
+---
+
+## Archive durability
+
+Trends, the sector benchmark, the backtest and the source-reliability report all read `data/archive/`, and it lives in the Actions cache, which is evicted after 7 days without a read. Three things guard it:
+
+1. The **published tarball** (`data/state.tar.gz`) carries the archive, the health summary and the four expensive derived corpora (ATT&CK, Malpedia, Sigma, CVE dates). A run that misses the cache pulls it back from its own last deployment. Named files only — never `data/.cache` wholesale, because that directory also holds your estate's credential exposure and subdomain inventory, and the tarball is public. CI asserts that no own-estate file reached it.
+2. The **timeline index** records a size and SHA-256 per day and reports gaps, so silent truncation is visible in the UI and in the run log rather than showing up as trends quietly computed from three days of data.
+3. The deploy step **refuses to publish** a site missing any required asset, and checks that every `?v=` reference in `index.html` resolves to a file that shipped.
+
+---
+
+## Development
+
+```bash
+python -m unittest discover -s tests      # 290 Python tests
+node --test tests/query.test.js           # query-language tests
+ruff check scripts tests
+python scripts/fetch_intel.py             # full run
+```
+
+Individual modules run standalone for a quick look:
+
+```bash
+python scripts/backtest.py
+python scripts/source_reliability.py
+python scripts/exploit_lag.py
+python scripts/entity_graph.py
+python scripts/timeline.py
+```
+
+CI additionally verifies that every view button has a container **and** a route, that every cross-module function `app.js` calls actually exists in `js/`, that no `innerHTML` sink or inline handler has appeared, and that the CSP has not been widened to reach a model API.
 
 ---
 
 <div align="center">
 
 MIT licensed. Built with GitHub Actions, Python and vanilla JavaScript.
+
+ATT&CK data © MITRE · malware families © [Malpedia](https://malpedia.caad.fkie.fraunhofer.de) · detection rules © [SigmaHQ](https://github.com/SigmaHQ/sigma) · IP geolocation by [DB-IP](https://db-ip.com) (CC BY 4.0)
 
 </div>

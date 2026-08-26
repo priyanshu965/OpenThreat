@@ -31,15 +31,13 @@ from datetime import datetime, timezone
 
 from config import CONFIG
 
-try:
-    # Reuse the pipeline's pooled, retrying session when imported alongside it.
-    from fetch_intel import _SESSION, _cached_fetch, log
-except Exception:  # pragma: no cover - standalone use (tests, CLI)
-    import logging
-    import requests
-    log = logging.getLogger("cyberwatch.geoip")
-    _SESSION = requests.Session()
-    _cached_fetch = None
+# The pooled session and the disk cache live in fetchlib so every module shares
+# one of each. This used to be a `from fetch_intel import ...` inside a
+# try/except that ALWAYS fell through in production (fetch_intel imports this
+# module before it defines those names, and running the pipeline as a script
+# makes it `__main__` anyway) — so the fallback ran with `_cached_fetch = None`
+# and this module re-downloaded everything on all 24 daily runs.
+from fetchlib import SESSION as _SESSION, cached_fetch as _cached_fetch, log, now_utc  # noqa: F401,E402
 
 
 # DB-IP publishes one file per month at a predictable URL. The current month can

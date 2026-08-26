@@ -3,6 +3,17 @@
 **Written:** 2026-08-20 · Companion to `CODE_ANALYSIS.md`
 All numbers below are measured from your committed `data/intel.json`, `data/exports/`, and `source_health`.
 
+> ### ⚠ Status: superseded in large part by v4.0 (2026-08-26)
+>
+> This document is kept as the dated analysis it is — the measurements in it
+> describe the tree as it stood on 2026-08-20 and are **not** current. Most of
+> what it asks for has since shipped; see [Appendix — what v4.0 shipped](#appendix--what-v40-shipped)
+> at the end for the mapping, and `README.md` for how it actually works now.
+>
+> The framing in Part 0 did survive, and drove the v4 redesign:
+> *"make the front page answer what are the 3 things I should do today"* is
+> now literally the default view.
+
 ---
 
 ## Part 0 — The framing problem
@@ -578,3 +589,117 @@ Before adding anything, get to 100% on what you have: **CISA, AbuseIPDB, PhishTa
 ## The one-paragraph version
 
 Your infrastructure is good — the concurrency, failure isolation, atomic writes and caching are all done properly. The problems are that the **inference layer is wrong** (31% of criticals are a substring bug), the **exports are unusable** (and publish two people's email addresses as malicious), the **AI does the wrong job** (rewriting summaries that already exist instead of telling you what matters), and the **product shows 251 items when a human needs 5**. Fix correctness first, cut the four features that add noise, spend your AI budget on judgement instead of prose, add SSVC so the score means something, and only then make the UI dynamic — because a live-updating view of mislabelled data is just a faster way to be wrong.
+
+---
+
+# Appendix — what v4.0 shipped
+
+**2026-08-26.** Everything below landed after this document was written. Where a
+roadmap item was implemented differently from the sketch above, the reason is
+given — the sketch was working from measurements, not from having tried it.
+
+## The framing problem (Part 0) — addressed
+
+The diagnosis was right and the fix is now the default: the feed opens on
+**Verdicts**, the 66 of 315 items the tool has an opinion about, ordered
+*Patch now → this week → next cycle → monitor*. The other 249 are one click
+away and are no longer the front page.
+
+Two supporting changes that mattered as much as the filter itself:
+
+- **NEW now means new to you.** It meant "not in the previous hourly run",
+  which is why it fired on two-thirds of the feed and therefore meant nothing.
+  `lastVisit` was already in `localStorage`, written and never read.
+- **Triage has an end.** Progress counter, next-unreviewed jump, and a real
+  done screen. Nine actionable items is a finishable list; the old feed never
+  acknowledged the end of anything.
+
+## Navigation — the item this document did not catch
+
+The sixteen-button strip mixed nine feed filters with seven full-screen views,
+styled identically. Clicking `NEWS` narrowed a list; clicking `THREAT MAP`
+discarded it. Sector and severity filters also stayed armed while a map was on
+screen, where they meant nothing. Views and filters are now separate chrome,
+and filters render only inside Feed.
+
+## Research — new, and the reason the archive exists
+
+None of this was on the roadmap. It is the part that turns 90 days of archives
+from storage into evidence.
+
+| Shipped | What it answers |
+|---|---|
+| `scripts/backtest.py` | Does the blended score predict exploitation? (Currently: **no** — EPSS alone beats it 3×) |
+| `scripts/source_reliability.py` | Which of the 43 feeds carry things that later mattered, and which were merely early to report the announcement |
+| `scripts/exploit_lag.py` | Median publication → PoC → KEV latency, by quarter. **Shortening: 8.8 days recent vs 30.5 earlier** |
+
+The backtest excludes CVEs already in KEV when first scored; without that the
+experiment measures its own arithmetic rather than the world.
+
+## Entity graph, campaigns, malware, detections
+
+| Roadmap item | Shipped as |
+|---|---|
+| 3.6 Relationship graph | `scripts/entity_graph.py` — MITRE CTI relationships, laid out in columns rather than as a force-directed hairball, with **known** (ATT&CK) and **observed** (this feed) edges drawn differently |
+| — | `scripts/campaigns.py` — actor/malware-anchored clustering; technique+sector overlap may only *extend* a cluster, never create one |
+| — | `scripts/malware.py` — Malpedia family entities, curated attribution kept separate from co-occurrence |
+| — | `scripts/sigma_rules.py` — intel → detection, plus the coverage **gaps**, which is the half worth reading |
+
+## Time travel and diff
+
+| Roadmap item | Shipped as |
+|---|---|
+| 3.8 "What changed since I last looked" | A first-class **Diff** view over any two archived days, with escalations sorted to the top — not just an `is_new` flag |
+| — | **Time machine**: `scripts/timeline.py` publishes a reduced ~60 KB snapshot per archived day. The archives existed for 90 days and no page could open them, because they are not published and a full snapshot is ~270 KB |
+
+## UI items from Part 3
+
+| Roadmap item | Status |
+|---|---|
+| 3.9 Density toggle | Shipped, and **compact is now the default** — comfortable put ~2 cards on a screen, making 320 items ~160 screens long |
+| 3.7 Shareable URL state | Shipped, plus **saved investigations** (name a filter set and return to it), which is the half URL state did not cover |
+| 3.4 Interactive sidebar | Shipped, then **removed from the layout**: eight always-on cards competed with the content and several duplicated the nav. They are a summoned slide-over with collapsible sections now |
+| — | A real **query layer** (`js/query.js`): `epss > 0.5 and not kev and stack and age <= 7d`, with an English front end on top |
+| — | **Light theme**, three states, as a second token block |
+| — | **Semantic colour**: cyan meant active state, links, counts and highlights simultaneously. Four roles, four tokens |
+| — | **Three breakpoints** (640/900/1200) replacing five accumulated ones |
+| — | **Score interrogability**: click the number, get the arithmetic term by term |
+| — | **"Why am I seeing this?"** per card |
+| — | **Confidence surfacing** — `sector_confidence`, `ai_confidence`, CVSS provenance were computed and never shown |
+
+## Interoperability and durability
+
+- **MISP export** alongside STIX. STIX is what you hand a commercial platform;
+  MISP is what most CERTs actually run. `to_ids` is set only for indicator
+  feeds — a hash from a news article is context, not a detection rule.
+- **Archive durability**: the published `state.tar.gz` now also carries the four
+  expensive derived corpora, the timeline index records a SHA-256 and size per
+  day and reports gaps, and the deploy step refuses to publish an incomplete
+  site. CI asserts no own-estate data reaches the public tarball.
+
+## Defects found and fixed along the way
+
+Listed because they are the kind that a green test suite does not catch:
+
+1. **Satellite modules never shared the session or the cache.** `darkweb`,
+   `geoip`, `exposure`, `attacker_feeds` and `attack_surface` all did
+   `try: from fetch_intel import _SESSION, _cached_fetch except: ...`, an import
+   that can never succeed — `fetch_intel` imports them *before* defining those
+   names, and running it as a script makes it `__main__` anyway. Every one ran
+   with caching disabled. Extracted to `scripts/fetchlib.py`.
+2. **`priority_components` never reached the published item.** The scorer
+   emitted it correctly; `main()` copied five named fields and dropped it.
+   Found by checking the artifact, not the unit test.
+3. **The service worker defeated its own cache-busting.** `ignoreSearch: true`
+   collapsed `app.js?v=4.0.0` and `?v=4.0.1` onto one entry, so a returning
+   visitor kept the old code against new data.
+4. **Threat-actor case variants split every count.** `Qilin`/`qilin`,
+   `SafePay`/`safepay` counted as four actors.
+5. **Malware naming matched ordinary English.** ATT&CK ships tools called
+   *Expand*, *Route*, *Chaos* and *Embargo*; a shipping-embargo story was
+   tagged as ransomware.
+6. **Source reliability conflated coverage with prediction.** A news site
+   scored 0.81 "precision" for reporting KEV additions the day they landed.
+7. **Five query-language bugs**, including a filler rule that deleted the `kev`
+   in "no KEV listing" and left a dangling `NOT` that attached to the time
+   window — inverting the query. All pinned in `tests/query.test.js`.

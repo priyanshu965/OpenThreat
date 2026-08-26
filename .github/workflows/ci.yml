@@ -97,6 +97,61 @@ jobs:
         run: |
           node --check app.js
           node --check service-worker.js
+          for f in js/*.js; do node --check "$f"; done
+
+      # The query language is the most bug-prone thing in the frontend: it is a
+      # pile of ordered rewrite rules, and the failure mode of ordered rewrite
+      # rules is that a later rule eats a token an earlier one produced —
+      # silently, with no error, returning a plausible wrong answer. Five such
+      # bugs were found by hand before this suite existed, including one that
+      # inverted a clause.
+      - name: Query-language tests
+        run: node --test tests/query.test.js
+
+      # The v4 frontend is app.js plus three sibling modules loaded as classic
+      # scripts. app.js calls into them by name (showGraphView, parseQuery,
+      # renderTimeMachine, ...), so a renamed or deleted function is a runtime
+      # ReferenceError that no syntax check catches. This is that check — a
+      # module has silently failed to land in this project before.
+      - name: Verify cross-module entry points exist
+        run: |
+          set -e
+          missing=0
+          for fn in showGraphView showCampaignsView showDetectionsView \
+                    showMalwareView showResearchView showDiffView \
+                    renderTimeMachine enterDay parseQuery queryMatches \
+                    queryExplain queryExamples queryFields; do
+            if ! grep -qE "function ${fn}\b" js/*.js; then
+              echo "::error::app.js calls ${fn}() but no js/ module defines it"
+              missing=1
+            fi
+          done
+          for fn in showLazyView emptyState openEntityModal closePanel setView; do
+            if ! grep -qE "function ${fn}\b" app.js; then
+              echo "::error::js/ modules call ${fn}() but app.js does not define it"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          echo "All cross-module entry points resolve."
+
+      - name: Verify every view has a container and a route
+        run: |
+          set -e
+          fail=0
+          for view in $(grep -oE 'data-view="[a-z]+"' index.html | cut -d'"' -f2); do
+            [ "$view" = "feed" ] && continue
+            if ! grep -q "id=\"${view}-view\"" index.html; then
+              echo "::error::view '${view}' has a nav button but no #${view}-view container"
+              fail=1
+            fi
+            if ! grep -q "case '${view}':" app.js; then
+              echo "::error::view '${view}' has a nav button but no route in renderAll()"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          echo "Every view button has a container and a route."
 
       - name: Reject render-blocking CDN scripts
         run: |
@@ -113,8 +168,36 @@ jobs:
         run: |
           # The CSP sets script-src without 'unsafe-inline', so any onclick=
           # attribute is silently dead code in the browser.
-          if grep -nE '\son[a-z]+="' index.html app.js; then
+          if grep -nE '\son[a-z]+="' index.html app.js js/*.js; then
             echo "::error::Inline event handler found — blocked by the page CSP. Use delegated listeners."
             exit 1
           fi
           echo "No inline handlers."
+
+      - name: Reject innerHTML on feed-derived content
+        run: |
+          # Every string on screen originates in one of 43 third-party feeds.
+          # escapeHTML() exists, but the only way to be certain it was reached
+          # is for the unsafe sink not to be present at all.
+          if grep -nE '\.(innerHTML|outerHTML)[[:space:]]*=|insertAdjacentHTML' app.js js/*.js; then
+            echo "::error::innerHTML assignment found. Build nodes with el()/textContent."
+            exit 1
+          fi
+          echo "No innerHTML sinks."
+
+      - name: Verify the CSP has not been widened
+        run: |
+          # Natural-language search runs locally precisely so connect-src does
+          # not have to grow. Reaching a model API from a static page means
+          # shipping the API key to every visitor.
+          CSP=$(grep -o 'content="default-src[^"]*"' index.html || true)
+          if [ -z "$CSP" ]; then echo "::error::No CSP meta tag found."; exit 1; fi
+          if echo "$CSP" | grep -q "script-src [^;]*unsafe-inline"; then
+            echo "::error::script-src gained 'unsafe-inline'."
+            exit 1
+          fi
+          if echo "$CSP" | grep -qE "connect-src[^;]*(generativelanguage|api\.openai|api\.groq)"; then
+            echo "::error::connect-src reaches a model API. A static page cannot hold an API key."
+            exit 1
+          fi
+          echo "CSP intact."

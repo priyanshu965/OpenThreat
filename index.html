@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!--
     CSP. Note what is NOT here: 'unsafe-inline' in script-src. The previous page
     shipped three inline event-handler attributes and an inline script block under
@@ -13,20 +13,32 @@
     doing nothing. It is set as a real header in nginx.conf for the Docker path.
     GitHub Pages cannot send custom headers, so a Pages deployment has no framing
     protection — that is a platform limit, not something a meta tag can fix.
+    connect-src stays at 'self' plus NVD. Natural-language search runs entirely
+    in the browser (js/query.js) precisely so this list does not have to grow:
+    reaching a model API from a static page means shipping an API key to every
+    visitor, which is not a trade worth making for a search box.
   -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://services.nvd.nist.gov; worker-src 'self'; base-uri 'self'; form-action 'none'; object-src 'none'" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <meta name="theme-color" content="#0d1117" />
-  <meta name="description" content="Self-updating cybersecurity threat intelligence dashboard — CVEs, advisories, incidents and IOCs, prioritised by CVSS, EPSS, CISA KEV and SSVC." />
+  <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f6f8fa" media="(prefers-color-scheme: light)" />
+  <meta name="description" content="Self-updating cybersecurity threat intelligence dashboard — CVEs, advisories, incidents and IOCs, prioritised by CVSS, EPSS, CISA KEV and SSVC, with an ATT&CK entity graph, detection coverage and a scoring backtest." />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%23080b0f'/%3E%3Ctext x='96' y='140' text-anchor='middle' font-family='monospace' font-size='120' font-weight='bold' fill='%2300ffe1'%3E%5B%5D%3C/text%3E%3C/svg%3E" type="image/svg+xml" />
   <title>CyberWatch — Threat Intelligence</title>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="style.css?v=3.0.0" />
+  <link rel="stylesheet" href="style.css?v=4.0.0" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
-  <script src="app.js?v=3.2.0" defer></script>
+  <script src="app.js?v=4.0.0" defer></script>
+  <!-- Loaded after app.js so they can close over its top-level bindings.
+       Separate files rather than one 6,000-line app.js: these are genuinely
+       separable surfaces, and splicing them in by string replacement is how a
+       module silently failed to land here once before. -->
+  <script src="js/query.js?v=4.0.0" defer></script>
+  <script src="js/research.js?v=4.0.0" defer></script>
+  <script src="js/timetravel.js?v=4.0.0" defer></script>
 </head>
 <body>
 
@@ -72,21 +84,58 @@
         <span class="stat-label">TOTAL</span>
         <span class="stat-value" id="count-total">—</span>
       </button>
+      <button class="icon-btn" id="theme-toggle" title="Theme: auto / light / dark"
+              aria-label="Switch theme">◐</button>
       <button class="avatar-btn" id="about-open" title="About Priyanshu" aria-label="About the author"></button>
       <button class="icon-btn" id="palette-open" title="Command palette (Ctrl/Cmd-K)" aria-label="Open command palette">⌘K</button>
     </div>
   </header>
 
-  <!-- ═══════════════════════ CONTROLS ═══════════════════════ -->
-  <section class="controls-bar">
+  <!-- ═══════════════════════ VIEW SWITCHER ═══════════════════════
+       PRIMARY chrome. These REPLACE the screen. The row below them narrows
+       the feed in place. The old build styled both identically in one strip of
+       16 buttons, so clicking NEWS filtered a list and clicking THREAT MAP
+       threw the list away, with no visual cue that they were different kinds
+       of thing at all.
+  -->
+  <nav class="view-switcher" id="view-switcher" aria-label="Views">
+    <button class="view-btn active" data-view="feed"><span class="view-ico" aria-hidden="true">▤</span>FEED</button>
+    <button class="view-btn" data-view="map"><span class="view-ico" aria-hidden="true">🗺</span>MAP</button>
+    <button class="view-btn" data-view="landscape"><span class="view-ico" aria-hidden="true">🌐</span>LANDSCAPE</button>
+    <button class="view-btn" data-view="matrix"><span class="view-ico" aria-hidden="true">⬛</span>ATT&amp;CK</button>
+    <button class="view-btn" data-view="graph"><span class="view-ico" aria-hidden="true">◈</span>GRAPH</button>
+    <button class="view-btn" data-view="campaigns"><span class="view-ico" aria-hidden="true">⛓</span>CAMPAIGNS</button>
+    <button class="view-btn" data-view="detections"><span class="view-ico" aria-hidden="true">🛡</span>DETECTIONS</button>
+    <button class="view-btn" data-view="malware"><span class="view-ico" aria-hidden="true">🦠</span>MALWARE</button>
+    <button class="view-btn" data-view="geopol"><span class="view-ico" aria-hidden="true">🧭</span>GEOPOLITICS</button>
+    <button class="view-btn" data-view="darkweb"><span class="view-ico" aria-hidden="true">🕳</span>DARK WEB</button>
+    <button class="view-btn" data-view="exposure"><span class="view-ico" aria-hidden="true">🔓</span>EXPOSURE</button>
+    <button class="view-btn" data-view="trends"><span class="view-ico" aria-hidden="true">📈</span>TRENDS</button>
+    <button class="view-btn" data-view="research"><span class="view-ico" aria-hidden="true">🔬</span>RESEARCH</button>
+  </nav>
+
+  <!-- ═══════════════════════ FEED TOOLBAR ═══════════════════════
+       Only rendered inside Feed. The sector / severity / source filters used
+       to stay live while a map was on screen, which meant nothing.
+  -->
+  <section class="controls-bar" id="feed-controls">
     <div class="search-wrapper">
       <span class="search-icon" aria-hidden="true">⌕</span>
       <input type="text" id="search-input" class="search-input"
-             placeholder="Search threats, CVEs, vendors…  (press /)"
-             autocomplete="off" aria-label="Search threats" />
+             placeholder="Search, or ask: exploited VPN items this week  (press /)"
+             autocomplete="off" aria-label="Search or query threats" />
+      <button class="search-help" id="query-help" type="button"
+              title="Query syntax and examples" aria-label="Query help">?</button>
+    </div>
+    <div class="toolbar-actions">
+      <button class="tool-btn" id="filters-open" title="Filters and breakdowns">⚙ FILTERS <span id="active-filter-count" class="tool-badge"></span></button>
+      <button class="tool-btn" id="timemachine-open" title="Load any of the last 90 days">🕰 TODAY</button>
+      <button class="tool-btn" id="saved-open" title="Saved investigations">🔖 SAVED</button>
     </div>
     <div class="filter-tabs" id="filter-tabs" role="tablist">
-      <button class="filter-btn active" data-filter="all">ALL</button>
+      <button class="filter-btn active" data-filter="verdicts" title="Only items the tool has an opinion about">✓ VERDICTS</button>
+      <button class="filter-btn" data-filter="all">ALL</button>
+      <button class="filter-btn" data-filter="fresh" title="Published since your last visit">◆ NEW TO YOU</button>
       <button class="filter-btn" data-filter="exploited">🔥 EXPLOITED</button>
       <button class="filter-btn" data-filter="stack">⚙ MY STACK</button>
       <button class="filter-btn" data-filter="cve">CVEs</button>
@@ -95,94 +144,30 @@
       <button class="filter-btn" data-filter="news">NEWS</button>
       <button class="filter-btn" data-filter="iocs">IOCs</button>
       <button class="filter-btn" data-filter="starred">★ STARRED</button>
-      <button class="filter-btn matrix-btn" data-filter="matrix">⬛ ATT&amp;CK</button>
-      <button class="filter-btn landscape-btn" data-filter="landscape">🌐 LANDSCAPE</button>
-      <button class="filter-btn geopol-btn" data-filter="geopol">🧭 GEOPOLITICS</button>
-      <button class="filter-btn darkweb-btn" data-filter="darkweb">🕳 DARK WEB</button>
-      <button class="filter-btn exposure-btn" data-filter="exposure">🔓 MY EXPOSURE</button>
-      <button class="filter-btn map-btn" data-filter="map">🗺 THREAT MAP</button>
-      <button class="filter-btn trends-btn" data-filter="trends">📈 TRENDS</button>
     </div>
   </section>
 
   <!-- ═══════════════════════ DAILY BRIEF ═══════════════════════ -->
   <section id="daily-brief" class="daily-brief" style="display:none;" aria-label="Today's brief"></section>
 
-  <div class="mobile-stats-toggle">
-    <button class="toggle-btn" id="toggle-sidebar-btn">▼ STATS &amp; FILTERS</button>
-  </div>
+  <!-- Time-machine bar: hidden until a past day is loaded. -->
+  <section id="timemachine-bar" class="timemachine-bar" style="display:none;"></section>
 
   <!-- ═══════════════════════ MAIN ═══════════════════════ -->
   <main class="dashboard">
-
-    <aside class="sidebar">
-
-      <div class="sidebar-card">
-        <div class="sidebar-title">SEVERITY <span class="sidebar-hint">click to filter</span></div>
-        <div class="severity-chart" id="severity-chart"></div>
-      </div>
-
-      <div class="sidebar-card">
-        <div class="sidebar-title">
-          <span>MY STACK</span>
-          <span id="stack-match-count" class="sidebar-title-badge"></span>
-        </div>
-        <input type="text" id="stack-input" class="watchlist-input"
-               placeholder="+ vendor or product (e.g. fortinet)" autocomplete="off"
-               aria-label="Add a product to your stack" />
-        <div class="stack-chips" id="stack-chips"></div>
-      </div>
-
-      <div class="sidebar-card">
-        <div class="sidebar-title">
-          <span>WATCHLIST</span>
-          <span id="watchlist-match-count" class="sidebar-title-badge"></span>
-        </div>
-        <input type="text" id="watchlist-input" class="watchlist-input"
-               placeholder="+ keyword (e.g. ransomware)" autocomplete="off"
-               aria-label="Add a watchlist keyword" />
-        <div class="watchlist-chips" id="watchlist-chips"></div>
-        <button class="watchlist-only-btn" id="watchlist-only-btn" style="display:none;">☆ WATCHLIST ONLY</button>
-      </div>
-
-      <div class="sidebar-card">
-        <div class="sidebar-title">SOURCES <span class="sidebar-hint">click to filter</span></div>
-        <div class="source-list" id="source-list"></div>
-      </div>
-
-      <div class="sidebar-card">
-        <div class="sidebar-title">CATEGORIES</div>
-        <div class="cat-list" id="cat-list"></div>
-      </div>
-
-      <div class="sidebar-card">
-        <div class="sidebar-title">TARGET SECTOR <span class="sidebar-hint">click to filter</span></div>
-        <div class="sector-list" id="sector-list"></div>
-      </div>
-
-      <div class="sidebar-card">
-        <div class="sidebar-title">PROVENANCE <span class="sidebar-hint">who wrote it</span></div>
-        <div class="provenance-list" id="provenance-list"></div>
-      </div>
-
-      <div class="sidebar-card">
-        <div class="sidebar-title">
-          <span>SOURCE HEALTH</span>
-          <span id="source-health-summary" class="sidebar-title-badge"></span>
-        </div>
-        <div class="source-health" id="source-health"></div>
-      </div>
-
-    </aside>
 
     <section class="feed">
       <div class="feed-header">
         <span id="feed-count">Loading intelligence feed…</span>
         <div class="feed-controls">
-          <button class="feed-sort" id="density-toggle" title="Toggle row density">▥ COMFORTABLE</button>
+          <button class="feed-sort" id="density-toggle" title="Toggle row density">▤ COMPACT</button>
           <button class="feed-sort" id="sort-toggle" title="Toggle sort order">⚑ TOP PRIORITY</button>
         </div>
       </div>
+
+      <!-- Triage progress. 9 actionable items is a finishable list; an
+           infinite feed never lets you finish. -->
+      <div id="triage-bar" class="triage-bar" style="display:none;"></div>
 
       <div id="loading-state" class="loading-state">
         <div class="skeleton-card"></div>
@@ -198,6 +183,8 @@
 
       <div id="cards-container" class="cards-container" style="display:none;" role="feed" aria-busy="true"></div>
 
+      <div id="triage-done" class="triage-done" style="display:none;"></div>
+
       <div id="matrix-view" class="matrix-view" style="display:none;">
         <div id="matrix-legend-host" class="matrix-legend-host"></div>
         <div class="matrix-legend">
@@ -209,18 +196,20 @@
       </div>
 
       <div id="trends-view" class="trends-view" style="display:none;"></div>
-
       <div id="map-view" class="map-view" style="display:none;"></div>
-
       <div id="landscape-view" class="landscape-view" style="display:none;"></div>
-
       <div id="geopol-view" class="geopol-view" style="display:none;"></div>
-
       <div id="about-view" class="about-view" style="display:none;"></div>
-
       <div id="darkweb-view" class="darkweb-view" style="display:none;"></div>
-
       <div id="exposure-view" class="exposure-view" style="display:none;"></div>
+
+      <!-- v4 views -->
+      <div id="graph-view" class="graph-view" style="display:none;"></div>
+      <div id="campaigns-view" class="campaigns-view" style="display:none;"></div>
+      <div id="detections-view" class="detections-view" style="display:none;"></div>
+      <div id="malware-view" class="malware-view" style="display:none;"></div>
+      <div id="research-view" class="research-view" style="display:none;"></div>
+      <div id="diff-view" class="diff-view" style="display:none;"></div>
 
       <div id="no-results" class="no-results" style="display:none;">
         <p>No results match your filters.</p>
@@ -233,9 +222,113 @@
 
   <footer class="site-footer">
     <span>CYBERWATCH</span>
-    <span>IP geolocation by <a href="https://db-ip.com" rel="noopener">DB-IP</a> (CC BY 4.0)</span>
+    <span>IP geolocation by <a href="https://db-ip.com" rel="noopener">DB-IP</a> (CC BY 4.0) ·
+      ATT&amp;CK by <a href="https://attack.mitre.org" rel="noopener">MITRE</a> ·
+      families by <a href="https://malpedia.caad.fkie.fraunhofer.de" rel="noopener">Malpedia</a> ·
+      detections by <a href="https://github.com/SigmaHQ/sigma" rel="noopener">SigmaHQ</a></span>
     <span>Updates hourly · <kbd>?</kbd> for shortcuts</span>
   </footer>
+
+  <!-- ═══════════════════════ FILTER PANEL (slide-over) ═══════════════════════
+       Eight always-on sidebar cards used to compete with the content for the
+       full width of the screen, several of them duplicating the nav. They are
+       summoned now, and every section collapses.
+  -->
+  <div id="filter-panel" class="side-panel" style="display:none;" role="dialog"
+       aria-modal="true" aria-label="Filters">
+    <div class="side-panel-scrim" data-close="filters"></div>
+    <aside class="side-panel-body sidebar">
+      <div class="side-panel-head">
+        <span>FILTERS &amp; BREAKDOWNS</span>
+        <div class="side-panel-head-actions">
+          <button class="panel-reset" id="filters-reset" type="button">RESET</button>
+          <button class="panel-close" data-close="filters" type="button" aria-label="Close filters">×</button>
+        </div>
+      </div>
+
+      <details class="sidebar-card" open>
+        <summary class="sidebar-title">SEVERITY <span class="sidebar-hint">click to filter</span></summary>
+        <div class="severity-chart" id="severity-chart"></div>
+      </details>
+
+      <details class="sidebar-card" open>
+        <summary class="sidebar-title">
+          <span>MY STACK</span>
+          <span id="stack-match-count" class="sidebar-title-badge"></span>
+        </summary>
+        <input type="text" id="stack-input" class="watchlist-input"
+               placeholder="+ vendor or product (e.g. fortinet)" autocomplete="off"
+               aria-label="Add a product to your stack" />
+        <div class="stack-chips" id="stack-chips"></div>
+      </details>
+
+      <details class="sidebar-card">
+        <summary class="sidebar-title">
+          <span>WATCHLIST</span>
+          <span id="watchlist-match-count" class="sidebar-title-badge"></span>
+        </summary>
+        <input type="text" id="watchlist-input" class="watchlist-input"
+               placeholder="+ keyword (e.g. ransomware)" autocomplete="off"
+               aria-label="Add a watchlist keyword" />
+        <div class="watchlist-chips" id="watchlist-chips"></div>
+        <button class="watchlist-only-btn" id="watchlist-only-btn" style="display:none;">☆ WATCHLIST ONLY</button>
+      </details>
+
+      <details class="sidebar-card">
+        <summary class="sidebar-title">TARGET SECTOR <span class="sidebar-hint">click to filter</span></summary>
+        <div class="sector-list" id="sector-list"></div>
+      </details>
+
+      <details class="sidebar-card">
+        <summary class="sidebar-title">SOURCES <span class="sidebar-hint">click to filter</span></summary>
+        <div class="source-list" id="source-list"></div>
+      </details>
+
+      <details class="sidebar-card">
+        <summary class="sidebar-title">CATEGORIES</summary>
+        <div class="cat-list" id="cat-list"></div>
+      </details>
+
+      <details class="sidebar-card">
+        <summary class="sidebar-title">PROVENANCE <span class="sidebar-hint">who wrote it</span></summary>
+        <div class="provenance-list" id="provenance-list"></div>
+      </details>
+
+      <details class="sidebar-card">
+        <summary class="sidebar-title">
+          <span>SOURCE HEALTH</span>
+          <span id="source-health-summary" class="sidebar-title-badge"></span>
+        </summary>
+        <div class="source-health" id="source-health"></div>
+      </details>
+    </aside>
+  </div>
+
+  <!-- ═══════════════════════ TIME MACHINE ═══════════════════════ -->
+  <div id="timemachine-panel" class="side-panel" style="display:none;" role="dialog"
+       aria-modal="true" aria-label="Time machine">
+    <div class="side-panel-scrim" data-close="timemachine"></div>
+    <aside class="side-panel-body">
+      <div class="side-panel-head">
+        <span>TIME MACHINE</span>
+        <button class="panel-close" data-close="timemachine" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="timemachine-body" class="timemachine-body"></div>
+    </aside>
+  </div>
+
+  <!-- ═══════════════════════ SAVED INVESTIGATIONS ═══════════════════════ -->
+  <div id="saved-panel" class="side-panel" style="display:none;" role="dialog"
+       aria-modal="true" aria-label="Saved investigations">
+    <div class="side-panel-scrim" data-close="saved"></div>
+    <aside class="side-panel-body">
+      <div class="side-panel-head">
+        <span>SAVED INVESTIGATIONS</span>
+        <button class="panel-close" data-close="saved" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="saved-body" class="saved-body"></div>
+    </aside>
+  </div>
 
   <!-- ═══════════════════════ COMMAND PALETTE ═══════════════════════ -->
   <div id="palette" class="palette-overlay" style="display:none;" role="dialog" aria-modal="true" aria-label="Command palette">
@@ -256,8 +349,13 @@
         <dt><kbd>e</kbd></dt><dd>Expand or collapse</dd>
         <dt><kbd>x</kbd></dt><dd>Dismiss (triage it away)</dd>
         <dt><kbd>s</kbd></dt><dd>Star</dd>
+        <dt><kbd>r</kbd></dt><dd>Mark reviewed (counts toward triage progress)</dd>
+        <dt><kbd>n</kbd></dt><dd>Add or edit the analyst note</dd>
         <dt><kbd>w</kbd></dt><dd>Copy as markdown for a ticket</dd>
         <dt><kbd>o</kbd></dt><dd>Open the source link</dd>
+        <dt><kbd>f</kbd></dt><dd>Open filters</dd>
+        <dt><kbd>t</kbd></dt><dd>Time machine</dd>
+        <dt><kbd>g</kbd> then <kbd>1</kbd>–<kbd>9</kbd></dt><dd>Jump to a view</dd>
         <dt><kbd>/</kbd></dt><dd>Focus search</dd>
         <dt><kbd>ctrl</kbd>+<kbd>k</kbd></dt><dd>Command palette</dd>
         <dt><kbd>esc</kbd></dt><dd>Close overlays</dd>
@@ -273,6 +371,18 @@
         <button class="modal-close" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ ENTITY DRAWER ═══════════════════════
+       Opened from a graph node, an actor chip or a malware chip. -->
+  <div id="entity-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="entity-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title" id="entity-title">Entity</span>
+        <button class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body" id="entity-body"></div>
     </div>
   </div>
 

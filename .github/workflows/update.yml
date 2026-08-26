@@ -173,23 +173,75 @@ jobs:
           set -euo pipefail
           mkdir -p _site
           cp index.html app.js style.css service-worker.js manifest.json robots.txt _site/
+          # The v4 frontend is app.js PLUS three sibling modules. Forgetting
+          # this line ships a page whose every view button throws a
+          # ReferenceError, and nothing in the pipeline would notice.
+          mkdir -p _site/js
+          cp js/*.js _site/js/
           mkdir -p _site/data
           # Everything the browser and the documented API actually fetch.
           cp data/intel.json                _site/data/
           cp data/trends.json               _site/data/ 2>/dev/null || true
           cp data/source_health_summary.json _site/data/ 2>/dev/null || true
           cp -r data/exports                _site/data/ 2>/dev/null || true
+          # data/api includes api/day/*.json — the reduced per-day snapshots the
+          # time machine and the diff view read. ~90 files, ~7 MB total, each
+          # fetched only when someone actually opens that day.
           cp -r data/api                    _site/data/ 2>/dev/null || true
           # data/archive/ is not published as loose files - no page requests
           # them - but it IS published as one tarball, which is what lets a run
           # rebuild its own state after a cache miss without any git history.
-          tar -czf _site/data/state.tar.gz -C data \
-            $( [ -d data/archive ] && echo archive ) \
-            $( [ -f data/source_health_summary.json ] && echo source_health_summary.json ) \
-            $( [ -f data/.alert_state.json ] && echo .alert_state.json ) \
-            $( [ -f data/.digest_state.json ] && echo .digest_state.json )
+          #
+          # Named files only, never `data/.cache` wholesale. That directory also
+          # holds exposure_*.json and ct_*.json — YOUR estate's credential
+          # exposure and subdomain inventory — and this tarball is published at
+          # a public URL. Adding the cache directory here would undo
+          # CONFIG.publish_own_estate in a single line.
+          #
+          # The four derived corpora below are public reference data (MITRE
+          # ATT&CK, Malpedia, SigmaHQ, the CVE Program) and are expensive to
+          # rebuild — the ATT&CK one is a 48 MB download — so carrying them
+          # makes a cache miss cheap instead of punishing.
+          STATE_PATHS=""
+          for candidate in \
+              archive \
+              source_health_summary.json \
+              .alert_state.json \
+              .digest_state.json \
+              .cache/attack_kb.json \
+              .cache/malpedia_families.json \
+              .cache/sigma_index.json \
+              .cache/cve_published.json; do
+            [ -e "data/${candidate}" ] && STATE_PATHS="${STATE_PATHS} ${candidate}"
+          done
+          # shellcheck disable=SC2086
+          tar -czf _site/data/state.tar.gz -C data ${STATE_PATHS}
           echo "state.tar.gz: $(du -h _site/data/state.tar.gz | cut -f1)"
+          # An own-estate file reaching the public tarball is a leak, not
+          # something to notice later. Check the artifact itself rather than
+          # trusting the list above to stay correct.
+          if tar -tzf _site/data/state.tar.gz | grep -qE 'exposure_|ct_|attack_surface'; then
+            echo "::error::own-estate data found in the public state tarball"
+            exit 1
+          fi
+          # Fail loudly rather than deploying a broken page. A missing js/
+          # module is invisible until a visitor clicks a view; a missing
+          # intel.json is invisible until the feed fails to load.
+          for required in \
+              index.html app.js style.css \
+              js/query.js js/research.js js/timetravel.js \
+              data/intel.json; do
+            if [ ! -s "_site/${required}" ]; then
+              echo "::error::_site/${required} is missing or empty — refusing to deploy"
+              exit 1
+            fi
+          done
+          # Every ?v= reference in index.html must resolve to a file we shipped.
+          for asset in $(grep -oE '(app\.js|style\.css|js/[a-z]+\.js)\?v=' index.html | sed 's/?v=//' | sort -u); do
+            [ -s "_site/${asset}" ] || { echo "::error::index.html references ${asset}, not deployed"; exit 1; }
+          done
           echo "Deploying $(du -sh _site | cut -f1):"
+          echo "  day snapshots: $(ls _site/data/api/day 2>/dev/null | wc -l)"
           find _site -type f | sort | sed 's/^/  /'
 
       - name: Upload Pages artifact

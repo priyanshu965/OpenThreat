@@ -16,6 +16,11 @@ LABEL org.opencontainers.image.title="CyberWatch Dashboard" \
       org.opencontainers.image.source="https://github.com/priyanshu965/Cyberwatch"
 WORKDIR /usr/share/nginx/html
 COPY index.html app.js style.css service-worker.js manifest.json robots.txt ./
+# js/ is not optional: index.html loads three sibling modules from it, and
+# without them every view button throws a ReferenceError. The allow-list above
+# is the reason this needs saying — a `COPY .` would have picked it up, and
+# would also have served .git/ to the internet.
+COPY js/ ./js/
 COPY data/ ./data/
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

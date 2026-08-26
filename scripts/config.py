@@ -141,6 +141,57 @@ class Config:
     # Cap per-feed rows parsed, as a guard against a feed ballooning. 0 = no cap.
     attacker_feed_max_rows = _int("ATTACKER_FEED_MAX_ROWS", 0)
 
+    # ── Entity graph (MITRE CTI relationships) ─────────────────────────────
+    # enterprise-attack.json is 48 MB and changes a few times a year. Only the
+    # DERIVED graph (~1 MB of names, aliases and edges) is cached; see
+    # entity_graph._derive_kb.
+    enable_entity_graph    = _bool("ENABLE_ENTITY_GRAPH", True)
+    attack_kb_ttl_hours    = _int("ATTACK_KB_TTL_HOURS", 24 * 30)
+    graph_max_nodes        = _int("GRAPH_MAX_NODES", 400)
+
+    # ── Malware family entities (Malpedia) ─────────────────────────────────
+    enable_malware_families = _bool("ENABLE_MALWARE_FAMILIES", True)
+    malpedia_ttl_hours      = _int("MALPEDIA_TTL_HOURS", 24 * 7)
+
+    # ── Detection engineering (SigmaHQ) ────────────────────────────────────
+    # The packaged release zip is ~3 MB and is cut roughly monthly.
+    enable_sigma       = _bool("ENABLE_SIGMA", True)
+    sigma_ttl_hours    = _int("SIGMA_TTL_HOURS", 24 * 7)
+    sigma_rules_per_technique = _int("SIGMA_RULES_PER_TECHNIQUE", 12)
+
+    # ── Research: scoring backtest + source reliability ────────────────────
+    # Does the blended score actually predict exploitation? Answered against
+    # the daily archive, so it costs nothing to fetch. The horizon is how long
+    # a scored CVE is given to show up in KEV before it counts as a miss.
+    enable_backtest        = _bool("ENABLE_BACKTEST", True)
+    backtest_horizon_days  = _int("BACKTEST_HORIZON_DAYS", 30)
+    backtest_min_samples   = _int("BACKTEST_MIN_SAMPLES", 20)
+    enable_source_reliability = _bool("ENABLE_SOURCE_RELIABILITY", True)
+
+    # ── Exploitation lag (published → PoC → KEV) ───────────────────────────
+    # CVE publication dates are filled in incrementally from the CVE Program
+    # API, a few per run, and cached permanently. A cold start therefore takes
+    # several runs to converge rather than hammering a free API once.
+    enable_exploit_lag       = _bool("ENABLE_EXPLOIT_LAG", True)
+    cve_date_lookups_per_run = _int("CVE_DATE_LOOKUPS_PER_RUN", 40)
+
+    # ── Campaign clustering ────────────────────────────────────────────────
+    enable_campaigns     = _bool("ENABLE_CAMPAIGNS", True)
+    campaign_window_days = _int("CAMPAIGN_WINDOW_DAYS", 14)
+    campaign_min_items   = _int("CAMPAIGN_MIN_ITEMS", 3)
+
+    # ── Time machine (slim per-day snapshots the dashboard can load) ───────
+    # data/archive/*.json are full snapshots (~270 KB each, 24 MB for 90 days)
+    # and are never published as loose files. The timeline publishes a reduced
+    # copy per day so the dashboard can show any past day without downloading
+    # a full archive.
+    enable_timeline    = _bool("ENABLE_TIMELINE", True)
+    timeline_days      = _int("TIMELINE_DAYS", 90)
+
+    # ── MISP ───────────────────────────────────────────────────────────────
+    enable_misp_export = _bool("ENABLE_MISP_EXPORT", True)
+    misp_org_name      = _str("MISP_ORG_NAME", "CyberWatch")
+
     # ── AI models ──────────────────────────────────────────────────────────
     # Gemini 3.x Flash-Lite is on the free tier and materially better at
     # instruction-following than the 2.5 line this project shipped with.

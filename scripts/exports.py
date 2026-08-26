@@ -150,6 +150,114 @@ def _write_stix(rows, path: Path, generated: str) -> int:
     return len(objects)
 
 
+# MISP attribute type + category per IOC type. MISP validates both, so a wrong
+# category is rejected at import rather than silently downgraded.
+_MISP_TYPES = {
+    "ipv4":   ("ip-dst", "Network activity"),
+    "cidr":   ("ip-dst", "Network activity"),
+    "domain": ("domain", "Network activity"),
+    "url":    ("url", "Network activity"),
+    "sha256": ("sha256", "Payload delivery"),
+    "sha1":   ("sha1", "Payload delivery"),
+    "md5":    ("md5", "Payload delivery"),
+    "email":  ("email-src", "Payload delivery"),
+}
+
+
+def _write_misp(output: dict, rows, path: Path, generated: str) -> int:
+    """
+    One MISP event carrying the run's indicators, so the feed can be pushed
+    into a real TIP rather than only read in a browser.
+
+    STIX 2.1 was already emitted, and STIX and MISP are the two halves of the
+    interoperability story: STIX is what you hand a commercial platform, MISP
+    is what most CERTs and sharing communities actually run. Emitting only one
+    of them makes the project standalone in practice.
+
+    Deterministic uuid5 ids again, so re-importing the same event updates it
+    in place instead of creating a duplicate every hour.
+    """
+    date = (generated or "")[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    event_uuid = str(uuid.uuid5(_NS, f"cyberwatch-event-{date}"))
+    org_uuid = str(uuid.uuid5(_NS, f"org-{CONFIG.misp_org_name}"))
+
+    attributes = []
+    seen = set()
+    for ioc_type, value, source, title, cve, published in rows:
+        mapping = _MISP_TYPES.get(ioc_type)
+        if not mapping:
+            continue
+        misp_type, category = mapping
+        key = (misp_type, value)
+        if key in seen:
+            continue
+        seen.add(key)
+        attributes.append({
+            "uuid": str(uuid.uuid5(_NS, f"misp-{misp_type}-{value}")),
+            "type": misp_type,
+            "category": category,
+            "value": value,
+            # to_ids marks an attribute as safe to turn into a detection rule.
+            # Only indicator feeds get it; a hash mentioned in a news article
+            # is context, and pushing it into an IDS is how false positives
+            # get into someone's SOC.
+            "to_ids": source in _IOC_SOURCES,
+            "distribution": "1",
+            "comment": f"{source}: {title}"[:250],
+            "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+            "Tag": [{"name": f'cyberwatch:source="{source}"'}] if source else [],
+        })
+
+    # Vulnerabilities that are actively exploited ride along as attributes too:
+    # a TIP that knows the indicators but not which CVE they belong to is only
+    # half useful.
+    for item in output.get("items", []) or []:
+        cve = (item.get("cve_id") or "").upper()
+        if not cve or not (item.get("cisa_kev") or item.get("priority_label") == "urgent"):
+            continue
+        key = ("vulnerability", cve)
+        if key in seen:
+            continue
+        seen.add(key)
+        attributes.append({
+            "uuid": str(uuid.uuid5(_NS, f"misp-vuln-{cve}")),
+            "type": "vulnerability",
+            "category": "External analysis",
+            "to_ids": False,
+            "distribution": "1",
+            "comment": (item.get("action_detail") or item.get("priority_rationale") or "")[:250],
+            "value": cve,
+            "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+        })
+
+    tags = [{"name": "tlp:clear"}, {"name": "cyberwatch:automated"}]
+    for actor in sorted({a for i in output.get("items", []) or []
+                         for a in (i.get("threat_actors") or [])})[:20]:
+        tags.append({"name": f'misp-galaxy:threat-actor="{actor}"'})
+    for tid in sorted({t.get("id") for i in output.get("items", []) or []
+                       for t in (i.get("ttps") or []) if t.get("id")})[:40]:
+        tags.append({"name": f'mitre-attack-pattern:{tid}'})
+
+    brief = (output.get("brief") or {}).get("headline") or "CyberWatch daily intelligence"
+    event = {
+        "Event": {
+            "uuid": event_uuid,
+            "info": f"CyberWatch {date} — {brief}"[:255],
+            "date": date,
+            "threat_level_id": "2",
+            "analysis": "2",
+            "published": True,
+            "distribution": "1",
+            "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+            "Orgc": {"name": CONFIG.misp_org_name, "uuid": org_uuid},
+            "Tag": tags,
+            "Attribute": [a for a in attributes if a.get("value")],
+        }
+    }
+    path.write_text(json.dumps(event, indent=2, ensure_ascii=False), encoding="utf-8")
+    return len(event["Event"]["Attribute"])
+
+
 def _rfc822(dt_str: str) -> str:
     """Convert ISO-8601 string to RFC 822 (required by RSS 2.0)."""
     try:
@@ -175,7 +283,11 @@ def _write_rss(output: dict, path: Path, limit: int = 60) -> None:
         title = xml_escape((item.get("title") or "Untitled")[:200])
         link = xml_escape(item.get("url") or "")
         desc = xml_escape((item.get("description") or "")[:500])
-        sev = (item.get("severity") or "").upper()
+        # Escaped like every other field. Severity is currently always one of
+        # four inferred literals, so this cannot inject today — but it is the
+        # only interpolation on this line that was trusting its input, and the
+        # reason it is safe lives in a different file.
+        sev = xml_escape((item.get("severity") or "").upper())
         cats = xml_escape(item.get("category") or "")
         guid = xml_escape(item.get("url") or item.get("title") or title)
         pub = xml_escape(_rfc822(item.get("published") or output.get("last_updated", "")))
@@ -207,6 +319,10 @@ def write_exports(output: dict, export_dir: Path, darkweb_index: dict = None) ->
     _write_json(rows, export_dir / "iocs.json", generated)
     _write_stix(rows, export_dir / "stix.json", generated)
     _write_rss(output, export_dir / "feed.xml")
+    written_names = ["iocs.csv", "iocs.json", "stix.json", "feed.xml"]
+    if CONFIG.enable_misp_export:
+        count = _write_misp(output, rows, export_dir / "misp_event.json", generated)
+        written_names.append(f"misp_event.json ({count} attributes)")
 
     # Static JSON "API" endpoints, generated at build time. This is what
     # rest_api.py was reaching for, minus the runtime, the open port and the
@@ -239,7 +355,25 @@ def write_exports(output: dict, export_dir: Path, darkweb_index: dict = None) ->
             json.dumps(darkweb_index, ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8")
 
-    return ["iocs.csv", "iocs.json", "stix.json", "feed.xml", "api/*.json"]
+    # ── v4 research artifacts ──────────────────────────────────────────────
+    # Each is published as its own lazily-fetched endpoint rather than riding
+    # in intel.json. The graph alone is ~200 KB and only the Graph view needs
+    # it; folding these into the feed payload would roughly triple what every
+    # visitor downloads to read a list of headlines.
+    for key, fname in (("entity_graph", "graph.json"),
+                       ("malware_view", "malware.json"),
+                       ("detections", "sigma.json"),
+                       ("backtest", "backtest.json"),
+                       ("source_reliability", "source_reliability.json"),
+                       ("exploit_lag", "exploit_lag.json"),
+                       ("campaigns", "campaigns.json")):
+        if output.get(key):
+            (api_dir / fname).write_text(
+                json.dumps(output[key], ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8")
+            written_names.append(f"api/{fname}")
+
+    return written_names + ["api/*.json"]
 
 
 def _write_static_api(output: dict, api_dir: Path) -> None:

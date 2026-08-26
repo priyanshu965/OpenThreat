@@ -5,6 +5,17 @@
 Every finding below was verified against the code and, where possible, against the committed
 `data/intel.json` and `data/exports/` produced by the live pipeline.
 
+> ### ⚠ Historical: analysed at ~7,500 LOC, superseded by v4.0 (2026-08-26)
+>
+> Kept as the dated record it is. The tree is now ~13,000 LOC across 26 Python
+> modules and four frontend files, and the findings here have been addressed.
+> `ROADMAP.md` carries an appendix mapping what shipped; `README.md` describes
+> the current design.
+>
+> Defects found *during* the v4 work — the ones a green suite did not catch —
+> are listed in that appendix rather than here, because this document is a
+> snapshot and not a running log.
+
 ---
 
 ## 1. What the system is

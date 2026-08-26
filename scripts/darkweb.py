@@ -29,21 +29,15 @@ from collections import Counter
 
 from config import CONFIG
 
-try:
-    from fetch_intel import _SESSION, _cached_fetch, log, now_utc, parse_date
-except Exception:  # pragma: no cover - standalone/tests
-    import logging
-    from datetime import datetime, timezone
-    import requests
-    log = logging.getLogger("cyberwatch.darkweb")
-    _SESSION = requests.Session()
-    _cached_fetch = None
+# Shared session + disk cache. See fetchlib for why this is not a
+# `from fetch_intel import ...` any more: that import could never succeed here,
+# so RansomLook was re-downloaded on every run with caching silently disabled.
+from fetchlib import SESSION as _SESSION, cached_fetch as _cached_fetch, log, now_utc  # noqa: F401,E402
 
-    def now_utc() -> str:
-        return datetime.now(timezone.utc).isoformat()
 
-    def parse_date(v):
-        return str(v or "")
+def parse_date(v):
+    """Local, dependency-free: RansomLook stamps are normalised by _iso()."""
+    return str(v or "")
 
 _RANSOMLOOK_RECENT = "https://www.ransomlook.io/api/recent"
 _RANSOMLOOK_GROUPS = "https://www.ransomlook.io/api/groups"
