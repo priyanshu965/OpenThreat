@@ -308,6 +308,10 @@ def _build_technique(tid: str, row: dict, kb: dict, sigma_index: dict,
         "description": row.get("description") or "",
         "description_source": "MITRE ATT&CK" if row.get("description") else "",
         "detection": row.get("detection") or "",
+        # ATT&CK v18's detection-strategy objects, each with the analytics and
+        # the log sources they need. Strictly better than the free-text field
+        # this replaced.
+        "detection_strategies": row.get("detection_strategies") or [],
         "tactics": row.get("tactics") or [],
         "platforms": row.get("platforms") or [],
         "data_sources": row.get("data_sources") or [],

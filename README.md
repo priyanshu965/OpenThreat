@@ -297,7 +297,7 @@ The Library merges them into **8,800+ entities**: threat actors, malware familie
 
 | Corpus | What it contributes |
 |---|---|
-| MITRE ATT&CK CTI | Descriptions, detection guidance, techniques, campaigns, mitigations, sub-technique structure |
+| MITRE ATT&CK CTI | Descriptions, detection strategies and analytics, techniques, campaigns, mitigations, sub-technique structure |
 | MISP galaxy | ~4,400 entities and the synonym corpus that makes name deconfliction work |
 | Malpedia | ~3,800 malware families with attribution |
 | ORKL | A bibliography of published threat reports per actor |
@@ -307,7 +307,27 @@ The Library merges them into **8,800+ entities**: threat actors, malware familie
 | Atomic Red Team | 2,300 validation tests across 341 techniques |
 | The feed itself | What was seen this week, and when |
 
-**ATT&CK's own prose was already being downloaded and thrown away.** v4 pulled the 48 MB CTI bundle, extracted the relationship edges, and discarded the descriptions, the detection guidance, the mitigations and the campaigns — which are exactly what an entity page is made of. The bundle now yields 176 actors, 825 software entries, 697 techniques, 44 mitigations and 56 campaigns *with their text*.
+**ATT&CK's own prose was already being downloaded and thrown away.** v4 pulled the 48 MB CTI bundle, extracted the relationship edges, and discarded the descriptions, the detection content, the mitigations and the campaigns — which are exactly what an entity page is made of. The bundle now yields 176 actors, 825 software entries, 697 techniques, 44 mitigations and 56 campaigns *with their text*.
+
+### Detection, from where ATT&CK actually keeps it
+
+ATT&CK v18 replaced the old free-text `x_mitre_detection` field with an object graph:
+
+```
+x-mitre-detection-strategy --detects--> attack-pattern
+      -> x-mitre-analytic  (the detection logic)
+            -> x-mitre-data-component  ("auditd:SYSCALL", channel "execve")
+```
+
+The first cut of this read the old fields, which no longer exist — so all 697 techniques published an empty "how to see it" section and nothing reported a problem. Reading the graph instead gives **697 strategies over 1,758 analytics**, each naming the log source and channel it needs:
+
+```
+T1486  Data Encrypted for Impact
+  WinEventLog:Sysmon (EventCode=1) · WinEventLog:Sysmon (EventCode=11)
+  auditd:SYSCALL (openat, write, rename, unlink)
+```
+
+That is the difference between "monitor for suspicious encryption" and knowing whether you are collecting the telemetry to try.
 
 ### Name deconfliction
 
@@ -341,7 +361,7 @@ One technique, fully equipped, precomputed in CI:
 
 ```
 T1486  Data Encrypted for Impact
-  what it is       ATT&CK prose + MITRE's own written detection guidance
+  what it is       ATT&CK prose + its detection strategies and analytics
   detections       the Sigma rules that cover it
   queries          each rule compiled for Splunk SPL, Elastic ES|QL, Lucene,
                    EQL, Sentinel KQL and Defender XDR KQL — paste-ready

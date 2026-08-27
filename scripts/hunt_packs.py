@@ -313,6 +313,7 @@ def build_hunt_packs(technique_counts: dict, sigma_index: dict, kb: dict,
             # MITRE's written detection guidance. The single best paragraph in
             # the whole bundle for a hunter, and v4 downloaded and binned it.
             "mitre_detection": meta.get("detection") or "",
+            "detection_strategies": meta.get("detection_strategies") or [],
             "platforms": meta.get("platforms") or [],
             "data_sources": meta.get("data_sources") or [],
             "telemetry": meta.get("detects") or [],

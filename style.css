@@ -3331,3 +3331,43 @@ button.ent-chip:hover {
 .ent-obs-title,
 .ent-rule-title,
 .leak-post-link { overflow-wrap: anywhere; word-break: break-word; }
+
+/* ATT&CK v18 detection strategies. Each analytic names the log source and
+   channel it needs, which is the difference between "monitor for suspicious
+   encryption" and knowing whether you collect the telemetry to try. */
+.ent-detstrat {
+  margin: 10px 0 14px; padding: 11px 13px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-left: 3px solid var(--ui-active); border-radius: var(--radius);
+}
+.ent-detstrat-head {
+  display: flex; gap: 9px; align-items: baseline; flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.ent-detstrat-id {
+  font-family: var(--font-mono); font-size: 10px; color: var(--ui-active);
+}
+.ent-detstrat-name {
+  font-size: 13px; font-weight: 600; color: var(--text-primary);
+  text-decoration: none;
+}
+a.ent-detstrat-name { color: var(--ui-link); }
+a.ent-detstrat-name:hover { text-decoration: underline; }
+.ent-analytic {
+  margin-top: 9px; padding-left: 11px;
+  border-left: 1px solid var(--border);
+}
+.ent-analytic-head {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 3px;
+}
+.ent-analytic-id {
+  font-family: var(--font-mono); font-size: 9px; color: var(--text-muted);
+}
+.ent-analytic-desc {
+  margin: 0; font-size: 12px; line-height: 1.55; color: var(--text-secondary);
+  max-width: 74ch;
+}
+/* Log-source chips are identifiers you paste into a SIEM, so they are mono. */
+.ent-telemetry .ent-chip {
+  color: var(--text-code); border-color: var(--border-strong);
+}

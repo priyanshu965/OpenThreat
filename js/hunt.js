@@ -320,13 +320,16 @@ function huntPackDetail(pack, data) {
     page.appendChild(sec);
   }
 
-  if (pack.mitre_detection) {
-    const sec = libSection('How to see it', 'MITRE ATT&CK detection guidance');
-    sec.appendChild(el('p', 'ent-prose', pack.mitre_detection));
-    if (pack.data_sources && pack.data_sources.length) {
-      sec.appendChild(el('p', 'ent-subhead', 'Data sources required'));
-      sec.appendChild(libChipRow(pack.data_sources));
-    }
+  if (pack.mitre_detection || (pack.detection_strategies || []).length) {
+    const sec = libSection('How to see it', 'MITRE ATT&CK detection strategies');
+    // Same renderer as the entity page: one place for "how do I see this",
+    // so the two surfaces cannot drift.
+    libRenderDetection(sec, {
+      detection: pack.mitre_detection,
+      detection_strategies: pack.detection_strategies,
+      telemetry: pack.telemetry,
+      data_sources: pack.data_sources,
+    });
     page.appendChild(sec);
   }
 

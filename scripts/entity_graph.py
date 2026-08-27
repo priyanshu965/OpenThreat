@@ -42,15 +42,18 @@ from fetchlib import CONFIG, cached_derive, log, now_utc, stream_json
 _CTI_URL = ("https://raw.githubusercontent.com/mitre/cti/master/"
             "enterprise-attack/enterprise-attack.json")
 
-# v2 keeps the prose (descriptions, detection guidance, mitigations,
-# campaigns, sub-technique structure) that v1 downloaded and threw away.
+# v3 reads detection from ATT&CK's CURRENT structure. v2 read
+# `x_mitre_detection` and `x_mitre_data_sources` off the attack-pattern,
+# which is where they lived until ATT&CK v18 moved them out. Those fields
+# are now absent from every technique, so v2 published an empty 'how to see
+# it' section for all 697 of them and reported nothing wrong.
 #
 # The cache NAME carries the version deliberately. A warm v1 cache is a
 # different shape, and the KEV incident in this repo is what a silently
 # accepted stale shape costs: the loader accepted it, nothing errored, and the
 # published output was wrong for a full TTL. A new name makes a v1 cache a
 # miss by construction rather than by a check somebody has to remember.
-_KB_CACHE = "attack_kb_v2.json"
+_KB_CACHE = "attack_kb_v3.json"
 
 # Aliases below this length, or in this list, produce nothing but false
 # positives when matched against prose. "Fancy Bear" is a useful alias;
@@ -233,9 +236,23 @@ def _derive_kb() -> dict | None:
     campaigns: dict[str, dict] = {}
     technique_names: dict[str, str] = {}
     technique_tactics: dict[str, list[str]] = {}
-    # data-component id -> label, so `detects` relationships can be resolved
-    # into "which telemetry sees this technique".
+    # ATT&CK v18 replaced the free-text `x_mitre_detection` field with a small
+    # object graph, and it is a considerable improvement:
+    #
+    #   x-mitre-detection-strategy --detects--> attack-pattern
+    #            |  x_mitre_analytic_refs
+    #            v
+    #   x-mitre-analytic  (concrete detection logic + the log sources it needs)
+    #            |  x_mitre_log_source_references
+    #            v
+    #   x-mitre-data-component  ("auditd:SYSCALL", channel "socket/connect")
+    #
+    # The old field was one paragraph of prose per technique. This is 1,758
+    # analytics naming the actual telemetry and channel, which is what a hunter
+    # needs to know whether they can run the detection at all.
     data_components: dict[str, str] = {}
+    analytics: dict[str, dict] = {}
+    strategies: dict[str, dict] = {}
 
     _ENTITY_TYPES = ("intrusion-set", "malware", "tool", "attack-pattern",
                      "course-of-action", "campaign")
@@ -249,6 +266,33 @@ def _derive_kb() -> dict | None:
             by_id[oid] = obj
         if otype == "x-mitre-data-component" and _live(obj):
             data_components[oid] = (obj.get("name") or "").strip()
+        elif otype == "x-mitre-analytic" and _live(obj):
+            sources = []
+            for ref in obj.get("x_mitre_log_source_references") or []:
+                if not isinstance(ref, dict):
+                    continue
+                sources.append({
+                    "name": str(ref.get("name") or "")[:80],
+                    "channel": str(ref.get("channel") or "")[:120],
+                    "component": str(ref.get("x_mitre_data_component_ref") or ""),
+                })
+            analytics[oid] = {
+                "id": _external_id(obj),
+                "name": (obj.get("name") or "").strip()[:80],
+                "description": _prose(obj.get("description"), 1200),
+                "platforms": [str(x) for x in (obj.get("x_mitre_platforms") or [])][:10],
+                "log_sources": sources[:12],
+                "url": _external_url(obj),
+            }
+        elif otype == "x-mitre-detection-strategy" and _live(obj):
+            strategies[oid] = {
+                "id": _external_id(obj),
+                "name": (obj.get("name") or "").strip()[:120],
+                "description": _prose(obj.get("description"), 900),
+                "url": _external_url(obj),
+                "analytic_refs": [str(r) for r in
+                                  (obj.get("x_mitre_analytic_refs") or [])][:20],
+            }
         if otype == "attack-pattern" and _live(obj):
             tid = _external_id(obj)
             if tid:
@@ -263,13 +307,13 @@ def _derive_kb() -> dict | None:
                     "name": obj.get("name", tid),
                     "kind": "technique",
                     "description": _prose(obj.get("description")),
-                    # x_mitre_detection is MITRE's own written guidance on how
-                    # to see this technique. It is the single most useful field
-                    # in the bundle for a hunter and v1 dropped it.
-                    "detection": _prose(obj.get("x_mitre_detection"), 2000),
+                    # Filled in from the detection-strategy graph below, not
+                    # from the technique object: ATT&CK v18 no longer carries
+                    # either of these on the attack-pattern.
+                    "detection": "",
+                    "detection_strategies": [],
                     "platforms": [str(x) for x in (obj.get("x_mitre_platforms") or [])][:14],
-                    "data_sources": [str(x) for x in
-                                     (obj.get("x_mitre_data_sources") or [])][:16],
+                    "data_sources": [],
                     "permissions": [str(x) for x in
                                     (obj.get("x_mitre_permissions_required") or [])][:8],
                     "is_subtechnique": bool(obj.get("x_mitre_is_subtechnique")),
@@ -368,13 +412,46 @@ def _derive_kb() -> dict | None:
         # (it is not an entity anyone browses to), so it is resolved from its
         # own table before the by_id lookup below would reject it.
         if rel == "detects":
-            component = data_components.get(src_ref)
+            # v2 expected a data-component here. The source is a
+            # DETECTION STRATEGY, so the lookup never matched and every
+            # technique's telemetry list stayed empty.
+            strategy = strategies.get(src_ref)
             dst_obj = by_id.get(dst_ref)
-            if component and dst_obj and dst_obj.get("type") == "attack-pattern":
-                tid = _external_id(dst_obj)
-                if tid in techniques:
-                    techniques[tid]["detects"].append(component)
-                    edges += 1
+            if not strategy or not dst_obj or dst_obj.get("type") != "attack-pattern":
+                continue
+            tid = _external_id(dst_obj)
+            row = techniques.get(tid)
+            if not row:
+                continue
+
+            resolved = []
+            for ref in strategy["analytic_refs"]:
+                analytic = analytics.get(ref)
+                if not analytic:
+                    continue
+                for source in analytic["log_sources"]:
+                    label = source["name"]
+                    if source["channel"]:
+                        label = f"{label} ({source['channel']})"
+                    if label and label not in row["detects"]:
+                        row["detects"].append(label)
+                    component = data_components.get(source["component"])
+                    if component and component not in row["data_sources"]:
+                        row["data_sources"].append(component)
+                resolved.append({k: analytic[k] for k in
+                                 ("id", "name", "description", "platforms", "url")})
+
+            row["detection_strategies"].append({
+                "id": strategy["id"], "name": strategy["name"],
+                "description": strategy["description"], "url": strategy["url"],
+                "analytics": resolved[:8],
+            })
+            # The prose field every consumer already reads: the analytics,
+            # joined. Keeps one place to look for "how do I see this".
+            row["detection"] = " ".join(
+                a["description"] for s2 in row["detection_strategies"]
+                for a in s2["analytics"] if a["description"])[:2500]
+            edges += 1
             continue
 
         src = by_id.get(src_ref)
@@ -462,22 +539,33 @@ def _derive_kb() -> dict | None:
     for table in (actors, software, techniques, mitigations, campaigns):
         for row in table.values():
             for key in ("techniques", "software", "actors", "campaigns",
-                        "mitigations", "subtechniques", "detects"):
+                        "mitigations", "subtechniques"):
                 if key in row:
                     row[key] = sorted(set(row[key]))
+            # `detects` and `data_sources` are already deduplicated in the
+            # order the analytics list them, which is the order a defender
+            # would set the telemetry up in. Re-sorting alphabetically would
+            # throw that away for no gain.
+            for key in ("detects", "data_sources"):
+                if key in row:
+                    row[key] = row[key][:20]
 
-    log.info(f"  ATT&CK KB v2: {len(actors)} actors, {len(software)} software, "
+    log.info(f"  ATT&CK KB v3: {len(actors)} actors, {len(software)} software, "
              f"{len(technique_names)} techniques, {len(mitigations)} mitigations, "
              f"{len(campaigns)} campaigns, {edges} edges")
+    log.info(f"  Detection: {sum(1 for t in techniques.values() if t['detection_strategies'])} "
+             f"techniques carry a detection strategy, "
+             f"{sum(len(t['detection_strategies']) for t in techniques.values())} "
+             f"strategies over {len(analytics)} analytics")
     log.info(f"  Prose kept for "
              f"{sum(1 for t in list(actors.values()) + list(software.values()) if t.get('description'))}"
              f" actor/software entities; "
              f"{sum(1 for t in techniques.values() if t['detection'])} techniques "
-             f"carry MITRE detection guidance")
+             f"carry detection guidance")
     return {
         "built": now_utc(),
         "source": _CTI_URL,
-        "version": 2,
+        "version": 3,
         "actors": actors,
         "software": software,
         "techniques": techniques,

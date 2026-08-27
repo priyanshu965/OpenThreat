@@ -90,7 +90,15 @@ def _kb():
                 "id": "T1566.001", "name": "Spearphishing Attachment",
                 "kind": "technique", "description": "Adversaries send attachments.",
                 "detection": "Monitor for suspicious attachments.",
-                "platforms": ["Windows"], "data_sources": ["File: File Creation"],
+                "detection_strategies": [{
+                    "id": "DET0001", "name": "Detection of Spearphishing",
+                    "description": "Correlate attachment writes with mail flow.",
+                    "url": "https://attack.mitre.org/detectionstrategies/DET0001",
+                    "analytics": [{"id": "AN0001", "name": "Analytic 0001",
+                                   "description": "Watch for office spawning shells.",
+                                   "platforms": ["Windows"], "url": ""}],
+                }],
+                "platforms": ["Windows"], "data_sources": ["File Creation"],
                 "permissions": [], "is_subtechnique": True, "parent": "T1566",
                 "tactics": ["initial-access"], "url": "", "references": [],
                 "mitigations": ["M1049"], "actors": ["APT29"], "software": [],
@@ -722,6 +730,72 @@ class TestItemFieldNames(unittest.TestCase):
         source = (root / "scripts" / "fetch_intel.py").read_text(encoding="utf-8")
         block = source.split("technique_counts = Counter()", 1)[1][:300]
         self.assertIn("item_technique_ids", block)
+
+
+
+class TestAttackDetectionStructure(unittest.TestCase):
+    """
+    ATT&CK v18 moved detection out of the attack-pattern object.
+
+    v2 of the knowledge base read `x_mitre_detection` and
+    `x_mitre_data_sources` straight off the technique. Those fields no longer
+    exist, so every one of the 697 techniques published an empty "how to see
+    it" section and nothing reported a problem — the same silent-empty failure
+    as the KEV cache and the wrong field names.
+
+    Detection now lives in:
+
+        x-mitre-detection-strategy --detects--> attack-pattern
+                 -> x-mitre-analytic -> x-mitre-data-component
+
+    These pin the reader against that structure, so if MITRE moves it again
+    the suite says so instead of the site quietly emptying.
+    """
+
+    def test_derive_reads_the_detection_strategy_graph(self):
+        root = Path(__file__).resolve().parent.parent
+        source = (root / "scripts" / "entity_graph.py").read_text(encoding="utf-8")
+        for marker in ("x-mitre-detection-strategy", "x-mitre-analytic",
+                       "x_mitre_analytic_refs", "x_mitre_log_source_references"):
+            self.assertIn(marker, source,
+                          f"entity_graph no longer reads {marker}")
+
+    def test_dead_fields_are_not_read(self):
+        root = Path(__file__).resolve().parent.parent
+        source = (root / "scripts" / "entity_graph.py").read_text(encoding="utf-8")
+        body = source.split('"""', 2)[-1]
+        for dead in ('obj.get("x_mitre_detection")',
+                     'obj.get("x_mitre_data_sources")'):
+            self.assertNotIn(dead, body,
+                             f"{dead} was removed from ATT&CK and always returns None")
+
+    def test_cache_key_moved_with_the_shape(self):
+        """
+        A warm cache in the previous shape must be a MISS by construction.
+
+        This repo has been bitten twice by a stale cache in an old shape being
+        accepted as data: the KEV catalogue served dateless records for a full
+        TTL, and v2 of this KB would serve empty detection for a month.
+        """
+        root = Path(__file__).resolve().parent.parent
+        source = (root / "scripts" / "entity_graph.py").read_text(encoding="utf-8")
+        self.assertIn('_KB_CACHE = "attack_kb_v3.json"', source)
+
+    def test_technique_entity_carries_strategies(self):
+        kb = knowledge_base.build_knowledge_base(
+            _kb(), {}, {}, {}, {}, {}, _sigma(), {}, None, [])
+        slug = kb["aliases"]["t1566.001"]
+        entity = kb["entities"][slug]
+        self.assertTrue(entity["detection_strategies"])
+        self.assertEqual(entity["detection_strategies"][0]["id"], "DET0001")
+        self.assertTrue(entity["detection_strategies"][0]["analytics"])
+
+    def test_hunt_pack_carries_strategies(self):
+        packs = hunt_packs.build_hunt_packs(
+            {"T1566.001": 1}, _sigma(), _kb(), {}, {}, {}, None)
+        pack = packs["packs"][0]
+        self.assertTrue(pack["detection_strategies"])
+        self.assertEqual(pack["detection_strategies"][0]["id"], "DET0001")
 
 
 if __name__ == "__main__":

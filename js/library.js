@@ -382,17 +382,9 @@ function libRenderEntity(host, entity) {
 
   // Detection guidance is a technique's most useful paragraph, so it sits
   // immediately after the summary rather than buried with the rules.
-  if (entity.detection) {
-    const sec = libSection('How to see it', 'MITRE ATT&CK detection guidance');
-    sec.appendChild(el('p', 'ent-prose', entity.detection));
-    if (entity.data_sources && entity.data_sources.length) {
-      sec.appendChild(el('p', 'ent-subhead', 'Data sources'));
-      sec.appendChild(libChipRow(entity.data_sources));
-    }
-    if (entity.telemetry && entity.telemetry.length) {
-      sec.appendChild(el('p', 'ent-subhead', 'Telemetry that observes it'));
-      sec.appendChild(libChipRow(entity.telemetry));
-    }
+  if (entity.detection || (entity.detection_strategies || []).length) {
+    const sec = libSection('How to see it', 'MITRE ATT&CK detection strategies');
+    libRenderDetection(sec, entity);
     page.appendChild(sec);
   }
 
@@ -452,6 +444,58 @@ function libRenderEntity(host, entity) {
   libRenderSources(page, entity);
 
   host.appendChild(page);
+}
+
+/**
+ * "How to see it", from ATT&CK v18's detection-strategy graph.
+ *
+ * The old ATT&CK carried one free-text paragraph per technique. v18 replaced
+ * it with strategies made of analytics, each naming the log source and channel
+ * it needs — "WinEventLog:Sysmon (EventCode=1)", "auditd:SYSCALL (execve)".
+ * That is the difference between "monitor for suspicious encryption" and
+ * knowing whether you are even collecting the telemetry to try.
+ *
+ * Shared by the entity page and the hunt pack so the two cannot drift.
+ */
+function libRenderDetection(sec, entity) {          // eslint-disable-line no-unused-vars
+  const strategies = entity.detection_strategies || [];
+
+  strategies.forEach((strategy) => {
+    const block = el('div', 'ent-detstrat');
+    const head = el('div', 'ent-detstrat-head');
+    if (strategy.id) head.appendChild(el('span', 'ent-detstrat-id', strategy.id));
+    head.appendChild(strategy.url
+      ? libLink(strategy.name, strategy.url, 'ent-detstrat-name')
+      : el('span', 'ent-detstrat-name', strategy.name));
+    block.appendChild(head);
+    if (strategy.description) {
+      block.appendChild(el('p', 'ent-prose', strategy.description));
+    }
+    (strategy.analytics || []).forEach((an) => {
+      const row = el('div', 'ent-analytic');
+      const top = el('div', 'ent-analytic-head');
+      if (an.id) top.appendChild(el('span', 'ent-analytic-id', an.id));
+      (an.platforms || []).forEach((pl) => top.appendChild(el('span', 'ent-chip', pl)));
+      row.appendChild(top);
+      if (an.description) row.appendChild(el('p', 'ent-analytic-desc', an.description));
+      block.appendChild(row);
+    });
+    sec.appendChild(block);
+  });
+
+  // Fallback for anything that has prose but no structured strategy.
+  if (!strategies.length && entity.detection) {
+    sec.appendChild(el('p', 'ent-prose', entity.detection));
+  }
+
+  if (entity.telemetry && entity.telemetry.length) {
+    sec.appendChild(el('p', 'ent-subhead', 'Log sources you need'));
+    sec.appendChild(libChipRow(entity.telemetry, null, 'ent-chips ent-telemetry'));
+  }
+  if (entity.data_sources && entity.data_sources.length) {
+    sec.appendChild(el('p', 'ent-subhead', 'ATT&CK data components'));
+    sec.appendChild(libChipRow(entity.data_sources));
+  }
 }
 
 function libMetric(value, label) {
