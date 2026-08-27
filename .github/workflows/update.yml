@@ -123,6 +123,18 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      # Sigma -> SIEM query compilation. BEST EFFORT, and the `|| true` is the
+      # whole design: pySigma and its backends are a fast-moving family with
+      # tight inter-version constraints, and this job runs unattended 24 times
+      # a day. A resolver conflict here must cost the hunt packs their compiled
+      # queries, never the feed. hunt_packs probes each backend independently
+      # at import and publishes the packs regardless.
+      - name: Install optional Sigma query backends
+        continue-on-error: true
+        run: |
+          pip install -r requirements-hunt.txt || \
+            echo "::warning::Sigma query backends unavailable - hunt packs will carry raw rules only"
+
       - name: Fetch threat intelligence
         env:
           GROQ_API_KEY:   ${{ secrets.GROQ_API_KEY }}
@@ -198,20 +210,34 @@ jobs:
           # a public URL. Adding the cache directory here would undo
           # CONFIG.publish_own_estate in a single line.
           #
-          # The four derived corpora below are public reference data (MITRE
-          # ATT&CK, Malpedia, SigmaHQ, the CVE Program) and are expensive to
-          # rebuild — the ATT&CK one is a 48 MB download — so carrying them
-          # makes a cache miss cheap instead of punishing.
+          # The derived corpora below are public reference data and are
+          # expensive to rebuild — ATT&CK is a 48 MB download, ORKL is ~35 MB
+          # of report text reduced to citations, and sigma_queries.json is
+          # several thousand rule compilations — so carrying them makes a
+          # cache miss cheap instead of punishing. All are DERIVED and small;
+          # none of them is own-estate data.
+          #
+          # sigma_seen_rules.json is the detection-diff baseline. Losing it
+          # is not fatal but it costs one cycle: the next run re-baselines
+          # and reports no changes rather than inventing 3,000 of them.
           STATE_PATHS=""
           for candidate in \
               archive \
               source_health_summary.json \
               .alert_state.json \
               .digest_state.json \
-              .cache/attack_kb.json \
+              .cache/attack_kb_v2.json \
               .cache/malpedia_families.json \
               .cache/sigma_index.json \
-              .cache/cve_published.json; do
+              .cache/sigma_queries.json \
+              .cache/sigma_seen_rules.json \
+              .cache/cve_published.json \
+              .cache/misp_galaxy.json \
+              .cache/orkl_reports.json \
+              .cache/d3fend_map.json \
+              .cache/control_mappings.json \
+              .cache/atomic_red_team.json \
+              .cache/leak_sites.json; do
             [ -e "data/${candidate}" ] && STATE_PATHS="${STATE_PATHS} ${candidate}"
           done
           # shellcheck disable=SC2086
@@ -230,6 +256,7 @@ jobs:
           for required in \
               index.html app.js style.css \
               js/query.js js/research.js js/timetravel.js \
+              js/library.js js/hunt.js js/leaks.js \
               data/intel.json; do
             if [ ! -s "_site/${required}" ]; then
               echo "::error::_site/${required} is missing or empty — refusing to deploy"
@@ -240,9 +267,34 @@ jobs:
           for asset in $(grep -oE '(app\.js|style\.css|js/[a-z]+\.js)\?v=' index.html | sed 's/?v=//' | sort -u); do
             [ -s "_site/${asset}" ] || { echo "::error::index.html references ${asset}, not deployed"; exit 1; }
           done
+          # The Library is an index PLUS thousands of shards. An index without
+          # shards is a search box where every result 404s -- worse than no
+          # Library at all, and invisible until somebody clicks a result.
+          if [ -s "_site/data/api/entity_index.json" ]; then
+            SHARDS=$(ls _site/data/api/entity 2>/dev/null | wc -l)
+            if [ "${SHARDS}" -lt 100 ]; then
+              echo "::error::entity_index.json shipped with only ${SHARDS} shards"
+              exit 1
+            fi
+            echo "  library: ${SHARDS} entity shards"
+          else
+            echo "::warning::no entity_index.json - the Library will be empty"
+          fi
+          # Same shape, same failure mode: an index of packs whose shards are
+          # missing is a list where every row 404s on click.
+          if [ -s "_site/data/api/hunt_packs.json" ]; then
+            PACKS=$(ls _site/data/api/hunt 2>/dev/null | wc -l)
+            if [ "${PACKS}" -lt 10 ]; then
+              echo "::error::hunt_packs.json shipped with only ${PACKS} pack shards"
+              exit 1
+            fi
+            echo "  hunt: ${PACKS} pack shards"
+          fi
           echo "Deploying $(du -sh _site | cut -f1):"
           echo "  day snapshots: $(ls _site/data/api/day 2>/dev/null | wc -l)"
-          find _site -type f | sort | sed 's/^/  /'
+          # The entity shards are thousands of files; listing them all buries
+          # every other line of the log.
+          find _site -type f -not -path '*/api/entity/*' -not -path '*/api/hunt/*' | sort | sed 's/^/  /'
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

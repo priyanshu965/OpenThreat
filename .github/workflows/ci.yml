@@ -120,38 +120,112 @@ jobs:
           for fn in showGraphView showCampaignsView showDetectionsView \
                     showMalwareView showResearchView showDiffView \
                     renderTimeMachine enterDay parseQuery queryMatches \
-                    queryExplain queryExamples queryFields; do
+                    queryExplain queryExamples queryFields \
+                    showLibraryView showHuntView showLeaksView \
+                    libJump libOpen libSection libLink libCode libAtomic \
+                    libRenderDefence libSearch huntOpenPack; do
             if ! grep -qE "function ${fn}\b" js/*.js; then
               echo "::error::app.js calls ${fn}() but no js/ module defines it"
               missing=1
             fi
           done
-          for fn in showLazyView emptyState openEntityModal closePanel setView; do
+          for fn in showLazyView emptyState openEntityModal closePanel setView \
+                    setMode showToast writeUrlState modeOf; do
             if ! grep -qE "function ${fn}\b" app.js; then
               echo "::error::js/ modules call ${fn}() but app.js does not define it"
               missing=1
             fi
           done
+          # hunt.js and leaks.js close over helpers defined in research.js and
+          # library.js. These are classic scripts sharing one top-level scope,
+          # so load order is load-bearing and a reorder is a ReferenceError at
+          # click time that nothing else here would catch.
+          order_ok=1
+          prev=0
+          for m in research library hunt leaks; do
+            line=$(grep -n "js/${m}.js" index.html | head -1 | cut -d: -f1)
+            if [ -z "$line" ]; then
+              echo "::error::index.html does not load js/${m}.js"
+              order_ok=0
+            elif [ "$line" -lt "$prev" ]; then
+              echo "::error::js/${m}.js loads before a module it depends on"
+              order_ok=0
+            else
+              prev=$line
+            fi
+          done
+          [ "$order_ok" -eq 1 ] || missing=1
           [ "$missing" -eq 0 ] || exit 1
           echo "All cross-module entry points resolve."
 
+      # The v5 nav is GENERATED from app.js's MODE_VIEWS table rather than
+      # written into index.html, so the old version of this check -- which
+      # scraped data-view= attributes out of the HTML -- would now find nothing
+      # and pass vacuously. It reads the table instead.
       - name: Verify every view has a container and a route
         run: |
           set -e
+          python - <<'PY'
+          import pathlib, re, sys
+
+          app = pathlib.Path("app.js").read_text(encoding="utf-8")
+          html = pathlib.Path("index.html").read_text(encoding="utf-8")
+
+          block = app.split("const MODE_VIEWS = {", 1)[1].split("\n};", 1)[0]
+          views = re.findall(r"\['([a-z-]+)',", block)
+          if len(views) < 10:
+              print(f"::error::MODE_VIEWS parsed as only {views} - the check is broken")
+              sys.exit(1)
+
+          fail = False
+          for view in sorted(set(views)):
+              if view == "feed":
+                  continue
+              if f'id="{view}-view"' not in html:
+                  print(f"::error::view '{view}' is in MODE_VIEWS but has no #{view}-view container")
+                  fail = True
+              if f"case '{view}':" not in app:
+                  print(f"::error::view '{view}' is in MODE_VIEWS but has no route in renderAll()")
+                  fail = True
+              if f"'{view}-view'" not in app:
+                  print(f"::error::#{view}-view is not in VIEW_NODES, so hideAllViews() leaks it")
+                  fail = True
+              if f"'{view}'" not in app.split("const VIEWS = [", 1)[1].split("];", 1)[0]:
+                  print(f"::error::view '{view}' is in MODE_VIEWS but not in VIEWS, so setView() rejects it")
+                  fail = True
+          sys.exit(1 if fail else 0)
+          PY
+          echo "Every view in MODE_VIEWS has a container, a route and a node."
+
+      - name: Verify every published API endpoint is declared in app.js
+        run: |
+          set -e
           fail=0
-          for view in $(grep -oE 'data-view="[a-z]+"' index.html | cut -d'"' -f2); do
-            [ "$view" = "feed" ] && continue
-            if ! grep -q "id=\"${view}-view\"" index.html; then
-              echo "::error::view '${view}' has a nav button but no #${view}-view container"
+          for endpoint in entity_index.json hunt_packs.json hunt_queue.json \
+                          detection_diff.json control_focus.json \
+                          leak_sites.json telegram.json; do
+            if ! grep -q "${endpoint}" app.js; then
+              echo "::error::exports.py writes ${endpoint} but app.js never fetches it"
               fail=1
             fi
-            if ! grep -q "case '${view}':" app.js; then
-              echo "::error::view '${view}' has a nav button but no route in renderAll()"
+            if ! grep -q "${endpoint}" scripts/exports.py; then
+              echo "::error::app.js fetches ${endpoint} but exports.py never writes it"
               fail=1
             fi
           done
           [ "$fail" -eq 0 ] || exit 1
-          echo "Every view button has a container and a route."
+          echo "Every v5 endpoint is written and read."
+
+      # pySigma must never enter the hourly job's critical path.
+      - name: Keep optional query backends out of the core requirements
+        run: |
+          if grep -qi 'pysigma' requirements.txt; then
+            echo "::error::pysigma is in requirements.txt. A resolver conflict there fails the whole feed; it belongs in requirements-hunt.txt."
+            exit 1
+          fi
+          grep -qi 'pysigma' requirements-hunt.txt || {
+            echo "::error::requirements-hunt.txt does not list pysigma"; exit 1; }
+          echo "Query backends are optional, as intended."
 
       - name: Reject render-blocking CDN scripts
         run: |

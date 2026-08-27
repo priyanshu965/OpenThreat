@@ -144,6 +144,52 @@ try:
 except Exception:
     publish_timeline = None
 
+# -- v5: the Library (encyclopedia), the hunt bench, leak-site tracking -------
+# Same contract as everything above: optional, and the feed builds without any
+# of them. The Library in particular is a large, slow-moving corpus -- if MISP
+# galaxy or ORKL are unreachable the entity pages simply carry less, and the
+# hourly feed is untouched.
+try:
+    from misp_galaxy import load_galaxy
+except Exception:
+    load_galaxy = None
+try:
+    from orkl import load_orkl
+except Exception:
+    load_orkl = None
+try:
+    from d3fend import load_d3fend
+except Exception:
+    load_d3fend = None
+try:
+    from control_mappings import load_control_mappings, build_control_focus
+except Exception:
+    load_control_mappings = build_control_focus = None
+try:
+    from atomics import load_atomics
+except Exception:
+    load_atomics = None
+try:
+    from knowledge_base import build_knowledge_base
+except Exception:
+    build_knowledge_base = None
+try:
+    from hunt_packs import build_hunt_packs, build_hunt_queue
+except Exception:
+    build_hunt_packs = build_hunt_queue = None
+try:
+    from ransomware_leaks import load_leak_sites
+except Exception:
+    load_leak_sites = None
+try:
+    from telegram_watch import load_telegram
+except Exception:
+    load_telegram = None
+try:
+    from sigma_rules import build_detection_diff, fetch_rule_bodies
+except Exception:
+    build_detection_diff = fetch_rule_bodies = None
+
 # ── MITRE ATT&CK full database ────────────────────────────────────────────────
 try:
     from mitre_ttps import MITRE_TECHNIQUES, TACTIC_ORDER, map_ttps
@@ -192,6 +238,7 @@ from fetchlib import (                                          # noqa: E402,F40
     cache_path as _cache_path,
     cached_fetch as _cached_fetch,
     StructuredAdapter as _StructuredAdapter,
+    item_technique_ids,
 )
 
 # ── Configuration (see scripts/config.py; override via env vars) ──────────────
@@ -3031,6 +3078,137 @@ def main():
             log.warning(f"Exploitation-lag build failed: {e}")
 
     # ── Source breakdown ───────────────────────────────────────────────────
+
+    # =====================================================================
+    # v5 STAGE: THE LIBRARY AND THE HUNT BENCH
+    # =====================================================================
+    # Everything below runs on the finished item list and on corpora that are
+    # cached for days or weeks, so the marginal cost per hourly run is a few
+    # joins over data already in memory. Each block is guarded independently:
+    # the Library degrading to "ATT&CK only" is a much better failure than the
+    # feed not publishing.
+
+    # How often each technique was actually seen this window. Several v5
+    # features are only interesting because of this number -- it is what makes
+    # a hunt pack timely rather than encyclopedic.
+    technique_counts = Counter()
+    for _item in all_items:
+        for _tid in item_technique_ids(_item):
+            technique_counts[_tid] += 1
+    actor_counts = Counter()
+    for _item in all_items:
+        for _actor in _item.get("threat_actors") or []:
+            actor_counts[_actor] += 1
+
+    galaxy = {}
+    if load_galaxy:
+        try:
+            galaxy = load_galaxy() or {}
+            if galaxy:
+                log.info(f"OK MISP galaxy: {len(galaxy)} entities")
+        except Exception as e:
+            log.warning(f"MISP galaxy unavailable: {e}")
+
+    orkl_index = {}
+    if load_orkl:
+        try:
+            orkl_index = load_orkl() or {}
+            if orkl_index:
+                log.info(f"OK ORKL: {orkl_index.get('count', 0)} reports indexed")
+        except Exception as e:
+            log.warning(f"ORKL unavailable: {e}")
+
+    d3fend_table = {}
+    if load_d3fend:
+        try:
+            d3fend_table = load_d3fend() or {}
+        except Exception as e:
+            log.warning(f"D3FEND unavailable: {e}")
+
+    control_frameworks = {}
+    if load_control_mappings:
+        try:
+            control_frameworks = load_control_mappings() or {}
+        except Exception as e:
+            log.warning(f"Control mappings unavailable: {e}")
+
+    atomics_table = {}
+    if load_atomics:
+        try:
+            atomics_table = load_atomics() or {}
+        except Exception as e:
+            log.warning(f"Atomic Red Team unavailable: {e}")
+
+    leak_view = None
+    if load_leak_sites:
+        try:
+            leak_view = load_leak_sites()
+            if leak_view:
+                log.info(f"OK Leak sites: {leak_view['window_claims']} claims in "
+                         f"{leak_view['window_days']}d from "
+                         f"{leak_view['active_groups']} groups")
+        except Exception as e:
+            log.warning(f"Leak-site view failed: {e}")
+
+    telegram_view = None
+    if load_telegram:
+        try:
+            telegram_view = load_telegram()
+        except Exception as e:
+            log.warning(f"Telegram watch failed: {e}")
+
+    knowledge = None
+    if build_knowledge_base:
+        try:
+            knowledge = build_knowledge_base(
+                attack_kb, galaxy, malware_families, orkl_index, d3fend_table,
+                control_frameworks, sigma_index, atomics_table, leak_view,
+                all_items)
+            if knowledge:
+                log.info(f"OK Library: {knowledge['count']} entities, "
+                         f"{knowledge['described']} with prose, "
+                         f"{len(knowledge['aliases'])} searchable names")
+        except Exception as e:
+            log.warning(f"Knowledge base build failed: {e}")
+
+    hunt_packs = None
+    if build_hunt_packs:
+        try:
+            hunt_packs = build_hunt_packs(
+                dict(technique_counts), sigma_index, attack_kb, atomics_table,
+                d3fend_table, control_frameworks, fetch_rule_bodies)
+        except Exception as e:
+            log.warning(f"Hunt packs failed: {e}")
+
+    hunt_queue = None
+    if build_hunt_queue:
+        try:
+            hunt_queue = build_hunt_queue(all_items, dict(technique_counts),
+                                          attack_kb, sigma_index,
+                                          dict(actor_counts))
+        except Exception as e:
+            log.warning(f"Hunt queue failed: {e}")
+
+    detection_diff = None
+    if build_detection_diff and sigma_index:
+        try:
+            detection_diff = build_detection_diff(
+                sigma_index, dict(technique_counts),
+                attack_kb.get("technique_names", {}))
+        except Exception as e:
+            log.warning(f"Detection diff failed: {e}")
+
+    control_focus = None
+    if build_control_focus and control_frameworks:
+        try:
+            control_focus = build_control_focus(dict(technique_counts),
+                                                control_frameworks)
+            if control_focus:
+                log.info(f"OK Control focus over {control_focus['techniques_considered']} "
+                         f"active techniques")
+        except Exception as e:
+            log.warning(f"Control focus failed: {e}")
+
     source_counter = Counter(i.get("source", "Unknown") for i in all_items)
 
     # ── Write output ───────────────────────────────────────────────────────
@@ -3038,7 +3216,7 @@ def main():
     output = {
         "last_updated": now_utc(),
         "total_items": len(all_items),
-        "pipeline_version": "4.0.0",
+        "pipeline_version": "5.0.0",
         # Honest counts. The old `sources_fetched` included a stub that
         # returned [] by design, and `sources_ok` counted any source that
         # returned anything, however stale.
@@ -3093,7 +3271,30 @@ def main():
             "backtest": bool(backtest_result),
             "source_reliability": bool(reliability),
             "exploit_lag": bool(lag),
+            "library": bool(knowledge),
+            "hunt_packs": bool(hunt_packs),
+            "hunt_queue": bool(hunt_queue),
+            "detection_diff": bool(detection_diff),
+            "control_focus": bool(control_focus),
+            "leak_sites": bool(leak_view),
+            "telegram": bool(telegram_view),
         },
+        # Small headline counts so the nav can show a badge without fetching
+        # any of the large lazily-loaded endpoints.
+        "library_summary": ({"count": knowledge["count"],
+                             "by_kind": knowledge["by_kind"],
+                             "names": len(knowledge["aliases"])}
+                            if knowledge else None),
+        "hunt_summary": ({"packs": hunt_packs["count"],
+                          "with_queries": hunt_packs["with_queries"],
+                          "backends": [b["label"] for b in hunt_packs["backends"]],
+                          "queue": (hunt_queue or {}).get("count", 0),
+                          "uncovered": (hunt_queue or {}).get("uncovered", 0)}
+                         if hunt_packs else None),
+        "leak_summary": ({"window_days": leak_view["window_days"],
+                          "claims": leak_view["window_claims"],
+                          "groups": leak_view["active_groups"]}
+                         if leak_view else None),
         "campaign_summary": ({"count": campaign_view["count"],
                               "high_confidence": sum(
                                   1 for c in campaign_view["campaigns"]
@@ -3111,6 +3312,13 @@ def main():
         "backtest": backtest_result,
         "source_reliability": reliability,
         "exploit_lag": lag,
+        "knowledge_base": knowledge,
+        "hunt_packs": hunt_packs,
+        "hunt_queue": hunt_queue,
+        "detection_diff": detection_diff,
+        "control_focus": control_focus,
+        "leak_sites": leak_view,
+        "telegram": telegram_view,
         "items": all_items,
     }
 
@@ -3124,7 +3332,13 @@ def main():
     # downloads all of it to read a list of headlines, and 90 archived copies
     # of a backtest that is recomputed from those very archives get stored.
     _RESEARCH_KEYS = ("entity_graph", "malware_view", "detections", "campaigns",
-                      "backtest", "source_reliability", "exploit_lag")
+                      "backtest", "source_reliability", "exploit_lag",
+                      # v5. knowledge_base is the big one: several thousand
+                      # entities, sharded to its own files by
+                      # knowledge_base.write_entity_shards.
+                      "knowledge_base", "hunt_packs", "hunt_queue",
+                      "detection_diff", "control_focus", "leak_sites",
+                      "telegram")
     feed_output = {k: v for k, v in output.items() if k not in _RESEARCH_KEYS}
 
     # ── Archive once per day, not 24x ───────────────────────────────────────

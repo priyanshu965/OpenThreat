@@ -238,3 +238,28 @@ def stream_json(url: str, timeout: int | None = None, max_bytes: int = 120 * 102
 def now_utc() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+# ── Item field accessors ──────────────────────────────────────────────────────
+# Two fields on a feed item have names that are easy to guess wrong, and
+# guessing wrong is SILENT: you get an empty list and a feature that reports
+# "nothing seen this week" instead of raising.
+#
+# That is not hypothetical. The v5 stage was written against `mitre_techniques`
+# and `link`, neither of which exists — the real names are `ttps` (a list of
+# {id, name, tactic} dicts, not strings) and `url`. Every technique count came
+# back zero, so hunt packs lost their ranking, the control focus never
+# published at all, and nothing errored.
+#
+# Three modules had already inlined the same `ttps` idiom independently, which
+# is how the discrepancy survived. One accessor, used everywhere.
+
+def item_technique_ids(item: dict) -> list[str]:
+    """ATT&CK technique ids on a feed item. `ttps` is a list of DICTS."""
+    return [t.get("id") for t in (item.get("ttps") or [])
+            if isinstance(t, dict) and t.get("id")]
+
+
+def item_url(item: dict) -> str:
+    """The item's source link. The field is `url`, never `link`."""
+    return str(item.get("url") or "")

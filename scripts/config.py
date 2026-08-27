@@ -188,6 +188,95 @@ class Config:
     enable_timeline    = _bool("ENABLE_TIMELINE", True)
     timeline_days      = _int("TIMELINE_DAYS", 90)
 
+    # ══════════════════════════════════════════════════════════════════════
+    # v5 — THE LIBRARY (encyclopedia), THE HUNT BENCH, LEAK-SITE TRACKING
+    # ══════════════════════════════════════════════════════════════════════
+
+    # ── Knowledge base / entity pages ──────────────────────────────────────
+    # The encyclopedia. ATT&CK prose + MISP galaxy + Malpedia are merged into
+    # one canonical entity per actor / malware / technique / campaign, then
+    # SHARDED to data/api/entity/<slug>.json. Sharding is not an optimisation
+    # here, it is the only thing that makes this fit: the merged corpus is
+    # ~4,800 entities and several MB, and a single blob would be downloaded in
+    # full by every visitor who wanted to read one page.
+    enable_knowledge_base   = _bool("ENABLE_KNOWLEDGE_BASE", True)
+    kb_shard_dir            = _str("KB_SHARD_DIR", "entity")
+    # The search index carries id/name/aliases/kind only, and is the ONE file
+    # loaded up front. Cap it so a galaxy growth spurt cannot silently turn a
+    # 300 KB download into 3 MB.
+    kb_index_max_entities   = _int("KB_INDEX_MAX_ENTITIES", 12000)
+    kb_description_chars    = _int("KB_DESCRIPTION_CHARS", 4000)
+
+    # ── MISP galaxy (threat-actor, ransomware, tool, rat, banker clusters) ──
+    # Keyless JSON in a git repo. This is the alias corpus that makes name
+    # deconfliction work: "Midnight Blizzard" -> APT29.
+    enable_misp_galaxy   = _bool("ENABLE_MISP_GALAXY", True)
+    misp_galaxy_ttl_hours = _int("MISP_GALAXY_TTL_HOURS", 24 * 7)
+
+    # ── ORKL (threat-report library) ───────────────────────────────────────
+    # ORKL returns the FULL report text in list responses -- ~2.3 MB per 100
+    # rows -- so the page budget is a bandwidth decision, not a taste one.
+    # 1,500 reports is ~35 MB once a week, reduced on the fly to ~250 KB of
+    # citations. Raising the cap raises the transfer linearly.
+    enable_orkl        = _bool("ENABLE_ORKL", True)
+    orkl_ttl_hours     = _int("ORKL_TTL_HOURS", 24 * 7)
+    orkl_max_reports   = _int("ORKL_MAX_REPORTS", 1500)
+
+    # ── MITRE D3FEND (countermeasures) ─────────────────────────────────────
+    enable_d3fend      = _bool("ENABLE_D3FEND", True)
+    d3fend_ttl_hours   = _int("D3FEND_TTL_HOURS", 24 * 30)
+
+    # ── ATT&CK <-> NIST 800-53 / CIS control mappings ──────────────────────
+    enable_control_mappings = _bool("ENABLE_CONTROL_MAPPINGS", True)
+    control_map_ttl_hours   = _int("CONTROL_MAP_TTL_HOURS", 24 * 30)
+
+    # ── CISA advisories + historical incident corpus ───────────────────────
+    enable_advisories       = _bool("ENABLE_ADVISORIES", True)
+    advisories_ttl_hours    = _int("ADVISORIES_TTL_HOURS", 12)
+    enable_historical       = _bool("ENABLE_HISTORICAL", True)
+    historical_ttl_hours    = _int("HISTORICAL_TTL_HOURS", 24 * 7)
+
+    # ── Threat hunting ─────────────────────────────────────────────────────
+    # A hunt pack is one technique's Sigma rules + Atomic Red Team tests +
+    # queries compiled for the SIEMs people actually run. Compilation needs
+    # pySigma and its backends; when they are absent the pack still publishes
+    # with the raw Sigma, which is why the backends are an optional extra
+    # rather than a hard dependency (see hunt_packs._compile).
+    enable_hunt_packs       = _bool("ENABLE_HUNT_PACKS", True)
+    hunt_packs_max          = _int("HUNT_PACKS_MAX", 220)
+    hunt_pack_rules_max     = _int("HUNT_PACK_RULES_MAX", 8)
+    enable_sigma_compile    = _bool("ENABLE_SIGMA_COMPILE", True)
+    sigma_compile_budget    = _int("SIGMA_COMPILE_BUDGET", 900)
+    enable_atomics          = _bool("ENABLE_ATOMICS", True)
+    atomics_ttl_hours       = _int("ATOMICS_TTL_HOURS", 24 * 7)
+    enable_hunt_queue       = _bool("ENABLE_HUNT_QUEUE", True)
+    hunt_queue_max          = _int("HUNT_QUEUE_MAX", 40)
+
+    # ── Detection diff (what SigmaHQ added since the last run) ─────────────
+    enable_detection_diff   = _bool("ENABLE_DETECTION_DIFF", True)
+
+    # ── Ransomware leak sites ──────────────────────────────────────────────
+    # ransomware.live and ransomwatch aggregate what onion leak sites publish.
+    # We read the aggregators rather than running Tor in CI: see
+    # ransomware_leaks.py for why that is a deliberate choice and not laziness.
+    enable_leak_sites       = _bool("ENABLE_LEAK_SITES", True)
+    leak_sites_ttl_hours    = _int("LEAK_SITES_TTL_HOURS", 6)
+    leak_victims_max        = _int("LEAK_VICTIMS_MAX", 6000)
+    leak_recent_days        = _int("LEAK_RECENT_DAYS", 120)
+    # How many months of ransomware.live victim data to assemble. Each month is
+    # one request of roughly 800 KB; closed months are cached for 30 days, so
+    # the recurring cost is the current month only.
+    leak_history_months     = _int("LEAK_HISTORY_MONTHS", 5)
+
+    # ── Telegram public-channel previews ───────────────────────────────────
+    # t.me/s/<channel> is the ordinary public web preview. No API key, no
+    # login, nothing private. Off by default: it is the one v5 source whose
+    # value depends entirely on which channels YOU choose to watch.
+    enable_telegram         = _bool("ENABLE_TELEGRAM", False)
+    telegram_channels       = _str("TELEGRAM_CHANNELS", "")
+    telegram_ttl_hours      = _int("TELEGRAM_TTL_HOURS", 4)
+    telegram_max_posts      = _int("TELEGRAM_MAX_POSTS", 40)
+
     # ── MISP ───────────────────────────────────────────────────────────────
     enable_misp_export = _bool("ENABLE_MISP_EXPORT", True)
     misp_org_name      = _str("MISP_ORG_NAME", "CyberWatch")

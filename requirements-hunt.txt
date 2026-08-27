@@ -1,0 +1,21 @@
+# CyberWatch — OPTIONAL query-compilation dependencies (scripts/hunt_packs.py).
+#
+# These convert Sigma rules into paste-ready SIEM queries. They are kept OUT of
+# requirements.txt on purpose.
+#
+# The pipeline runs unattended 24 times a day. pySigma and its backends are a
+# fast-moving family of packages with tight inter-version constraints, and a
+# resolver conflict between them would fail `pip install` for the whole job —
+# trading the entire feed for a convenience feature. Here, the install is
+# best-effort (see .github/workflows/update.yml) and every backend is probed
+# independently at import time: with none of them present, hunt packs still
+# publish with their rules, atomics and countermeasures intact and simply
+# report that queries are unavailable.
+#
+# Unpinned deliberately. Pinning six packages that constrain each other is how
+# you get a permanently unsolvable resolver; the guard is the try/except in
+# hunt_packs._live_backends, not a version number.
+pysigma
+pysigma-backend-splunk
+pysigma-backend-elasticsearch
+pysigma-backend-kusto

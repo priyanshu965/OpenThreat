@@ -703,3 +703,147 @@ Listed because they are the kind that a green test suite does not catch:
 7. **Five query-language bugs**, including a filler rule that deleted the `kev`
    in "no KEV listing" and left a dangling `NOT` that attached to the time
    window — inverting the query. All pinned in `tests/query.test.js`.
+
+---
+
+# Appendix — what v5.0 shipped
+
+v4 made the feed answer *what do I do today*. v5 answers two questions it could
+not touch: **what is known** about any entity, and **how do I actually go and
+look for it**.
+
+## The Library
+
+One page per actor, malware family, tool, ATT&CK technique, campaign and
+mitigation — 8,883 entities merged from nine corpora, sharded to
+`data/api/entity/<slug>.json`.
+
+The largest single win required no new source at all. v4 downloaded MITRE's
+48 MB CTI bundle, extracted the `uses` edges, and threw away the descriptions,
+the written detection guidance, the mitigations, the campaigns and the
+sub-technique hierarchy — roughly 95% of the bundle, and precisely the content
+an entity page is made of. `entity_graph._derive_kb` now keeps it, and reads
+four relationship types v4 ignored (`mitigates`, `detects`, `attributed-to`,
+`subtechnique-of`).
+
+**Name deconfliction** is the sleeper feature. 16,527 names resolve to 8,883
+entities, so Midnight Blizzard, Cozy Bear, Nobelium, UNC2452, The Dukes,
+BlueBravo and G0016 are one page. Vendors do not coordinate actor naming and
+never will; resolving it by hand is a daily tax.
+
+New sources: MISP galaxy (4,409 entities, the synonym corpus), ORKL (a
+bibliography per actor), D3FEND (3,857 countermeasure links), and the CTID
+mappings to NIST 800-53, CSA CCM, Azure and AWS.
+
+## The hunt bench
+
+The gap v4 left: the tool told you things and never let you do anything.
+
+A **hunt pack** is one technique fully equipped — ATT&CK prose, MITRE's own
+detection guidance, the Sigma rules, those rules compiled for six SIEMs, the
+Atomic Red Team tests that make it happen, and the countermeasures. 220 packs,
+153 with compiled queries.
+
+The **hunt queue** walks a chain that had been in the data since v4 with nothing
+to traverse it: *actor active this week → techniques ATT&CK attributes to them →
+rules that cover those → hunts to run today*. Each row carries its justification
+and a finish line. Techniques with **no** public rule still appear; that is the
+finding.
+
+**Coverage** crosses a pasted rule inventory against what is active and exports
+an ATT&CK Navigator layer. The inventory never leaves the browser — there is no
+backend to send it to, which is a property of the architecture rather than a
+promise.
+
+## Dark web
+
+Leak-site tracking from ransomware.live and ransomwatch. Running Tor in CI was
+considered and rejected: leak sites are deliberately flaky, half sit behind a
+captcha, and the aggregators already run that infrastructure with better uptime
+than this project could manage.
+
+The extortion prose is dropped. The analytical value is entirely in the
+structured fields, and republishing the note would make a public dashboard
+another amplification channel for criminal claims about a named victim.
+
+## Navigation
+
+Thirteen buttons became five modes — FEED / LIBRARY / HUNT / LANDSCAPE /
+RESEARCH — with a second row switching views inside the active mode. The design
+note that prompted this proposed four; a fifth was needed because the
+situational and own-estate views have no honest home under "what is proven".
+
+## Visual design
+
+The palette was retuned away from the "cybersecurity" look toward the
+security-tool look: the neon cyan interaction colour became a restrained
+selection blue, the scanline sweep was removed, and the background grid was
+dialled back. Consoles people stare at for eight hours are calm and
+near-monochrome and spend saturated colour almost entirely on severity.
+
+It also fixed two measured accessibility failures. Against the card surface,
+`--text-secondary` sat at 4.00:1 — below the 4.5 floor for body text — and
+`--text-muted` at 1.69:1, which is not legible at all. They are now 6.64 and
+3.78, the latter restricted to metadata that never carries meaning alone.
+
+## Defects found and fixed along the way
+
+Every one of these produced plausible output rather than an error, which is the
+only kind worth writing down.
+
+1. **The v5 stage read field names that do not exist.** It was written against
+   `item["mitre_techniques"]` and `item["link"]`; the real fields are `ttps` (a
+   list of dicts) and `url`. Nothing raised. Every technique count came back
+   zero, so hunt packs silently lost their ranking, every `observed` read 0,
+   and `control_focus` returned `None` and published nothing at all. It looked
+   exactly like a quiet week. Found by checking the published artifact against
+   the pipeline log, not by a test. Now behind `fetchlib.item_technique_ids`.
+
+2. **8,883 entities, 25 of them silently overwritten.** Technique slugs were
+   built from the NAME, and ATT&CK reuses 23 technique names across 48
+   different ids — "Spearphishing Attachment" is both T1566.001 and T1598.002.
+   The collision guard compared names, so two entities sharing a name were
+   treated as the same thing and the second replaced the first. The guard
+   against quiet data loss was where the quiet data loss happened.
+
+3. **A shared `SigmaCollection` corrupted by the first backend's pipeline.**
+   pySigma processing pipelines rewrite field names *in place*. Passing one
+   collection to several backends works for Splunk and Elastic (no field
+   mappings) and breaks the second Kusto dialect — one missing query among
+   thousands, with the exception swallowed by the per-backend guard. A fresh
+   collection is now parsed per backend.
+
+4. **The leak-site view reported a quiet quarter that never happened.**
+   ransomwatch's newest post was ten months old, so 97% of the corpus was
+   stale and the current window was whatever fitted in one 100-row call:
+   *99 claims in 120 days*. The window is now assembled month by month (3,383
+   claims) and every source reports the age of its newest record on the page.
+
+5. **An empty stub claimed a name from the real entry.** "Emotet" existed both
+   as an ATT&CK malware family (S0367, with prose, aliases and an arsenal) and
+   as a bare actor name the feed mentioned once. The alias index gave the name
+   to the stub. Ambiguous names are now settled by how much an entry actually
+   says, and the page links to the other reading.
+
+6. **`_norm_group` did not strip dots**, so "LockBit 3.0" and "lockbit30"
+   stayed two different groups — the exact failure that function exists to
+   prevent.
+
+7. **The Telegram channel list split on whitespace**, turning one malformed
+   entry ("bad name") into two candidates, one of which passed validation. A
+   typo would have subscribed you to somebody else's channel.
+
+8. **The CI view-parity guard would have passed vacuously.** It scraped
+   `data-view=` attributes out of `index.html`; the v5 nav is generated from
+   `MODE_VIEWS` in `app.js`, so the check would have found nothing and reported
+   success. It now reads the table.
+
+9. **Flex rows clipped their own content on mobile.** Reference rows are flex
+   containers whose children would not shrink below their content width, so
+   the page reported no horizontal overflow while the text was unreachable.
+   Fixed with `min-width: 0` on the children.
+
+Two sizing mistakes were caught before they shipped rather than after:
+`hunt_packs.json` was 4.5 MB (740 KB gzipped) as a single file and is now an
+index plus 220 shards of ~20 KB — the same split the Library uses, for the same
+reason v4 split out the research artifacts.

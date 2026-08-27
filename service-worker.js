@@ -10,7 +10,7 @@
 // Bump on every release. The activate handler deletes every cache whose name
 // is not this one, which is what stops old versioned entries accumulating now
 // that staleWhileRevalidate keys on the full URL including ?v=.
-const CACHE = "cyberwatch-v5";
+const CACHE = "cyberwatch-v6";
 const PRECACHE = [
   "./",
   "./index.html",
@@ -19,6 +19,9 @@ const PRECACHE = [
   "./js/query.js",
   "./js/research.js",
   "./js/timetravel.js",
+  "./js/library.js",
+  "./js/hunt.js",
+  "./js/leaks.js",
   "./manifest.json",
 ];
 

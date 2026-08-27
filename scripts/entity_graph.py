@@ -42,7 +42,15 @@ from fetchlib import CONFIG, cached_derive, log, now_utc, stream_json
 _CTI_URL = ("https://raw.githubusercontent.com/mitre/cti/master/"
             "enterprise-attack/enterprise-attack.json")
 
-_KB_CACHE = "attack_kb.json"
+# v2 keeps the prose (descriptions, detection guidance, mitigations,
+# campaigns, sub-technique structure) that v1 downloaded and threw away.
+#
+# The cache NAME carries the version deliberately. A warm v1 cache is a
+# different shape, and the KEV incident in this repo is what a silently
+# accepted stale shape costs: the loader accepted it, nothing errored, and the
+# published output was wrong for a full TTL. A new name makes a v1 cache a
+# miss by construction rather than by a check somebody has to remember.
+_KB_CACHE = "attack_kb_v2.json"
 
 # Aliases below this length, or in this list, produce nothing but false
 # positives when matched against prose. "Fancy Bear" is a useful alias;
@@ -174,8 +182,45 @@ def _usable_aliases(name: str, raw) -> list[str]:
     return sorted(set(out))
 
 
+def _prose(value, limit: int | None = None) -> str:
+    """Collapse STIX markdown prose to a single clean string."""
+    text = " ".join(str(value or "").split())
+    # ATT&CK descriptions are markdown with inline citation markers like
+    # "(Citation: FireEye APT29)". They are noise on a rendered page and they
+    # are most of the byte count, so they go.
+    text = re.sub(r"\(Citation:[^)]*\)", "", text)
+    text = re.sub(r"\[([^\]]+)\]\((?:https?://)?[^)]*\)", r"", text)
+    text = " ".join(text.split())
+    cap = limit if limit is not None else CONFIG.kb_description_chars
+    return text[:cap]
+
+
+def _references(obj: dict, limit: int = 12) -> list[dict]:
+    """External references worth showing a reader, minus the ATT&CK self-link."""
+    out = []
+    for ref in obj.get("external_references", []) or []:
+        url = str(ref.get("url") or "")
+        if not url.startswith("http"):
+            continue
+        if ref.get("source_name") == "mitre-attack":
+            continue
+        out.append({"name": str(ref.get("source_name") or "")[:120],
+                    "url": url[:400],
+                    "description": _prose(ref.get("description"), 220)})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _derive_kb() -> dict | None:
-    """Download the CTI bundle and reduce it to names, aliases and edges."""
+    """
+    Download the CTI bundle and reduce it to the encyclopedia.
+
+    v1 kept names, aliases and `uses` edges — about 5% of what the bundle
+    carries — and discarded the descriptions, the detection guidance, the
+    mitigations and the campaigns. Those are precisely the content an entity
+    page is made of, and they were already on the wire. This keeps them.
+    """
     log.info("  Building ATT&CK knowledge base from MITRE CTI (48 MB, once a month)...")
     bundle = stream_json(_CTI_URL)
     objects = bundle.get("objects", [])
@@ -183,24 +228,58 @@ def _derive_kb() -> dict | None:
     by_id: dict[str, dict] = {}
     actors: dict[str, dict] = {}
     software: dict[str, dict] = {}
+    techniques: dict[str, dict] = {}
+    mitigations: dict[str, dict] = {}
+    campaigns: dict[str, dict] = {}
     technique_names: dict[str, str] = {}
     technique_tactics: dict[str, list[str]] = {}
+    # data-component id -> label, so `detects` relationships can be resolved
+    # into "which telemetry sees this technique".
+    data_components: dict[str, str] = {}
+
+    _ENTITY_TYPES = ("intrusion-set", "malware", "tool", "attack-pattern",
+                     "course-of-action", "campaign")
 
     for obj in objects:
         oid = obj.get("id")
         if not oid:
             continue
         otype = obj.get("type")
-        if otype in ("intrusion-set", "malware", "tool", "attack-pattern"):
+        if otype in _ENTITY_TYPES:
             by_id[oid] = obj
+        if otype == "x-mitre-data-component" and _live(obj):
+            data_components[oid] = (obj.get("name") or "").strip()
         if otype == "attack-pattern" and _live(obj):
             tid = _external_id(obj)
             if tid:
                 technique_names[tid] = obj.get("name", tid)
-                technique_tactics[tid] = [
+                tactics = [
                     p.get("phase_name", "") for p in obj.get("kill_chain_phases", []) or []
                     if p.get("kill_chain_name") == "mitre-attack"
                 ]
+                technique_tactics[tid] = tactics
+                techniques[tid] = {
+                    "id": tid,
+                    "name": obj.get("name", tid),
+                    "kind": "technique",
+                    "description": _prose(obj.get("description")),
+                    # x_mitre_detection is MITRE's own written guidance on how
+                    # to see this technique. It is the single most useful field
+                    # in the bundle for a hunter and v1 dropped it.
+                    "detection": _prose(obj.get("x_mitre_detection"), 2000),
+                    "platforms": [str(x) for x in (obj.get("x_mitre_platforms") or [])][:14],
+                    "data_sources": [str(x) for x in
+                                     (obj.get("x_mitre_data_sources") or [])][:16],
+                    "permissions": [str(x) for x in
+                                    (obj.get("x_mitre_permissions_required") or [])][:8],
+                    "is_subtechnique": bool(obj.get("x_mitre_is_subtechnique")),
+                    "parent": tid.split(".")[0] if "." in tid else "",
+                    "tactics": tactics,
+                    "url": _external_url(obj),
+                    "references": _references(obj),
+                    "mitigations": [], "actors": [], "software": [],
+                    "subtechniques": [], "detects": [],
+                }
 
     for obj in objects:
         if not _live(obj):
@@ -208,42 +287,139 @@ def _derive_kb() -> dict | None:
         name = (obj.get("name") or "").strip()
         if not name:
             continue
-        if obj.get("type") == "intrusion-set":
+        otype = obj.get("type")
+        if otype == "intrusion-set":
             actors[name] = {
                 "name": name,
+                "id": _external_id(obj),
+                "kind": "actor",
+                # TWO alias lists, and the difference matters.
+                #   aliases      match-safe: what may be fired against prose.
+                #   all_aliases  every name MITRE records, for display and for
+                #                name deconfliction.
+                # "Group 5" is useless as a matcher (it would hit any sentence
+                # containing the words) and essential as a lookup key, because
+                # somebody will search for it.
                 "aliases": _usable_aliases(name, obj.get("aliases")),
+                "all_aliases": sorted({str(a).strip() for a in (obj.get("aliases") or [])
+                                       if str(a).strip() and str(a).strip() != name}),
+                "description": _prose(obj.get("description")),
                 "url": _external_url(obj),
-                "techniques": [], "software": [],
+                "references": _references(obj),
+                "first_seen": "", "last_seen": "",
+                "techniques": [], "software": [], "campaigns": [],
             }
-        elif obj.get("type") in ("malware", "tool"):
+        elif otype in ("malware", "tool"):
             software[name] = {
                 "name": name,
-                "kind": obj.get("type"),
+                "id": _external_id(obj),
+                "kind": "malware" if otype == "malware" else "tool",
                 "aliases": _usable_aliases(name, obj.get("x_mitre_aliases")),
+                "all_aliases": sorted({str(a).strip() for a in
+                                       (obj.get("x_mitre_aliases") or [])
+                                       if str(a).strip() and str(a).strip() != name}),
+                "description": _prose(obj.get("description")),
+                "platforms": [str(x) for x in (obj.get("x_mitre_platforms") or [])][:14],
                 "url": _external_url(obj),
-                "techniques": [], "actors": [],
+                "references": _references(obj),
+                "techniques": [], "actors": [], "campaigns": [],
+            }
+        elif otype == "course-of-action":
+            mid = _external_id(obj)
+            if mid:
+                mitigations[mid] = {
+                    "id": mid, "name": name, "kind": "mitigation",
+                    "description": _prose(obj.get("description"), 1600),
+                    "url": _external_url(obj),
+                    "techniques": [],
+                }
+        elif otype == "campaign":
+            cid = _external_id(obj)
+            campaigns[name] = {
+                "name": name, "id": cid, "kind": "attack-campaign",
+                "description": _prose(obj.get("description")),
+                "aliases": sorted({str(a).strip() for a in (obj.get("aliases") or [])
+                                   if str(a).strip() and str(a).strip() != name}),
+                "first_seen": str(obj.get("first_seen") or "")[:10],
+                "last_seen": str(obj.get("last_seen") or "")[:10],
+                "url": _external_url(obj),
+                "references": _references(obj),
+                "actors": [], "software": [], "techniques": [],
             }
 
-    # Relationship pass. ATT&CK expresses everything we want as `uses`.
+    # ── Relationship pass ─────────────────────────────────────────────────
+    # v1 read only `uses`. The bundle also carries `mitigates` (how to stop
+    # it), `detects` (what telemetry sees it), `attributed-to` (campaign ->
+    # actor) and `subtechnique-of` (the matrix hierarchy). Each one is a
+    # section of an entity page that had no data behind it before.
     id_to_name = {oid: (o.get("name") or "").strip() for oid, o in by_id.items()}
     edges = 0
+    _WANTED = {"uses", "mitigates", "detects", "attributed-to", "subtechnique-of"}
     for obj in objects:
-        if obj.get("type") != "relationship" or obj.get("relationship_type") != "uses":
+        if obj.get("type") != "relationship":
             continue
-        if not _live(obj):
+        rel = obj.get("relationship_type")
+        if rel not in _WANTED or not _live(obj):
             continue
-        src = by_id.get(obj.get("source_ref"))
-        dst = by_id.get(obj.get("target_ref"))
+
+        src_ref, dst_ref = obj.get("source_ref"), obj.get("target_ref")
+
+        # `detects` runs from an x-mitre-data-component, which is not in by_id
+        # (it is not an entity anyone browses to), so it is resolved from its
+        # own table before the by_id lookup below would reject it.
+        if rel == "detects":
+            component = data_components.get(src_ref)
+            dst_obj = by_id.get(dst_ref)
+            if component and dst_obj and dst_obj.get("type") == "attack-pattern":
+                tid = _external_id(dst_obj)
+                if tid in techniques:
+                    techniques[tid]["detects"].append(component)
+                    edges += 1
+            continue
+
+        src = by_id.get(src_ref)
+        dst = by_id.get(dst_ref)
         if not src or not dst:
             continue
-        src_name = id_to_name.get(obj["source_ref"], "")
-        dst_name = id_to_name.get(obj["target_ref"], "")
+        src_name = id_to_name.get(src_ref, "")
+        dst_name = id_to_name.get(dst_ref, "")
         src_type, dst_type = src.get("type"), dst.get("type")
 
+        if rel == "mitigates":
+            mid = _external_id(src)
+            if dst_type == "attack-pattern" and mid in mitigations:
+                tid = _external_id(dst)
+                if tid:
+                    mitigations[mid]["techniques"].append(tid)
+                    if tid in techniques:
+                        techniques[tid]["mitigations"].append(mid)
+                    edges += 1
+            continue
+
+        if rel == "subtechnique-of":
+            if src_type == dst_type == "attack-pattern":
+                child, parent = _external_id(src), _external_id(dst)
+                if child and parent in techniques:
+                    techniques[parent]["subtechniques"].append(child)
+                    edges += 1
+            continue
+
+        if rel == "attributed-to":
+            # campaign --attributed-to--> intrusion-set
+            if src_type == "campaign" and dst_type == "intrusion-set":
+                if src_name in campaigns and dst_name in actors:
+                    campaigns[src_name]["actors"].append(dst_name)
+                    actors[dst_name]["campaigns"].append(src_name)
+                    edges += 1
+            continue
+
+        # rel == "uses"
         if src_type == "intrusion-set" and dst_type == "attack-pattern":
             tid = _external_id(dst)
             if tid and src_name in actors:
                 actors[src_name]["techniques"].append(tid)
+                if tid in techniques:
+                    techniques[tid]["actors"].append(src_name)
                 edges += 1
         elif src_type == "intrusion-set" and dst_type in ("malware", "tool"):
             if src_name in actors and dst_name in software:
@@ -254,21 +430,59 @@ def _derive_kb() -> dict | None:
             tid = _external_id(dst)
             if tid and src_name in software:
                 software[src_name]["techniques"].append(tid)
+                if tid in techniques:
+                    techniques[tid]["software"].append(src_name)
+                edges += 1
+        elif src_type == "campaign" and dst_type == "attack-pattern":
+            tid = _external_id(dst)
+            if tid and src_name in campaigns:
+                campaigns[src_name]["techniques"].append(tid)
+                edges += 1
+        elif src_type == "campaign" and dst_type in ("malware", "tool"):
+            if src_name in campaigns and dst_name in software:
+                campaigns[src_name]["software"].append(dst_name)
                 edges += 1
 
-    for table in (actors, software):
+    # A campaign's dates are the best evidence ATT&CK carries for WHEN an actor
+    # was active; the intrusion-set objects have no dates of their own.
+    for camp in campaigns.values():
+        for actor_name in camp["actors"]:
+            row = actors.get(actor_name)
+            if not row:
+                continue
+            for key, value in (("first_seen", camp["first_seen"]),
+                               ("last_seen", camp["last_seen"])):
+                if not value:
+                    continue
+                current = row.get(key) or ""
+                if not current or (value < current if key == "first_seen"
+                                   else value > current):
+                    row[key] = value
+
+    for table in (actors, software, techniques, mitigations, campaigns):
         for row in table.values():
-            for key in ("techniques", "software", "actors"):
+            for key in ("techniques", "software", "actors", "campaigns",
+                        "mitigations", "subtechniques", "detects"):
                 if key in row:
                     row[key] = sorted(set(row[key]))
 
-    log.info(f"  ATT&CK KB: {len(actors)} actors, {len(software)} software, "
-             f"{len(technique_names)} techniques, {edges} edges")
+    log.info(f"  ATT&CK KB v2: {len(actors)} actors, {len(software)} software, "
+             f"{len(technique_names)} techniques, {len(mitigations)} mitigations, "
+             f"{len(campaigns)} campaigns, {edges} edges")
+    log.info(f"  Prose kept for "
+             f"{sum(1 for t in list(actors.values()) + list(software.values()) if t.get('description'))}"
+             f" actor/software entities; "
+             f"{sum(1 for t in techniques.values() if t['detection'])} techniques "
+             f"carry MITRE detection guidance")
     return {
         "built": now_utc(),
         "source": _CTI_URL,
+        "version": 2,
         "actors": actors,
         "software": software,
+        "techniques": techniques,
+        "mitigations": mitigations,
+        "attack_campaigns": campaigns,
         "technique_names": technique_names,
         "technique_tactics": technique_tactics,
     }

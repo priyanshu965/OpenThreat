@@ -2,9 +2,9 @@
 
 # 🛡️ CyberWatch
 
-**A self-updating threat intelligence pipeline, dashboard and research bench.**
+**A self-updating threat intelligence pipeline, encyclopedia, hunt bench and research bench.**
 
-Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 43 configured sources every hour, scores each item against how likely it is to actually be exploited, links what it finds into an entity graph, and then — unusually — checks its own scoring against what really happened.
+Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 43 configured sources every hour and scores each item against how likely it is to actually be exploited. Then it does three things most feeds do not: it merges nine public corpora into **one page per threat actor, malware family, ATT&CK technique and campaign** — with every vendor's alias resolving to the same entry — it turns each technique into a **hunt pack** carrying paste-ready queries for six SIEMs and the Atomic Red Team tests that prove they fire, and it **checks its own scoring against what really happened** and publishes the result even when the result is unflattering.
 
 [![CI](https://github.com/priyanshu965/Cyberwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/priyanshu965/Cyberwatch/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -32,6 +32,13 @@ Most threat feeds answer *what happened*. This one is built to answer **what do 
 | How long is the patch window, really? | **Research → Exploitation lag** |
 | What did the board look like the day this dropped? | **Time machine**, over 90 days of archives |
 | What changed since yesterday? | **Diff**, two dates side by side |
+| Who *is* Midnight Blizzard? | **Library** — and it is the same page as APT29, Cozy Bear, Nobelium and UNC2452 |
+| What should I hunt for today? | **Hunt → Queue** — hypotheses generated from what is active right now, with a finish line |
+| How do I actually run that hunt? | **Hunt → Packs** — Sigma rules compiled for Splunk, ES\|QL, Lucene, EQL and both KQL dialects |
+| Would my detection even fire? | The Atomic Red Team test is on the same page |
+| What do I change so it stops working? | D3FEND countermeasures, ATT&CK mitigations, and NIST 800-53 / CCM / Azure / AWS controls |
+| Which controls matter *this week*? | **Hunt → Controls**, ranked by observed activity rather than audit order |
+| Who is getting extorted? | **Landscape → Leak sites** |
 
 ---
 
@@ -282,9 +289,123 @@ Rules are parsed with a small line scanner rather than a YAML library: the four 
 
 ---
 
+## The Library
+
+By v4 this project held four entity corpora and had no entities. ATT&CK knew APT29's techniques. Malpedia knew what WellMess is. MISP galaxy knew that Midnight Blizzard, Cozy Bear, Nobelium and UNC2452 are one organisation. The feed knew APT29 had been mentioned four times this week. None of those facts could reach any of the others, so "tell me about APT29" returned a filtered list of headlines.
+
+The Library merges them into **8,800+ entities**: threat actors, malware families, tools, every ATT&CK technique, campaigns and mitigations.
+
+| Corpus | What it contributes |
+|---|---|
+| MITRE ATT&CK CTI | Descriptions, detection guidance, techniques, campaigns, mitigations, sub-technique structure |
+| MISP galaxy | ~4,400 entities and the synonym corpus that makes name deconfliction work |
+| Malpedia | ~3,800 malware families with attribution |
+| ORKL | A bibliography of published threat reports per actor |
+| MITRE D3FEND | ~3,900 countermeasure links across 392 techniques |
+| CTID mappings | NIST 800-53 rev5, CSA CCM, Azure and AWS security capabilities |
+| SigmaHQ | Detection coverage per technique |
+| Atomic Red Team | 2,300 validation tests across 341 techniques |
+| The feed itself | What was seen this week, and when |
+
+**ATT&CK's own prose was already being downloaded and thrown away.** v4 pulled the 48 MB CTI bundle, extracted the relationship edges, and discarded the descriptions, the detection guidance, the mitigations and the campaigns — which are exactly what an entity page is made of. The bundle now yields 176 actors, 825 software entries, 697 techniques, 44 mitigations and 56 campaigns *with their text*.
+
+### Name deconfliction
+
+Vendors do not coordinate actor naming and never will. Typing any of these lands on the same page:
+
+```
+Midnight Blizzard · Cozy Bear · Nobelium · UNC2452 · The Dukes · BlueBravo · G0016  →  APT29
+```
+
+16,500 names resolve to 8,800 entities. Where a name legitimately belongs to two things — "Emotet" is both a malware family and the crew that runs it — the page says so and links to the other reading rather than silently picking one.
+
+### One skeleton, always the same order
+
+```
+identity  →  summary  →  timeline  →  relationships  →  defence  →  sources
+```
+
+After two entity pages you know where to look on the third without hunting. That consistency is worth more than any amount of styling.
+
+Where prose comes from more than one corpus, the page names the one it is showing you (`via MITRE ATT&CK`, `via MISP galaxy`) rather than blending two voices into one.
+
+---
+
+## The hunt bench
+
+Everything above tells you something. This is the part that hands you an instrument.
+
+### Hunt packs
+
+One technique, fully equipped, precomputed in CI:
+
+```
+T1486  Data Encrypted for Impact
+  what it is       ATT&CK prose + MITRE's own written detection guidance
+  detections       the Sigma rules that cover it
+  queries          each rule compiled for Splunk SPL, Elastic ES|QL, Lucene,
+                   EQL, Sentinel KQL and Defender XDR KQL — paste-ready
+  validation       Atomic Red Team tests, with prerequisites and cleanup
+  telemetry        the data sources you need to be collecting
+  countermeasures  D3FEND, ATT&CK mitigations, and your control framework
+```
+
+220 packs, 153 of them carrying compiled queries. That is roughly twenty minutes of tab-shuffling per technique, done once instead of independently by everyone who reads the same advisory.
+
+**Compilation is optional on purpose.** pySigma and its backends are a fast-moving family with tight inter-version constraints, and this pipeline runs unattended 24 times a day. Pinning them into the critical path of the hourly job would trade the entire feed for a convenience feature, so they live in `requirements-hunt.txt`, are installed best-effort, and each backend is probed independently at import. With none of them present the packs still publish with their rules, atomics and countermeasures, and say plainly that queries are unavailable.
+
+### The hunt queue
+
+The chain had been sitting in the data since v4 and nothing walked it:
+
+```
+actor active this week → techniques ATT&CK attributes to them
+  → Sigma rules that cover those → hunts to run today
+```
+
+Each row carries its own justification and a stop condition, so it is a task somebody can pick up and finish. A technique with **no** public rule still appears — that is the finding, not an omission.
+
+### Coverage
+
+Paste your rule inventory (Sigma UUIDs, ATT&CK ids, any format) and get a heatmap of what you cover against what is active, exportable as an ATT&CK Navigator layer.
+
+It stays in your browser. There is no backend to send it to and the CSP has no endpoint that would accept it — that is a property of the architecture, not a promise.
+
+---
+
+## Dark web
+
+Ransomware leak-site activity, from the aggregators rather than from Tor.
+
+Running a Tor daemon in CI to scrape onion sites directly is the obvious implementation and the wrong one: leak sites are deliberately flaky and half sit behind a captcha, routing Actions traffic through Tor to scrape criminal infrastructure is not a fight worth having with a CI provider, and ransomware.live and ransomwatch already run that infrastructure with better uptime than this project could manage. Reading them is the same data, more reliably.
+
+**Freshness is measured, not assumed.** The first cut of this paired ransomwatch's history with a single 100-row "recent" call, and published *99 claims in 120 days* — which read as a quiet quarter for ransomware and was actually an artefact: ransomwatch's newest post was ten months old. The current window is now assembled month by month, and every source reports the age of its newest record on the page. A feed that quietly stops updating shows up as a number rather than as a wrong conclusion.
+
+The victims' extortion prose is **not** published. The analytical value of a leak-site post is entirely in its structured fields — who claimed it, when, what sector, which country — and republishing the note would make this dashboard another amplification channel for criminal claims about a named, frequently small, organisation.
+
+An optional Telegram watch reads public `t.me/s/<channel>` previews. It is off by default: which channels to follow is an editorial choice, and shipping a default list would mean this project deciding whose propaganda gets a feed on your dashboard.
+
+---
+
 ## Frontend
 
 Vanilla JavaScript, no build step, no framework. `app.js` plus three sibling modules (`js/query.js`, `js/research.js`, `js/timetravel.js`) loaded as classic scripts. Everything sourced from a feed goes through `escapeHTML()` or `textContent`, every URL through `safeUrl()`, and CI rejects `innerHTML`, inline handlers and any widening of the CSP.
+
+### Five modes, not thirteen buttons
+
+v4 put every view in one row, which made "THREAT MAP" and "MALWARE" look like the same kind of choice when one is a picture of the world and the other is an encyclopedia. Views are now grouped by the question they answer:
+
+```
+FEED       what changed      ·  the triage list
+LIBRARY    what is known     ·  entities, graph, ATT&CK matrix, campaigns, malware
+HUNT       what to do        ·  queue, packs, coverage, controls, new rules
+LANDSCAPE  the world         ·  threat map, geopolitics, leak sites, dark web, exposure
+RESEARCH   what is proven    ·  backtest, source reliability, exploitation lag, trends
+```
+
+A second row switches views *inside* the active mode, and hides itself when a mode holds only one.
+
+*(The design note that prompted this proposed four modes. A fifth was needed: the situational and own-estate views have no honest home under "what is proven", and filing them there would repeat the conflation the split exists to remove.)*
 
 ### Views are not filters
 
@@ -337,7 +458,7 @@ Ordered rewrite rules have a specific failure mode — a later rule eats a token
 
 ## Configuration
 
-Everything tunable lives in [`scripts/config.py`](scripts/config.py) and can be overridden by environment variable. All API keys are optional; CISA Vulnrichment, the EPSS corpus, CISA KEV, MITRE CTI, Malpedia and SigmaHQ need no key at all.
+Everything tunable lives in [`scripts/config.py`](scripts/config.py) and can be overridden by environment variable. All API keys are optional. Every corpus the Library and the hunt bench are built from is keyless: CISA Vulnrichment, EPSS, CISA KEV, MITRE CTI, D3FEND, the CTID control mappings, MISP galaxy, Malpedia, SigmaHQ, Atomic Red Team, ORKL, ransomware.live and ransomwatch.
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -364,6 +485,23 @@ Everything tunable lives in [`scripts/config.py`](scripts/config.py) and can be 
 | `TIMELINE_DAYS` | `90` | Days published |
 | `ENABLE_MISP_EXPORT` | `1` | MISP event export |
 | `PUBLISH_OWN_ESTATE` | `0` | Whether your own exposure/attack-surface findings are published |
+| `ENABLE_KNOWLEDGE_BASE` | `1` | The Library: merged entity pages |
+| `ENABLE_MISP_GALAXY` | `1` | MISP galaxy alias/actor corpus |
+| `ENABLE_ORKL` | `1` | ORKL threat-report bibliography |
+| `ORKL_MAX_REPORTS` | `1500` | Page budget — ORKL returns full report text, ~2.3 MB per 100 rows |
+| `ENABLE_D3FEND` | `1` | D3FEND countermeasures |
+| `ENABLE_CONTROL_MAPPINGS` | `1` | ATT&CK → NIST 800-53 / CCM / Azure / AWS |
+| `ENABLE_HUNT_PACKS` | `1` | Hunt packs |
+| `HUNT_PACKS_MAX` | `220` | How many techniques get a pack |
+| `ENABLE_SIGMA_COMPILE` | `1` | Compile Sigma to SIEM queries (needs `requirements-hunt.txt`) |
+| `SIGMA_COMPILE_BUDGET` | `900` | Rules compiled per weekly refresh |
+| `ENABLE_ATOMICS` | `1` | Atomic Red Team validation tests |
+| `ENABLE_HUNT_QUEUE` | `1` | Generated hunt hypotheses |
+| `ENABLE_DETECTION_DIFF` | `1` | What SigmaHQ added since last run |
+| `ENABLE_LEAK_SITES` | `1` | Ransomware leak-site tracking |
+| `LEAK_HISTORY_MONTHS` | `5` | Months of victim data assembled (~800 KB each, closed months cached 30d) |
+| `ENABLE_TELEGRAM` | `0` | Public channel watch — **off by default**, you choose the channels |
+| `TELEGRAM_CHANNELS` | none | Comma-separated public channel names |
 
 ---
 
@@ -400,9 +538,20 @@ Pre-rendered on every run and served with the dashboard. Paths are relative to t
 | `data/api/exploit_lag.json` | Publication → PoC → KEV latency by quarter |
 | `data/api/timeline.json` | Archive index with per-day counts and digests |
 | `data/api/day/YYYY-MM-DD.json` | One reduced daily snapshot |
+| `data/api/entity_index.json` | Library search index: 8,800 entities, 16,500 names |
+| `data/api/entity/<slug>.json` | One full entity record (~2 KB) |
+| `data/api/hunt_packs.json` | Hunt pack index: technique, counts, available SIEMs |
+| `data/api/hunt/<technique>.json` | One full hunt pack (~20 KB) |
+| `data/api/hunt_queue.json` | Generated hunt hypotheses with their justification |
+| `data/api/control_focus.json` | Controls ranked by this window's observed activity |
+| `data/api/detection_diff.json` | Sigma rules added since the last refresh |
+| `data/api/leak_sites.json` | Leak-site claims, groups, sectors, geography, freshness |
+| `data/api/telegram.json` | Public channel watch (only when enabled) |
 | `data/exports/stix.json` | STIX 2.1 bundle |
 | `data/exports/misp_event.json` | MISP event — the other half of the ecosystem |
 | `data/exports/feed.xml` | RSS |
+
+The Library and the hunt packs are **sharded**, and that is not an optimisation — it is what makes them fit. The merged corpus is 8,883 entities and 17 MB; the packs are 4.7 MB across 220 files. Served as single blobs, every visitor would download all of it to read one page, which is precisely the mistake v4 fixed for the research artifacts. The index is loaded once (540 KB gzipped) and one record costs ~2 KB.
 
 STIX is what you hand a commercial platform; MISP is what most CERTs and sharing communities actually run. Emitting only one of them makes the project standalone in practice. Both use deterministic `uuid5` ids, so re-importing updates in place instead of creating a duplicate every hour. In the MISP event, `to_ids` — "safe to turn into a detection rule" — is set **only** for indicator feeds: a hash mentioned in a news article is context, and pushing it into an IDS is how false positives reach someone's SOC.
 

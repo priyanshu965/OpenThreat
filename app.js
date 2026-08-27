@@ -49,6 +49,19 @@ const API = {
   lag:         'data/api/exploit_lag.json',
   timeline:    'data/api/timeline.json',
   day:         (date) => `data/api/day/${date}.json`,
+  // v5. entityIndex is the ONE file loaded up front for the Library; the full
+  // record for a single entity is its own small shard.
+  entityIndex:    'data/api/entity_index.json',
+  entity:         (slug) => `data/api/entity/${slug}.json`,
+  huntPacks:      'data/api/hunt_packs.json',
+  // One pack is ~20 KB and there are 220 of them; the index above
+  // carries only what the list view renders.
+  huntPack:       (tid) => `data/api/hunt/${tid}.json`,
+  huntQueue:      'data/api/hunt_queue.json',
+  detectionDiff:  'data/api/detection_diff.json',
+  controlFocus:   'data/api/control_focus.json',
+  leaks:          'data/api/leak_sites.json',
+  telegram:       'data/api/telegram.json',
 };
 
 // VIEWS replace the screen. FEED FILTERS narrow the list in place. Keeping the
@@ -57,7 +70,37 @@ const API = {
 // clicking THREAT MAP discarded it.
 const VIEWS = ['feed', 'map', 'landscape', 'matrix', 'graph', 'campaigns',
   'detections', 'malware', 'geopol', 'darkweb', 'exposure', 'trends',
-  'research', 'about', 'diff'];
+  'research', 'about', 'diff',
+  // v5
+  'library', 'hunt', 'leaks'];
+
+// Views grouped by the QUESTION they answer. The top nav switches MODE; the
+// strip beneath switches views WITHIN the active mode, and hides itself when a
+// mode holds only one. This is the whole point of the v5 navigation: the v4
+// build put thirteen buttons in one row, so choosing an encyclopedia and
+// choosing a picture of the world looked like the same kind of decision.
+const MODE_VIEWS = {
+  feed:      [['feed', 'FEED']],
+  library:   [['library', 'BROWSE'], ['graph', 'GRAPH'], ['matrix', 'ATT&CK'],
+              ['campaigns', 'CAMPAIGNS'], ['malware', 'MALWARE']],
+  hunt:      [['hunt', 'BENCH'], ['detections', 'COVERAGE MAP']],
+  landscape: [['map', 'THREAT MAP'], ['landscape', 'LANDSCAPE'],
+              ['geopol', 'GEOPOLITICS'], ['leaks', 'LEAK SITES'],
+              ['darkweb', 'DARK WEB'], ['exposure', 'EXPOSURE']],
+  research:  [['research', 'EVIDENCE'], ['trends', 'TRENDS']],
+};
+
+const MODES = Object.keys(MODE_VIEWS);
+
+// view -> mode, derived so the two can never drift apart.
+const VIEW_MODE = {};
+Object.entries(MODE_VIEWS).forEach(([mode, views]) => {
+  views.forEach(([view]) => { VIEW_MODE[view] = mode; });
+});
+
+function modeOf(view) {
+  return VIEW_MODE[view] || 'feed';
+}
 
 const FEED_FILTERS = ['verdicts', 'all', 'fresh', 'exploited', 'stack', 'cve',
   'incident', 'advisory', 'news', 'iocs', 'starred', 'urgent'];
@@ -228,6 +271,26 @@ function readUrlState() {
   if (params.get('q')) store.query = params.get('q');
   if (params.get('sort')) store.sort = params.get('sort');
   if (/^\d{4}-\d{2}-\d{2}$/.test(params.get('day') || '')) store.day = params.get('day');
+
+  // v5 deep links. A library entry and a hunt tab are the two things people
+  // will actually paste to a colleague, so they have to survive the URL.
+  //
+  // The slug is validated against the same charset knowledge_base.slugify can
+  // produce. It is interpolated into a fetch path, so anything else -- a
+  // traversal, a scheme, an absolute URL -- must never reach it.
+  const slug = params.get('entity');
+  if (slug && /^[a-z0-9-]{1,120}$/.test(slug) && typeof libState === 'object') {
+    libState.open = slug;
+  }
+  const tab = params.get('tab');
+  if (tab && typeof huntState === 'object'
+      && HUNT_TABS.some((t) => t.key === tab)) {
+    huntState.tab = tab;
+  }
+  const pack = params.get('pack');
+  if (pack && /^T\d{4}(\.\d{3})?$/.test(pack) && typeof huntState === 'object') {
+    huntState.openPack = pack;
+  }
 }
 
 function urlStateParams() {
@@ -240,6 +303,13 @@ function urlStateParams() {
   if (store.query) params.set('q', store.query);
   if (store.sort !== 'priority') params.set('sort', store.sort);
   if (store.day) params.set('day', store.day);
+  if (store.view === 'library' && typeof libState === 'object' && libState.open) {
+    params.set('entity', libState.open);
+  }
+  if (store.view === 'hunt' && typeof huntState === 'object') {
+    if (huntState.tab && huntState.tab !== 'queue') params.set('tab', huntState.tab);
+    if (huntState.openPack) params.set('pack', huntState.openPack);
+  }
   return params;
 }
 
@@ -3578,6 +3648,7 @@ const VIEW_NODES = ['loading-state', 'error-state', 'cards-container', 'matrix-v
   'trends-view', 'map-view', 'landscape-view', 'geopol-view', 'about-view',
   'darkweb-view', 'exposure-view', 'no-results', 'graph-view', 'campaigns-view',
   'detections-view', 'malware-view', 'research-view', 'diff-view',
+  'library-view', 'hunt-view', 'leaks-view',
   'triage-bar', 'triage-done'];
 
 function hideAllViews() {
@@ -3698,6 +3769,9 @@ function renderAll() {
     case 'malware':    showMalwareView(); return;
     case 'research':   showResearchView(); return;
     case 'diff':       showDiffView(); return;
+    case 'library':    showLibraryView(); return;
+    case 'hunt':       showHuntView(); return;
+    case 'leaks':      showLeaksView(); return;
     default: break;
   }
   showContent();
@@ -3731,11 +3805,7 @@ function syncControls() {
   const feedHeader = document.querySelector('.feed-header');
   if (feedHeader) feedHeader.style.display = inFeed ? '' : 'none';
 
-  document.querySelectorAll('.view-btn').forEach((b) => {
-    const active = b.dataset.view === store.view;
-    b.classList.toggle('active', active);
-    b.setAttribute('aria-current', active ? 'page' : 'false');
-  });
+  renderModeNav();
   document.querySelectorAll('.stat-pill.is-clickable').forEach((p) => {
     const w = p.dataset.stat;
     const active = w === 'urgent' ? store.filter === 'urgent'
@@ -3805,6 +3875,53 @@ function backToFeed() {
 // `about` is a profile page — reopening the dashboard onto either is landing
 // on someone else's leftovers, not on your dashboard.
 const TRANSIENT_VIEWS = new Set(['diff', 'about']);
+
+/**
+ * Paint the mode row and rebuild the sub-nav for the active mode.
+ *
+ * The sub-nav is built rather than written into the HTML so MODE_VIEWS stays
+ * the single source of truth: a view added to that table appears in the nav
+ * automatically, and one removed cannot leave an orphaned button that routes
+ * nowhere.
+ */
+function renderModeNav() {
+  const mode = modeOf(store.view);
+  document.querySelectorAll('.mode-btn').forEach((b) => {
+    const active = b.dataset.mode === mode;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-current', active ? 'page' : 'false');
+  });
+
+  const strip = $('view-switcher');
+  if (!strip) return;
+  const views = MODE_VIEWS[mode] || [];
+  // A one-view mode needs no switcher, and showing a single disabled-looking
+  // button is worse than showing nothing.
+  if (views.length < 2) {
+    strip.replaceChildren();
+    strip.style.display = 'none';
+    return;
+  }
+  strip.style.display = '';
+  strip.replaceChildren();
+  views.forEach(([view, label]) => {
+    const btn = el('button', `view-btn${view === store.view ? ' active' : ''}`, label);
+    btn.type = 'button';
+    btn.dataset.view = view;
+    btn.setAttribute('aria-current', view === store.view ? 'page' : 'false');
+    strip.appendChild(btn);
+  });
+}
+
+/** Switch mode, landing on that mode's first view. */
+function setMode(mode) {
+  const views = MODE_VIEWS[mode];
+  if (!views || !views.length) return;
+  // Returning to the mode you are already in should not throw away where you
+  // were inside it.
+  if (modeOf(store.view) === mode) return;
+  setView(views[0][0]);
+}
 
 /** Switch the primary view. Views replace the screen; filters do not. */
 function setView(view) {
@@ -3929,6 +4046,19 @@ function openEntityModal(kind, name) {
     body.appendChild(list);
   }
 
+  // The drawer is a summary. The Library entry is the whole record — aliases
+  // from every corpus, the arsenal, the campaigns, the literature — so the
+  // drawer should hand the reader over to it rather than being a dead end.
+  const libBtn = el('button', 'entity-lib-btn', `Open the full library entry for ${name}`);
+  libBtn.type = 'button';
+  libBtn.addEventListener('click', () => {
+    closeEntityModal();
+    if (typeof libJump === 'function') {
+      libJump(name, kind === 'actor' ? 'actor' : 'malware');
+    }
+  });
+  body.appendChild(libBtn);
+
   const filterBtn = el('button', 'entity-filter-btn', `Filter the feed to ${name}`);
   filterBtn.type = 'button';
   filterBtn.dataset.entityFilter = name;
@@ -3985,6 +4115,29 @@ function paletteCommands() {
     { label: 'Export analyst notes as markdown', run: () => exportNotes() },
     { label: 'Clear review marks', run: () => { store.reviewed.clear(); writeLS(LS.reviewed, []); update(); } },
   ];
+  cmds.push({
+    label: 'Search the library',
+    hint: 'any actor, malware, technique or alias',
+    run: () => setView('library'),
+  });
+  cmds.push({
+    label: "Today's hunt queue",
+    hint: 'generated from what is active now',
+    run: () => { if (typeof huntState === 'object') huntState.tab = 'queue'; setView('hunt'); },
+  });
+  cmds.push({
+    label: 'Detection coverage vs live activity',
+    hint: 'paste your rule inventory',
+    run: () => { if (typeof huntState === 'object') huntState.tab = 'coverage'; setView('hunt'); },
+  });
+  cmds.push({
+    label: 'Ransomware leak sites',
+    hint: 'who is claiming victims',
+    run: () => setView('leaks'),
+  });
+  MODES.forEach((mode) => {
+    cmds.push({ label: `Go to ${mode}`, hint: 'mode', run: () => setMode(mode) });
+  });
   VIEWS.filter((v) => v !== 'about' && v !== 'diff').forEach((view) => {
     cmds.push({ label: `Go to ${view}`, hint: 'view', run: () => setView(view) });
   });
@@ -4027,6 +4180,23 @@ function renderPalette(query) {
   paletteMatches = q
     ? cmds.filter((c) => c.label.toLowerCase().includes(q))
     : cmds.slice(0, 10);
+
+  // The Library is the other reason to open this: typing any vendor's name for
+  // an actor should land on the canonical page. Only searched once the index
+  // has been loaded by visiting the Library — the palette must not trigger a
+  // 370 KB download on a keystroke.
+  if (q.length >= 2 && typeof libState === 'object' && libState.index) {
+    libSearch(libState.index, q, 'all').slice(0, 6).forEach((row) => {
+      const aka = (row.aliases || []).length
+        ? `${row.kind} · aka ${row.aliases.slice(0, 3).join(', ')}`
+        : row.kind;
+      paletteMatches.push({
+        label: row.id ? `${row.name} (${row.id})` : row.name,
+        hint: aka,
+        run: () => libOpen(row.slug),
+      });
+    });
+  }
 
   // Jumping straight to a CVE is the most common reason to open this.
   if (q.length >= 3) {
@@ -4248,7 +4418,11 @@ function initEvents() {
   document.addEventListener('click', (ev) => {
     const t = ev.target;
 
-    // Views replace the screen…
+    // Modes replace the screen and reset to the mode's first view…
+    const modeBtn = t.closest('.mode-btn');
+    if (modeBtn) { setMode(modeBtn.dataset.mode); return; }
+
+    // …views switch within the active mode…
     const viewBtn = t.closest('.view-btn');
     if (viewBtn) { setView(viewBtn.dataset.view); return; }
 
@@ -4603,15 +4777,17 @@ function initKeyboard() {
     }
     if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
 
-    // `g` then a digit jumps between views, the way every list-shaped tool
-    // does it. Chords beat thirteen more single-key bindings.
+    // `g` then a digit jumps between MODES, the way every list-shaped tool
+    // does it. It used to index into VIEWS, which meant the digits mapped to
+    // an array order nothing on screen showed; now 1-5 are the five buttons in
+    // the nav, in the order they appear.
     if (goPending) {
       goPending = false;
       clearTimeout(goTimer);
       const idx = Number(ev.key);
-      if (idx >= 1 && idx <= 9) {
+      if (idx >= 1 && idx <= MODES.length) {
         ev.preventDefault();
-        setView(VIEWS[idx - 1]);
+        setMode(MODES[idx - 1]);
         return;
       }
     }
@@ -4628,6 +4804,8 @@ function initKeyboard() {
         $('search-input')?.focus();
         break;
       case 'f': ev.preventDefault(); openPanel('filters'); break;
+      case 'l': ev.preventDefault(); setView('library'); break;
+      case 'h': ev.preventDefault(); setView('hunt'); break;
       case 't': ev.preventDefault(); openPanel('timemachine'); break;
       case 'r': {
         const item = currentItem();

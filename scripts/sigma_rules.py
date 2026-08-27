@@ -22,9 +22,12 @@ Implementation notes:
     the release asset is the only sane transport. It is cut roughly monthly.
   * Rules are parsed with a deliberately small line scanner rather than a YAML
     library. The four fields we want (title, id, level, attack tags) are all
-    flat top-level scalars, and adding PyYAML to a pinned dependency set to
-    read four fields is a poor trade. The scanner only ever reads, never
-    constructs — there is no eval path here.
+    flat top-level scalars anchored at column 0, so a full parse buys nothing
+    here and costs a pass over ~3,300 documents. (PyYAML did later enter the
+    project for scripts/atomics.py, where the content is multi-line shell that
+    a scanner genuinely cannot handle. That does not make it the right tool for
+    these four fields.) The scanner only ever reads, never constructs — there
+    is no eval path here.
   * Nothing is extracted to disk. Zip entries are read from memory, so the
     classic zip-slip path-traversal cannot apply.
 """
@@ -32,11 +35,12 @@ Implementation notes:
 from __future__ import annotations
 
 import io
+import json
 import re
 import zipfile
 from collections import defaultdict
 
-from fetchlib import CONFIG, SESSION, cached_derive, log, now_utc
+from fetchlib import CONFIG, SESSION, cache_path, cached_derive, log, now_utc
 
 _RELEASE_API = "https://api.github.com/repos/SigmaHQ/sigma/releases/latest"
 _ASSET_NAME = "sigma_all_rules.zip"
@@ -160,6 +164,58 @@ def load_sigma_index(force: bool = False) -> dict:
     return cached_derive(_CACHE, ttl, _derive_index) or {}
 
 
+def fetch_rule_bodies(wanted_ids) -> dict:
+    """
+    rule id -> full YAML source, for a bounded set of rule ids.
+
+    The index deliberately keeps only rule METADATA: it is read on every run
+    and the bodies would multiply its size by roughly twenty. But a query
+    compiler needs the whole rule, so hunt_packs asks for exactly the rules it
+    is about to compile — a few hundred, not the whole corpus.
+
+    This re-downloads the release archive rather than caching the bodies. That
+    is the cheaper trade by a wide margin: the archive is ~3 MB and this runs
+    once a week behind cached_derive, whereas caching ~1,800 rule bodies would
+    put several MB of YAML into data/.cache, which is carried in the CI cache
+    and the published state tarball on every single run.
+    """
+    wanted = {str(r) for r in (wanted_ids or []) if r}
+    if not wanted:
+        return {}
+    url = _latest_asset_url()
+    if not url:
+        return {}
+
+    resp = SESSION.get(url, timeout=max(120, CONFIG.request_timeout), stream=True)
+    resp.raise_for_status()
+    blob = io.BytesIO()
+    total = 0
+    for chunk in resp.iter_content(chunk_size=1 << 16):
+        total += len(chunk)
+        if total > 64 * 1024 * 1024:
+            raise ValueError("sigma archive exceeded 64 MB")
+        blob.write(chunk)
+
+    bodies: dict[str, str] = {}
+    with zipfile.ZipFile(blob) as archive:
+        for entry in archive.infolist():
+            if entry.is_dir() or not entry.filename.endswith((".yml", ".yaml")):
+                continue
+            if entry.file_size > 512 * 1024:
+                continue
+            try:
+                text = archive.read(entry).decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001
+                continue
+            match = _ID.search(text)
+            if match and match.group(1) in wanted:
+                bodies[match.group(1)] = text
+                if len(bodies) == len(wanted):
+                    break
+    log.info(f"  Sigma bodies: resolved {len(bodies)} of {len(wanted)} requested rules")
+    return bodies
+
+
 def annotate_detections(items: list[dict], index: dict) -> int:
     """
     Record, per item, how many Sigma rules cover the techniques it maps to.
@@ -252,6 +308,92 @@ def build_detection_view(items: list[dict], index: dict,
         "coverage_pct": round(100.0 * covered_activity / total_activity, 1) if total_activity else 0.0,
         "techniques": rows,
         "gaps": gaps,
+    }
+
+
+def build_detection_diff(index: dict, technique_counts: dict | None = None,
+                         technique_names: dict | None = None) -> dict | None:
+    """
+    What SigmaHQ has added since the last time we looked.
+
+    Detection-as-code moves constantly and nobody watches the repository, so
+    new rules land and go unread for months. The interesting question is not
+    "what changed" — it is "what changed that matters to ME", which is why each
+    new rule is joined against the techniques active in the current feed.
+
+    State lives in one cache file holding the rule ids seen last time. The very
+    first run therefore reports NOTHING rather than declaring all 3,000 rules
+    new, which would be technically true and completely useless.
+    """
+    if not CONFIG.enable_detection_diff or not index:
+        return None
+
+    by_technique = index.get("by_technique") or {}
+    current: dict[str, dict] = {}
+    for tid, rules in by_technique.items():
+        for rule in rules:
+            rid = rule.get("id")
+            if rid:
+                current.setdefault(rid, dict(rule, techniques=[]))
+                current[rid]["techniques"].append(tid)
+
+    path = cache_path("sigma_seen_rules.json")
+    previous: set[str] = set()
+    first_run = True
+    if path.exists():
+        try:
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            previous = set(stored.get("rule_ids") or [])
+            first_run = not previous
+        except Exception:  # noqa: BLE001 - corrupt state rebuilds silently
+            previous = set()
+
+    added = [] if first_run else sorted(set(current) - previous)
+    removed = [] if first_run else sorted(previous - set(current))
+
+    path.write_text(json.dumps({"saved": now_utc(),
+                                "rule_ids": sorted(current)},
+                               separators=(",", ":")), encoding="utf-8")
+
+    if first_run:
+        log.info(f"  Detection diff: baseline recorded ({len(current)} rules); "
+                 f"changes will be reported from the next Sigma refresh")
+        return {"generated": now_utc(), "baseline": True, "tracked": len(current),
+                "added": [], "removed": [], "relevant": 0}
+
+    counts = technique_counts or {}
+    names = technique_names or {}
+    new_rows = []
+    for rid in added:
+        rule = current[rid]
+        techniques = sorted(set(rule.get("techniques") or []))
+        relevance = sum(int(counts.get(t, 0)) for t in techniques)
+        new_rows.append({
+            "id": rid,
+            "title": rule.get("title", ""),
+            "level": rule.get("level", ""),
+            "status": rule.get("status", ""),
+            "logsource": rule.get("logsource", ""),
+            "url": rule.get("url", ""),
+            "techniques": [{"id": t, "name": names.get(t, t)} for t in techniques],
+            # > 0 means this rule covers something the feed saw this window.
+            "relevance": relevance,
+        })
+    new_rows.sort(key=lambda r: (-r["relevance"], r["title"]))
+    relevant = sum(1 for r in new_rows if r["relevance"] > 0)
+
+    if added or removed:
+        log.info(f"  Detection diff: +{len(added)} / -{len(removed)} Sigma rules "
+                 f"({relevant} cover techniques active in this feed)")
+    return {
+        "generated": now_utc(),
+        "baseline": False,
+        "tracked": len(current),
+        "added": new_rows[:120],
+        "added_count": len(added),
+        "removed": removed[:60],
+        "removed_count": len(removed),
+        "relevant": relevant,
     }
 
 

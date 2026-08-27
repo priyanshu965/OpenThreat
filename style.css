@@ -27,35 +27,54 @@
    ------------------------------------------------------------------ */
 :root {
   color-scheme: dark;
-  --bg-base:         #080b0f;
-  --bg-surface:      #0d1117;
-  --bg-card:         #111820;
-  --bg-card-hover:   #16202e;
-  --border:          #1e2d3d;
-  --border-strong:   #2b4157;
-  --border-glow:     #00ffe126;
+  /* v5 palette retune. The v4 scheme was the "cybersecurity" look rather than
+     the security-tool look: neon cyan (#00ffe1) as the interaction colour, a
+     scanline sweep, and a lit grid. Consoles people actually stare at for
+     eight hours -- Sentinel, Falcon, Chronicle, Elastic Security -- are calm
+     and near-monochrome, and spend saturated colour almost exclusively on
+     severity. The drama should come from density, not from the chrome.
 
-  --text-primary:    #c9d8e8;
-  --text-secondary:  #5f7a94;
-  --text-muted:      #2e4057;
-  --text-code:       #7dd3ba;
+     It also fixed two measured accessibility failures. Against the card
+     surface, --text-secondary sat at 4.00:1 (below the 4.5 floor for body
+     text) and --text-muted at 1.69:1, which is not legible at all. They are
+     now 6.64 and 3.78. */
+  --bg-base:         #0a0c10;
+  --bg-surface:      #0f1319;
+  --bg-card:         #151a21;
+  --bg-card-hover:   #1c232c;
+  --border:          #232a34;
+  --border-strong:   #38434f;
+  --border-glow:     #5aa2f524;
 
-  --ui-active:       #00ffe1;
-  --ui-active-dim:   #00ffe140;
-  --ui-link:         #6cb6ff;
-  --ui-count:        #7f9bb3;
-  --ui-accent:       #00ffe1;
+  --text-primary:    #d8dee7;
+  --text-secondary:  #93a1b1;
+  /* AA-large only (3.78:1). Used exclusively for de-emphasised metadata that
+     is never the sole carrier of meaning -- a timestamp beside a headline, a
+     count beside a label. Anything a reader must be able to read on its own
+     uses --text-secondary or better. */
+  --text-muted:      #6a7684;
+  --text-code:       #8fbfd8;
 
+  /* Selection blue, not neon. One interaction colour, used only for "this is
+     the thing you picked". */
+  --ui-active:       #5aa2f5;
+  --ui-active-dim:   #5aa2f533;
+  --ui-link:         #7cb8f5;
+  --ui-count:        #93a1b1;
+  --ui-accent:       #5aa2f5;
+
+  /* Kept as aliases so v4 rules that still name them follow the retune
+     instead of stranding a neon accent somewhere nobody looks. */
   --accent-cyan:     var(--ui-active);
   --accent-cyan-dim: var(--ui-active-dim);
-  --accent-blue:     #3b9eff;
-  --accent-orange:   #ff8c42;
+  --accent-blue:     #5aa2f5;
+  --accent-orange:   #d98a3d;
   --shadow-panel:    0 24px 60px rgba(0, 0, 0, 0.55);
   /* Sticky chrome sits over scrolling content, so it needs a translucent
      background rather than a flat one — and therefore its own token. These
      were hardcoded rgba(8,11,15,…), which is why the header and toolbar
      stayed black in light mode while everything under them turned white. */
-  --bg-sticky:       rgba(8, 11, 15, 0.94);
+  --bg-sticky:       rgba(10, 12, 16, 0.94);
 
   /* Severity is ORDINAL (low -> critical), so it takes a one-hue sequential
      ramp rather than four categorical hues. The previous set put #f5c518
@@ -145,16 +164,16 @@
   --border-strong: #b3c0cd;
   --border-glow:   #0b6e6033;
 
-  --text-primary:   #16212c;
-  --text-secondary: #4c5f72;
-  --text-muted:     #8497a8;
+  --text-primary:   #15202b;
+  --text-secondary: #4e5f70;
+  --text-muted:     #6f8091;
   --text-code:      #0b6b57;
 
-  --ui-active:     #067c6c;
-  --ui-active-dim: #067c6c33;
+  --ui-active:     #1257c4;
+  --ui-active-dim: #1257c422;
   --ui-link:       #1257c4;
-  --ui-count:      #556a7d;
-  --ui-accent:     #067c6c;
+  --ui-count:      #4e5f70;
+  --ui-accent:     #1257c4;
 
   --critical:  #b3122f;  --critical-bg: #b3122f14;
   --high:      #c02a48;  --high-bg:     #c02a4814;
@@ -197,22 +216,24 @@ body {
   max-width: 100vw;
 }
 
-/* ── Animated Background Grid ───────────────────────────────────── */
+/* -- Background texture ------------------------------------------------
+   The grid is dialled well back and the scanline sweep is gone.
+
+   A 2px cyan bar travelling down the viewport every 8 seconds, forever, is
+   motion in the periphery of a page people read for long stretches. It says
+   "hacker film" rather than "console", it never conveyed anything, and it is
+   exactly the sort of ambient animation that vestibular-sensitive readers
+   have to disable. The element is kept in the markup so no selector breaks;
+   it simply no longer draws. */
 .bg-grid {
   position: fixed; inset: 0; z-index: 0;
   background-image:
     linear-gradient(var(--border) 1px, transparent 1px),
     linear-gradient(90deg, var(--border) 1px, transparent 1px);
-  background-size: 40px 40px;
-  opacity: 0.35; pointer-events: none;
+  background-size: 48px 48px;
+  opacity: 0.14; pointer-events: none;
 }
-.scan-line {
-  position: fixed; top: 0; left: 0; right: 0; height: 2px;
-  background: linear-gradient(90deg, transparent, var(--ui-accent), transparent);
-  opacity: 0.3; animation: scan 8s linear infinite;
-  z-index: 1; pointer-events: none;
-}
-@keyframes scan { 0% { top: 0; } 100% { top: 100vh; } }
+.scan-line { display: none; }
 
 /* ── Header ─────────────────────────────────────────────────────── */
 .site-header {
@@ -2600,3 +2621,713 @@ a.malware-example-title:hover { color: var(--ui-link); }
   .stat-label { overflow: hidden; text-overflow: ellipsis; }
   #theme-toggle { padding: 3px 7px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v5 — MODES, LIBRARY, HUNT BENCH, LEAK SITES
+   ═══════════════════════════════════════════════════════════════════════════
+   Two rules govern everything below.
+
+   1. IDENTIFIERS ARE MONOSPACE. A CVE id, a technique id, a rule id, a query
+      -- anything a reader compares character by character or pastes elsewhere
+      -- is set in the mono face. Prose is not. That single distinction does
+      more for the "this is a practitioner's tool" feel than any amount of
+      chrome, and it is the thing every real console gets right.
+
+   2. COLOUR MEANS SEVERITY. One interaction colour (--ui-active) says "you
+      picked this". The severity ramp says "this is how bad it is". Nothing
+      else gets to be saturated. The v4 build used cyan for active state, for
+      links, for counts and for the logo simultaneously, so the eye had no way
+      to learn what it meant.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Mode switcher (primary nav) ────────────────────────────────────────── */
+.mode-switcher {
+  display: flex; gap: 2px;
+  padding: 0 24px;
+  background: var(--bg-sticky);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 60px; z-index: 90;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  overflow-x: auto; scrollbar-width: none;
+}
+.mode-switcher::-webkit-scrollbar { display: none; }
+
+.mode-btn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 10px 18px 9px;
+  background: none; border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer; white-space: nowrap;
+  transition: color var(--transition), border-color var(--transition);
+}
+.mode-name {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+  letter-spacing: 0.09em; color: var(--text-secondary);
+}
+.mode-hint {
+  font-size: 10px; color: var(--text-muted); letter-spacing: 0.02em;
+}
+.mode-btn:hover .mode-name { color: var(--text-primary); }
+.mode-btn.active { border-bottom-color: var(--ui-active); }
+.mode-btn.active .mode-name { color: var(--ui-active); }
+.mode-btn.active .mode-hint { color: var(--text-secondary); }
+
+/* The sub-nav hides itself when a mode holds one view, so it must not
+   reserve vertical space when empty. */
+.view-switcher:empty { display: none; padding: 0; border: 0; }
+
+/* ── Library: browser ───────────────────────────────────────────────────── */
+.library-view, .hunt-view, .leaks-view { padding: 4px 0 40px; }
+
+.lib-searchbar { margin: 14px 0 10px; }
+.lib-search {
+  width: 100%; padding: 11px 14px;
+  background: var(--bg-card); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: 13px;
+}
+.lib-search:focus {
+  outline: none; border-color: var(--ui-active);
+  box-shadow: 0 0 0 3px var(--ui-active-dim);
+}
+
+.lib-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.lib-kind {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-card); color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.07em;
+  cursor: pointer; transition: all var(--transition);
+}
+.lib-kind:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.lib-kind.active {
+  border-color: var(--ui-active); color: var(--ui-active);
+  background: var(--ui-active-dim);
+}
+.lib-kind-count { color: var(--text-muted); font-size: 10px; }
+.lib-kind.active .lib-kind-count { color: var(--ui-active); }
+
+.lib-list {
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.lib-card {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 12px 14px; text-align: left;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+.lib-card:hover { background: var(--bg-card-hover); border-color: var(--border-strong); }
+.lib-card-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lib-badge {
+  padding: 2px 7px; border-radius: 2px;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  background: var(--bg-surface); color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+/* Kind is nominal, not ordinal, so these are hue-differentiated only enough to
+   be told apart at a glance -- never used as the sole cue (the label is right
+   there in the badge). */
+.lib-badge.kind-actor      { color: #d98a3d; border-color: #d98a3d44; }
+.lib-badge.kind-malware    { color: #d1607a; border-color: #d1607a44; }
+.lib-badge.kind-tool       { color: #8f9ec4; border-color: #8f9ec444; }
+.lib-badge.kind-technique  { color: #5aa2f5; border-color: #5aa2f544; }
+.lib-badge.kind-attack-campaign { color: #7bab8e; border-color: #7bab8e44; }
+.lib-badge.kind-mitigation { color: #6fb3a8; border-color: #6fb3a844; }
+
+.lib-card-id {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);
+}
+.lib-card-seen {
+  margin-left: auto; padding: 1px 6px; border-radius: 2px;
+  background: var(--ui-active-dim); color: var(--ui-active);
+  font-family: var(--font-mono); font-size: 9px;
+}
+.lib-card-name {
+  font-size: 14px; font-weight: 600; color: var(--text-primary);
+  line-height: 1.3;
+}
+.lib-card-flag {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary);
+}
+.lib-card-aka {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lib-card-teaser {
+  font-size: 12px; color: var(--text-secondary); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.lib-count {
+  margin: 14px 0 8px; font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-muted);
+}
+.lib-more {
+  display: block; margin: 0 auto; padding: 9px 26px;
+  background: var(--bg-card); color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.lib-more:hover { border-color: var(--ui-active); color: var(--ui-active); }
+
+/* ── Entity page ────────────────────────────────────────────────────────── */
+.ent-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 12px 0; padding: 6px 12px;
+  background: none; color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.ent-back:hover { color: var(--ui-active); border-color: var(--ui-active); }
+
+.ent-page { max-width: 1000px; }
+.ent-head { padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.ent-head-badges {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.ent-id {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  color: var(--text-secondary); letter-spacing: 0.05em;
+}
+.ent-country {
+  padding: 2px 7px; border-radius: 2px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary);
+}
+.ent-observed {
+  padding: 2px 8px; border-radius: 2px;
+  background: var(--ui-active-dim); color: var(--ui-active);
+  font-family: var(--font-mono); font-size: 10px;
+}
+.ent-name {
+  margin: 0; font-family: var(--font-display); font-size: 30px;
+  font-weight: 800; letter-spacing: -0.01em; color: var(--text-primary);
+  line-height: 1.15;
+}
+.ent-aka { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.ent-aka-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+.ent-aka-list {
+  font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);
+  line-height: 1.6;
+}
+.ent-facts {
+  display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px;
+  margin: 14px 0 0;
+}
+.ent-fact-key {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--text-muted); align-self: baseline;
+}
+.ent-fact-val {
+  margin: 0; font-size: 13px; color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.ent-section { margin-top: 26px; }
+.ent-section-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding-bottom: 6px; margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ent-section-title {
+  margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.11em;
+  text-transform: uppercase; color: var(--text-primary);
+}
+.ent-section-note { font-size: 11px; color: var(--text-muted); }
+.ent-subhead {
+  margin: 16px 0 7px; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-secondary);
+}
+.ent-prose {
+  margin: 0; font-size: 14px; line-height: 1.65; color: var(--text-primary);
+  max-width: 74ch;
+}
+.ent-warn {
+  margin: 8px 0 14px; padding: 9px 12px;
+  border-left: 3px solid var(--high); background: var(--high-bg);
+  font-size: 12px; color: var(--text-primary); line-height: 1.5;
+}
+.ent-inherited {
+  font-family: var(--font-mono); font-size: 9px; color: var(--text-muted);
+  font-style: italic;
+}
+
+.ent-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.ent-chip {
+  padding: 3px 9px; border-radius: 2px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+}
+button.ent-chip { cursor: pointer; transition: all var(--transition); }
+button.ent-chip:hover {
+  color: var(--ui-active); border-color: var(--ui-active);
+  background: var(--ui-active-dim);
+}
+.ent-ctrl { font-weight: 600; }
+
+.ent-obs { list-style: none; margin: 0; padding: 0; }
+.ent-obs-row {
+  display: grid; grid-template-columns: 84px 1fr auto; gap: 12px;
+  align-items: baseline; padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.ent-obs-date {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+}
+.ent-obs-title { font-size: 13px; color: var(--ui-link); text-decoration: none; }
+.ent-obs-title:hover { text-decoration: underline; }
+.ent-obs-meta { display: flex; gap: 8px; align-items: center; }
+.ent-obs-source { font-size: 10px; color: var(--text-muted); }
+.ent-obs-band {
+  padding: 1px 6px; border-radius: 2px;
+  font-family: var(--font-mono); font-size: 9px; text-transform: uppercase;
+}
+.ent-obs-band.band-urgent   { background: var(--critical-bg); color: var(--critical); }
+.ent-obs-band.band-elevated { background: var(--high-bg);     color: var(--high); }
+.ent-obs-band.band-moderate { background: var(--medium-bg);   color: var(--medium); }
+.ent-obs-band.band-low      { background: var(--low-bg);      color: var(--low); }
+
+.ent-metrics { display: flex; flex-wrap: wrap; gap: 22px; margin-bottom: 12px; }
+.ent-metric { display: flex; flex-direction: column; gap: 2px; }
+.ent-metric-value {
+  font-family: var(--font-mono); font-size: 22px; font-weight: 700;
+  color: var(--text-primary);
+}
+.ent-metric-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--text-muted);
+}
+
+.ent-tech-table { display: flex; flex-direction: column; }
+.ent-tech-row {
+  display: grid; grid-template-columns: 108px 1fr auto; gap: 12px;
+  align-items: center; padding: 7px 8px; text-align: left;
+  background: none; border: 0; border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.ent-tech-row:hover { background: var(--bg-card-hover); }
+.ent-tech-id {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ui-active);
+}
+.ent-tech-name { font-size: 13px; color: var(--text-primary); }
+.ent-tech-rules {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary);
+}
+.ent-tech-rules.is-gap { color: var(--high); }
+
+.ent-rules { list-style: none; margin: 0; padding: 0; }
+.ent-rule {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 6px 0; border-bottom: 1px solid var(--border);
+}
+.ent-rule-level {
+  padding: 1px 7px; border-radius: 2px;
+  font-family: var(--font-mono); font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ent-rule-level.level-critical { background: var(--critical-bg); color: var(--critical); }
+.ent-rule-level.level-high     { background: var(--high-bg);     color: var(--high); }
+.ent-rule-level.level-medium   { background: var(--medium-bg);   color: var(--medium); }
+.ent-rule-level.level-low      { background: var(--low-bg);      color: var(--low); }
+.ent-rule-level.level-informational { background: var(--bg-surface); color: var(--text-muted); }
+.ent-rule-title { font-size: 13px; color: var(--ui-link); text-decoration: none; }
+.ent-rule-title:hover { text-decoration: underline; }
+.ent-rule-src {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);
+}
+
+.ent-action {
+  display: inline-block; margin-top: 12px; padding: 8px 16px;
+  background: var(--ui-active-dim); color: var(--ui-active);
+  border: 1px solid var(--ui-active); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.ent-action:hover { background: var(--ui-active); color: var(--bg-base); }
+.ent-action.is-ghost {
+  background: none; color: var(--text-secondary); border-color: var(--border);
+}
+.ent-action.is-ghost:hover {
+  color: var(--ui-active); border-color: var(--ui-active); background: none;
+}
+
+.ent-d3f-group { display: flex; gap: 12px; margin-bottom: 10px; align-items: flex-start; }
+.ent-d3f-tactic {
+  flex: 0 0 78px; padding: 3px 8px; border-radius: 2px; text-align: center;
+  font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.ent-d3f-tactic.tactic-harden  { color: #6fb3a8; border-color: #6fb3a844; }
+.ent-d3f-tactic.tactic-detect  { color: #5aa2f5; border-color: #5aa2f544; }
+.ent-d3f-tactic.tactic-isolate { color: #d98a3d; border-color: #d98a3d44; }
+.ent-d3f-tactic.tactic-evict   { color: #d1607a; border-color: #d1607a44; }
+.ent-d3f-items { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.ent-d3f-item { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.ent-d3f-name { font-size: 13px; color: var(--ui-link); text-decoration: none; }
+.ent-d3f-name:hover { text-decoration: underline; }
+.ent-d3f-artifact { font-size: 11px; color: var(--text-muted); font-style: italic; }
+
+.ent-mitigations { display: flex; flex-direction: column; gap: 2px; }
+.ent-mitigation {
+  display: grid; grid-template-columns: 70px 1fr; gap: 10px;
+  padding: 6px 8px; text-align: left; cursor: pointer;
+  background: none; border: 0; border-bottom: 1px solid var(--border);
+}
+.ent-mitigation:hover { background: var(--bg-card-hover); }
+.ent-mit-id { font-family: var(--font-mono); font-size: 11px; color: var(--ui-active); }
+.ent-mit-name { font-size: 13px; color: var(--text-primary); }
+
+.ent-ctrl-group { margin-bottom: 10px; }
+.ent-ctrl-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 5px; }
+.ent-ctrl-fw {
+  font-size: 11px; font-weight: 600; color: var(--text-secondary);
+}
+
+.ent-atomic {
+  margin: 8px 0; padding: 10px 12px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.ent-atomic-head {
+  display: flex; gap: 9px; align-items: center; flex-wrap: wrap;
+  cursor: pointer; list-style: none;
+}
+.ent-atomic-head::-webkit-details-marker { display: none; }
+.ent-atomic-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.ent-atomic-exec {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary);
+  padding: 1px 6px; border: 1px solid var(--border); border-radius: 2px;
+}
+.ent-atomic-flag {
+  font-family: var(--font-mono); font-size: 9px; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 2px;
+  background: var(--warn); color: var(--bg-base);
+}
+.ent-atomic-flag.is-danger { background: var(--critical); color: var(--bg-base); }
+.ent-atomic-desc { margin: 8px 0 0; font-size: 12px; color: var(--text-secondary); line-height: 1.55; }
+.ent-atomic-plat { margin: 5px 0 0; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+.ent-atomic-prereqs { margin: 4px 0 0 18px; font-size: 12px; color: var(--text-secondary); }
+
+/* Code block — the one place a horizontal scrollbar is correct: a compiled
+   SIEM query must never be wrapped, because a wrapped query is a broken one
+   when pasted. */
+.code-block {
+  margin: 9px 0; border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; background: var(--bg-base);
+}
+.code-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 10px; background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+.code-label {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-secondary);
+}
+.code-copy {
+  padding: 2px 10px; background: none; color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: 2px;
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.07em;
+  cursor: pointer;
+}
+.code-copy:hover { color: var(--ui-active); border-color: var(--ui-active); }
+.code-body {
+  margin: 0; padding: 11px 12px; overflow-x: auto;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
+  color: var(--text-code); white-space: pre;
+}
+
+.ent-reports, .ent-refs { list-style: none; margin: 0; padding: 0; }
+.ent-report, .ent-ref {
+  display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+  padding: 5px 0; border-bottom: 1px solid var(--border);
+}
+.ent-report-date {
+  flex: 0 0 78px; font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-muted);
+}
+.ent-report-title, .ent-ref-link {
+  font-size: 13px; color: var(--ui-link); text-decoration: none;
+}
+.ent-report-title:hover, .ent-ref-link:hover { text-decoration: underline; }
+.ent-report-author, .ent-ref-desc { font-size: 11px; color: var(--text-muted); }
+.ent-canonical { margin-top: 14px; }
+.entity-lib-btn {
+  display: block; width: 100%; margin-top: 10px; padding: 9px;
+  background: var(--ui-active-dim); color: var(--ui-active);
+  border: 1px solid var(--ui-active); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: 11px; cursor: pointer;
+}
+.entity-lib-btn:hover { background: var(--ui-active); color: var(--bg-base); }
+
+/* ── Hunt bench ─────────────────────────────────────────────────────────── */
+.hunt-progress {
+  height: 3px; margin: 12px 0 18px;
+  background: var(--border); border-radius: 2px; overflow: hidden;
+}
+.hunt-progress-fill { height: 100%; background: var(--ui-active); transition: width var(--transition); }
+
+.hunt-finished {
+  padding: 26px; margin-bottom: 18px; text-align: center;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.hunt-finished-icon { margin: 0; font-size: 32px; color: var(--ok); }
+.hunt-finished-text { margin: 8px 0 14px; font-size: 13px; color: var(--text-secondary); }
+.hunt-reset {
+  padding: 7px 18px; background: none; color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: 11px; cursor: pointer;
+}
+
+.hunt-list { display: flex; flex-direction: column; gap: 10px; }
+.hunt-card {
+  padding: 14px 16px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-left: 3px solid var(--ui-active); border-radius: var(--radius);
+}
+.hunt-card.is-done { opacity: 0.5; border-left-color: var(--ok); }
+.hunt-card-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 7px; }
+.hunt-tid {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+  color: var(--ui-active);
+}
+.hunt-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.hunt-gap {
+  margin-left: auto; padding: 2px 8px; border-radius: 2px;
+  background: var(--critical-bg); color: var(--critical);
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em;
+}
+.hunt-rules {
+  margin-left: auto; font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-secondary);
+}
+.hunt-hypothesis {
+  margin: 0 0 9px; font-size: 13px; line-height: 1.6; color: var(--text-primary);
+  max-width: 78ch;
+}
+.hunt-why { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.hunt-why-item, .hunt-why-actor {
+  padding: 2px 8px; border-radius: 2px;
+  font-family: var(--font-mono); font-size: 10px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.hunt-why-actor { cursor: pointer; }
+.hunt-why-actor:hover { color: var(--ui-active); border-color: var(--ui-active); }
+.hunt-telemetry { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.hunt-telemetry-label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+.hunt-evidence { list-style: none; margin: 0 0 10px; padding: 0; }
+.hunt-evidence-link { font-size: 12px; color: var(--ui-link); text-decoration: none; }
+.hunt-evidence-link:hover { text-decoration: underline; }
+.hunt-actions { display: flex; gap: 8px; }
+.hunt-action {
+  padding: 7px 15px;
+  background: var(--ui-active-dim); color: var(--ui-active);
+  border: 1px solid var(--ui-active); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.07em;
+  cursor: pointer;
+}
+.hunt-action:hover { background: var(--ui-active); color: var(--bg-base); }
+.hunt-action.is-ghost {
+  background: none; color: var(--text-secondary); border-color: var(--border);
+}
+.hunt-action.is-ghost:hover { color: var(--text-primary); border-color: var(--border-strong); background: none; }
+
+.hunt-pack-list { display: flex; flex-direction: column; margin-top: 12px; }
+.hunt-pack-row {
+  display: grid; grid-template-columns: 110px 1fr auto; gap: 12px;
+  align-items: center; padding: 9px 10px; text-align: left;
+  background: none; border: 0; border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.hunt-pack-row:hover { background: var(--bg-card-hover); }
+.hunt-pack-name { font-size: 13px; color: var(--text-primary); }
+.hunt-pack-meta { display: flex; gap: 10px; align-items: center; }
+.hunt-pack-seen {
+  padding: 1px 6px; border-radius: 2px;
+  background: var(--ui-active-dim); color: var(--ui-active);
+  font-family: var(--font-mono); font-size: 9px;
+}
+.hunt-pack-count { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+
+.hunt-backends { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.hunt-backend-label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-muted); margin-right: 4px;
+}
+.hunt-backend {
+  padding: 4px 11px; border-radius: 2px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono); font-size: 10px; cursor: pointer;
+}
+.hunt-backend:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.hunt-backend.active {
+  background: var(--ui-active-dim); color: var(--ui-active); border-color: var(--ui-active);
+}
+.hunt-rule { margin-bottom: 16px; }
+.hunt-rule-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 5px; }
+.hunt-noquery { margin: 4px 0 0; font-size: 11px; color: var(--text-muted); font-style: italic; }
+.hunt-relevant {
+  padding: 1px 7px; border-radius: 2px;
+  background: var(--ui-active-dim); color: var(--ui-active);
+  font-family: var(--font-mono); font-size: 9px;
+}
+.hunt-newrules { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.hunt-newrule { padding: 10px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); }
+.hunt-newrule.is-relevant { border-left: 3px solid var(--ui-active); }
+
+.hunt-inventory { margin: 14px 0 18px; }
+.hunt-inventory-input {
+  width: 100%; padding: 11px 13px; resize: vertical;
+  background: var(--bg-card); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+}
+.hunt-inventory-input:focus {
+  outline: none; border-color: var(--ui-active);
+  box-shadow: 0 0 0 3px var(--ui-active-dim);
+}
+.hunt-inventory-actions { display: flex; gap: 8px; margin-top: 9px; }
+
+.cov-grid {
+  display: grid; gap: 4px; margin: 16px 0 12px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+.cov-cell {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 9px 10px; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-card);
+}
+/* Coverage state is ordinal (have it / could have it / cannot have it) and is
+   carried by the LABEL in the tooltip and the legend as well as the colour. */
+.cov-cell.is-covered   { border-left: 3px solid var(--ok); }
+.cov-cell.is-uncovered { border-left: 3px solid var(--warn); }
+.cov-cell.is-norule    { border-left: 3px solid var(--critical); }
+.cov-cell:hover { background: var(--bg-card-hover); }
+.cov-tid { font-family: var(--font-mono); font-size: 10px; color: var(--ui-active); }
+.cov-name {
+  font-size: 12px; color: var(--text-primary); line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.cov-seen { font-family: var(--font-mono); font-size: 9px; color: var(--text-muted); }
+.cov-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; font-size: 11px; color: var(--text-secondary); }
+.cov-legend-item { display: inline-flex; gap: 6px; align-items: center; }
+.cov-swatch { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+.cov-swatch.is-covered   { background: var(--ok); }
+.cov-swatch.is-uncovered { background: var(--warn); }
+.cov-swatch.is-norule    { background: var(--critical); }
+
+/* ── Leak sites ─────────────────────────────────────────────────────────── */
+.leak-freshness { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 18px; }
+.leak-fresh-label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted);
+}
+.leak-fresh {
+  display: inline-flex; gap: 7px; align-items: baseline;
+  padding: 3px 9px; border-radius: 2px;
+  background: var(--bg-card); border: 1px solid var(--border);
+}
+.leak-fresh.is-stale { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.leak-fresh-name { font-family: var(--font-mono); font-size: 10px; color: var(--text-primary); }
+.leak-fresh-age { font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary); }
+.leak-fresh.is-stale .leak-fresh-age { color: var(--warn); font-weight: 700; }
+.leak-fresh-count { font-size: 9px; color: var(--text-muted); }
+
+.leak-groups { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
+.leak-group { padding: 10px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); }
+.leak-group-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; cursor: pointer; list-style: none; }
+.leak-group-head::-webkit-details-marker { display: none; }
+.leak-group-name { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--text-primary); }
+.leak-group-count { font-family: var(--font-mono); font-size: 11px; color: var(--critical); }
+.leak-group-last { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+.leak-meta { margin: 6px 0 0; font-size: 11px; color: var(--text-muted); }
+.leak-ttps { margin: 4px 0 0 18px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+
+.leak-posts { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.leak-post { padding: 10px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); }
+.leak-post-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 5px; }
+.leak-post-channel { font-family: var(--font-mono); font-size: 11px; color: var(--ui-active); }
+.leak-post-time { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+.leak-post-link { margin-left: auto; font-size: 10px; color: var(--ui-link); text-decoration: none; }
+.leak-post-text { margin: 0; font-size: 12px; line-height: 1.55; color: var(--text-secondary); white-space: pre-wrap; }
+
+/* ── Responsive: the three breakpoints v4 consolidated to ───────────────── */
+@media (max-width: 900px) {
+  .mode-switcher { padding: 0 12px; }
+  .mode-btn { padding: 9px 13px 8px; }
+  .mode-hint { display: none; }
+  .ent-name { font-size: 23px; }
+  .ent-facts { grid-template-columns: 1fr; gap: 2px 0; }
+  .ent-fact-val { margin-bottom: 7px; }
+  .ent-obs-row, .ent-tech-row, .hunt-pack-row { grid-template-columns: 1fr; gap: 3px; }
+  .ent-d3f-group { flex-direction: column; gap: 5px; }
+  .ent-d3f-tactic { flex: none; align-self: flex-start; }
+  .lib-list { grid-template-columns: 1fr; }
+  .cov-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .mode-switcher { top: 56px; }
+  .mode-name { font-size: 11px; }
+  .ent-page { max-width: 100%; }
+  .hunt-actions { flex-direction: column; }
+  .hunt-action { width: 100%; }
+  .leak-group-last { margin-left: 0; }
+}
+
+/* Motion: the scanline is gone, but anything else that animates should also
+   stand down when the reader has asked for less movement. */
+@media (prefers-reduced-motion: reduce) {
+  .hunt-progress-fill { transition: none; }
+}
+
+/* Ambiguous names: "Emotet" is both a malware family and the crew behind it.
+   Presented as a route to the other reading, not as an error. */
+.ent-disambig {
+  display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline;
+  margin-top: 9px;
+}
+.ent-disambig-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+.ent-disambig-link {
+  padding: 2px 9px; border-radius: 2px; cursor: pointer;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--ui-link); font-family: var(--font-mono); font-size: 11px;
+}
+.ent-disambig-link:hover { border-color: var(--ui-link); }
+
+/* Rows that mix a link with a long description are flex containers, and a
+   flex ITEM will not shrink below its content width unless it is told it may.
+   Without `min-width: 0` on the children the row stays as wide as its longest
+   descendant and the tail is clipped by the container -- which is why the page
+   itself showed no horizontal overflow while the text was still unreachable.
+   `anywhere` rather than `break-word` because several of these are raw URLs
+   with no spaces to break at. */
+.ent-ref, .ent-report, .ent-obs-row, .ent-rule, .leak-post-head { min-width: 0; }
+.ent-ref > *, .ent-report > *, .ent-obs-row > *, .ent-rule > * { min-width: 0; }
+.ent-ref-link,
+.ent-ref-desc,
+.ent-report-title,
+.ent-obs-title,
+.ent-rule-title,
+.leak-post-link { overflow-wrap: anywhere; word-break: break-word; }

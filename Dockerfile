@@ -33,8 +33,14 @@ LABEL org.opencontainers.image.title="CyberWatch Fetcher" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.source="https://github.com/priyanshu965/Cyberwatch"
 WORKDIR /app
-COPY requirements.txt .
+COPY requirements.txt requirements-hunt.txt ./
 RUN pip install --no-cache-dir -r requirements.txt  # runtime only; dev deps not needed in image
+# Sigma -> SIEM query compilation. Best effort, exactly as in CI: these are
+# fast-moving packages with tight inter-version constraints, and a resolver
+# conflict must cost the hunt packs their compiled queries rather than failing
+# the image build. hunt_packs probes each backend independently at import.
+RUN pip install --no-cache-dir -r requirements-hunt.txt \
+    || echo "Sigma query backends unavailable; hunt packs will carry raw rules only"
 COPY scripts/ scripts/
 # Run as a non-root user; the image only ever needs to write into /app/data,
 # which is a bind mount at runtime.

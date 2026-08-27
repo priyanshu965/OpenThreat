@@ -366,12 +366,45 @@ def write_exports(output: dict, export_dir: Path, darkweb_index: dict = None) ->
                        ("backtest", "backtest.json"),
                        ("source_reliability", "source_reliability.json"),
                        ("exploit_lag", "exploit_lag.json"),
-                       ("campaigns", "campaigns.json")):
+                       ("campaigns", "campaigns.json"),
+                       # v5. hunt_packs is NOT here: it is sharded below, for
+                       # the same reason the Library is.
+                       ("hunt_queue", "hunt_queue.json"),
+                       ("detection_diff", "detection_diff.json"),
+                       ("control_focus", "control_focus.json"),
+                       ("leak_sites", "leak_sites.json"),
+                       ("telegram", "telegram.json")):
         if output.get(key):
             (api_dir / fname).write_text(
                 json.dumps(output[key], ensure_ascii=False, separators=(",", ":")),
                 encoding="utf-8")
             written_names.append(f"api/{fname}")
+
+    # -- The Library ------------------------------------------------------
+    # Sharded rather than written as one file: the merged corpus is several
+    # thousand entities and tens of MB, and a reader opening one page must not
+    # pay for the other 4,999. write_entity_shards also PRUNES shards that are
+    # no longer in the index, so a deprecated entity does not stay reachable by
+    # URL forever, serving a record nothing links to.
+    if output.get("knowledge_base"):
+        try:
+            from knowledge_base import write_entity_shards
+            count = write_entity_shards(output["knowledge_base"], api_dir)
+            written_names.append(f"api/entity_index.json + {count} entity shards")
+        except Exception as e:  # noqa: BLE001 - the feed still publishes
+            print(f"  Entity shard write failed: {e}")
+
+    # -- Hunt packs -------------------------------------------------------
+    # Also sharded. One pack is MITRE's prose plus eight Sigma rules compiled
+    # for six SIEMs plus four atomic tests -- ~20 KB, and 4.5 MB across all
+    # 220. Nobody should download the other 219 to read one.
+    if output.get("hunt_packs"):
+        try:
+            from hunt_packs import write_hunt_shards
+            count = write_hunt_shards(output["hunt_packs"], api_dir)
+            written_names.append(f"api/hunt_packs.json + {count} pack shards")
+        except Exception as e:  # noqa: BLE001
+            print(f"  Hunt shard write failed: {e}")
 
     return written_names + ["api/*.json"]
 
