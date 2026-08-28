@@ -73,6 +73,8 @@ const VIEWS = ['feed', 'map', 'landscape', 'matrix', 'graph', 'campaigns',
   'research', 'about', 'diff',
   // v5
   'library', 'hunt', 'leaks',
+  // v6 tools
+  'recon', 'creds',
   // v6 — 'contact' is a route, not a mode: it answers no question about
   // threats, so putting it in the mode nav would dilute what the modes mean.
   'contact'];
@@ -91,6 +93,11 @@ const MODE_VIEWS = {
               ['geopol', 'GEOPOLITICS'], ['leaks', 'LEAK SITES'],
               ['darkweb', 'DARK WEB'], ['exposure', 'EXPOSURE']],
   research:  [['research', 'EVIDENCE'], ['trends', 'TRENDS']],
+  // A sixth mode, because these answer a different KIND of question. The other
+  // five report on the world from data this project published; these take an
+  // artifact you have and query third-party APIs live from your browser.
+  // Filing them under HUNT would repeat the conflation the split removed.
+  tools:     [['recon', 'RECON'], ['creds', 'CREDENTIALS']],
 };
 
 const MODES = Object.keys(MODE_VIEWS);
@@ -3719,6 +3726,7 @@ const VIEW_NODES = ['loading-state', 'error-state', 'cards-container', 'matrix-v
   'darkweb-view', 'exposure-view', 'no-results', 'graph-view', 'campaigns-view',
   'detections-view', 'malware-view', 'research-view', 'diff-view',
   'library-view', 'hunt-view', 'leaks-view', 'contact-view',
+  'recon-view', 'creds-view',
   'triage-bar', 'triage-done'];
 
 function hideAllViews() {
@@ -3847,6 +3855,8 @@ function renderAll() {
     case 'hunt':       showHuntView(); return;
     case 'leaks':      showLeaksView(); return;
     case 'contact':    showContactView(); return;
+    case 'recon':      showReconView(); return;
+    case 'creds':      showCredsView(); return;
     default: break;
   }
   showContent();

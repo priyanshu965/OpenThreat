@@ -13,12 +13,29 @@
     doing nothing. It is set as a real header in nginx.conf for the Docker path.
     GitHub Pages cannot send custom headers, so a Pages deployment has no framing
     protection — that is a platform limit, not something a meta tag can fix.
-    connect-src stays at 'self' plus NVD. Natural-language search runs entirely
-    in the browser (js/query.js) precisely so this list does not have to grow:
-    reaching a model API from a static page means shipping an API key to every
-    visitor, which is not a trade worth making for a search box.
+    connect-src is an ALLOWLIST and every entry had to earn its place. The rule
+    applied to all of them: keyless, and Access-Control-Allow-Origin: *. Each
+    was verified against those two conditions before being added, because an
+    origin listed here can be reached by any script this page loads.
+
+    What is deliberately NOT here: any model API. Natural-language search runs
+    entirely in the browser (js/query.js) precisely so this list does not have
+    to grow that way — reaching a model API from a static page means shipping
+    an API key to every visitor. CI fails the build if this line ever names
+    one.
+
+    The TOOLS entries are queried from the VISITOR's browser with the VISITOR's
+    IP, and nothing reaches OpenThreat: there is no endpoint here that could
+    receive it. That is better for their privacy from this site and worse for
+    their privacy from those providers, so every panel names its providers
+    before it runs.
+
+    RDAP needs one entry per registry because a CSP applies to every hop of a
+    redirect: rdap.org answers with a 302 to the authoritative server, and the
+    browser blocks that hop unless the destination is listed too. A TLD outside
+    this set degrades to an external link rather than failing opaquely.
   -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://services.nvd.nist.gov; worker-src 'self'; base-uri 'self'; form-action 'none'; object-src 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://services.nvd.nist.gov https://cloudflare-dns.com https://dns.google https://api.pwnedpasswords.com https://haveibeenpwned.com https://endoflife.date https://cve.circl.lu https://rdap.org https://rdap.verisign.com https://rdap.publicinterestregistry.org https://rdap.nominet.uk https://rdap.nixiregistry.in https://pubapi.registry.google https://rdap.identitydigital.services; worker-src 'self'; base-uri 'self'; form-action 'none'; object-src 'none'" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)" />
   <meta name="theme-color" content="#f6f8fa" media="(prefers-color-scheme: light)" />
@@ -48,6 +65,7 @@
   <script src="js/hunt.js?v=5.0.2" defer></script>
   <script src="js/leaks.js?v=5.0.2" defer></script>
   <script src="js/community.js?v=5.0.2" defer></script>
+  <script src="js/tools.js?v=5.0.2" defer></script>
 </head>
 <body>
 
@@ -100,7 +118,7 @@
     </div>
   </header>
 
-    <!-- MODES. Five, not thirteen.
+    <!-- MODES. Six, not eighteen.
        The v4 nav listed every view side by side, which made "THREAT MAP" and
        "MALWARE" look like the same kind of choice when one is a picture of the
        world and the other is an encyclopedia. Views are now grouped by the
@@ -112,6 +130,7 @@
          HUNT       what I should do
          LANDSCAPE  what the world looks like
          RESEARCH   what is proven
+         TOOLS      check one thing, right now
 
        (The design note that prompted this proposed four modes. A fifth was
        needed: the situational and own-estate views -- threat map, geopolitics,
@@ -134,6 +153,9 @@
     </button>
     <button class="mode-btn" data-mode="research">
       <span class="mode-name">RESEARCH</span><span class="mode-hint">what is proven</span>
+    </button>
+    <button class="mode-btn" data-mode="tools">
+      <span class="mode-name">TOOLS</span><span class="mode-hint">check one thing</span>
     </button>
   </nav>
 
@@ -244,6 +266,9 @@
       <div id="leaks-view" class="leaks-view" style="display:none;"></div>
 
       <div id="contact-view" class="contact-view" style="display:none;"></div>
+
+      <div id="recon-view" class="recon-view" style="display:none;"></div>
+      <div id="creds-view" class="creds-view" style="display:none;"></div>
 
       <div id="no-results" class="no-results" style="display:none;">
         <p>No results match your filters.</p>
