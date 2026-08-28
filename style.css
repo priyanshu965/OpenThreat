@@ -105,6 +105,18 @@
        900px   tablet          view switcher wraps, panels go full width
        1200px  wide desktop    multi-column research layouts
      Nothing else is allowed a breakpoint of its own. */
+  /* Height of the pinned chrome, MEASURED at runtime by syncStickyOffsets()
+     in app.js. These values are only the pre-measurement fallback.
+
+     They are variables because the header's height is not a constant: a v4 fix
+     gave it `flex-wrap: wrap; height: auto` so the stat pills stop overlapping
+     on narrow screens, which means it is 60px at desktop width and 86px at
+     ~880px. Every bar below it used to hard-code `top: 60px`, so as soon as
+     the header wrapped it covered them -- and once v5 added a second nav row
+     at the same offset, the two rows drew on top of each other. */
+  --stack-header: 60px;   /* bottom edge of .site-header */
+  --stack-nav:    96px;   /* bottom edge of .mode-switcher */
+
   --bp-sm: 640px;
   --bp-md: 900px;
   --bp-lg: 1200px;
@@ -271,7 +283,10 @@ body {
 
 /* ── Controls Bar ───────────────────────────────────────────────── */
 .controls-bar {
-  position: sticky; top: 60px; z-index: 90;
+  /* Also not sticky any more -- see .view-switcher. This is the tallest of the
+     bars (search + toolbar + eleven filter pills, ~100px once they wrap) and
+     the least worth pinning: filters are set once and then scrolled past. */
+  position: static;
   display: flex; align-items: center; gap: 16px; padding: 12px 24px;
   background: var(--bg-sticky);
   border-bottom: 1px solid var(--border);
@@ -323,7 +338,8 @@ body {
 .sidebar {
   border-right: 1px solid var(--border); padding: 20px 16px;
   display: flex; flex-direction: column; gap: 20px;
-  position: sticky; top: 108px; height: calc(100vh - 108px);
+  position: sticky; top: var(--stack-nav);
+  height: calc(100vh - var(--stack-nav));
   overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent;
 }
 .sidebar-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
@@ -1948,7 +1964,16 @@ kbd {
    The visual separation is deliberate and load-bearing: bigger, tab-shaped,
    attached to the header, with an active underline — chrome, not controls. */
 .view-switcher {
-  position: sticky; top: 60px; z-index: 95;
+  /* NOT sticky. It used to be, at the same `top: 60px` the mode switcher now
+     occupies, so the two rows were painted on top of one another.
+
+     Beyond the collision, pinning it was the wrong call anyway. Header + modes
+     + sub-nav + search + eleven filter pills came to ~260px of permanently
+     pinned chrome on a 910px viewport -- nearly a third of the screen, on a
+     page whose entire purpose is a scrolling list. The mode row is the part
+     worth keeping in reach; the rest scrolls away, and `/` focuses search and
+     ctrl-K opens the palette from anywhere regardless. */
+  position: static;
   display: flex; gap: 2px; padding: 0 20px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-strong);
@@ -2217,7 +2242,7 @@ details.sidebar-card[open] > summary.sidebar-title { margin-bottom: 12px; }
 
 /* ── Time machine ──────────────────────────────────────────────────── */
 .timemachine-bar {
-  position: sticky; top: 148px; z-index: 88;
+  position: sticky; top: var(--stack-nav); z-index: 88;
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 8px 24px; background: var(--warn); color: #14100a;
   font-size: 10.5px;
@@ -2646,7 +2671,7 @@ a.malware-example-title:hover { color: var(--ui-link); }
   padding: 0 24px;
   background: var(--bg-sticky);
   border-bottom: 1px solid var(--border);
-  position: sticky; top: 60px; z-index: 90;
+  position: sticky; top: var(--stack-header); z-index: 90;
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   overflow-x: auto; scrollbar-width: none;
 }
@@ -3285,7 +3310,13 @@ button.ent-chip:hover {
 }
 
 @media (max-width: 640px) {
-  .mode-switcher { top: 56px; }
+  /* The header is `position: static` at this width (see the rule above: a
+     wrapped header with four stat pills is ~85px, too much to pin on a
+     phone), so the mode row is the ONLY pinned bar and it belongs at the very
+     top. It was hard-coded to 56px, which left a strip of content scrolling
+     past above it. syncStickyOffsets() agrees: it counts only bars that are
+     actually sticky. */
+  .mode-switcher { top: 0; }
   .mode-name { font-size: 11px; }
   .ent-page { max-width: 100%; }
   .hunt-actions { flex-direction: column; }
@@ -3371,3 +3402,8 @@ a.ent-detstrat-name:hover { text-decoration: underline; }
 .ent-telemetry .ent-chip {
   color: var(--text-code); border-color: var(--border-strong);
 }
+
+/* Anything scrolled to by id must clear the pinned header + mode row, or it
+   lands underneath them. */
+:target,
+[id] { scroll-margin-top: calc(var(--stack-nav) + 12px); }

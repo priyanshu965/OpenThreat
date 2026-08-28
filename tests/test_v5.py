@@ -798,5 +798,84 @@ class TestAttackDetectionStructure(unittest.TestCase):
         self.assertEqual(pack["detection_strategies"][0]["id"], "DET0001")
 
 
+
+class TestStickyChrome(unittest.TestCase):
+    """
+    The pinned header stack.
+
+    Three bars all hard-coded `top: 60px` — .controls-bar and .view-switcher
+    from v4, .mode-switcher added in v5. Two things were wrong at once:
+
+      * A v4 fix gave .site-header `flex-wrap: wrap; height: auto` so the stat
+        pills stop overlapping on a narrow window. That made its height
+        VARIABLE (60px wide open, 86px at ~880px), so every `top: 60px` below
+        it was covered by the header.
+      * The mode row and the view row claimed the same offset, so they were
+        painted on top of each other.
+
+    And even stacked correctly it was ~260px of permanently pinned chrome on a
+    910px viewport, for a page that is a scrolling list.
+    """
+
+    def setUp(self):
+        root = Path(__file__).resolve().parent.parent
+        self.css = (root / "style.css").read_text(encoding="utf-8")
+        self.app = (root / "app.js").read_text(encoding="utf-8")
+
+    def test_no_bar_hardcodes_the_header_height(self):
+        """`top: 60px` on a sticky bar is the bug, in any form."""
+        for bad in ("position: sticky; top: 60px",
+                    "position: sticky; top: 108px",
+                    "position: sticky; top: 148px"):
+            self.assertNotIn(bad, self.css,
+                             f"a sticky bar hard-codes an offset ({bad!r}); "
+                             "the header's height is not a constant")
+
+    def test_sticky_offsets_come_from_measured_variables(self):
+        self.assertIn("--stack-header", self.css)
+        self.assertIn("--stack-nav", self.css)
+        self.assertIn("top: var(--stack-header)", self.css)
+        self.assertIn("top: var(--stack-nav)", self.css)
+
+    def test_only_header_and_mode_row_are_pinned(self):
+        """
+        The sub-nav and the controls bar scroll away. Pinning them cost a third
+        of the viewport and pinned the tallest, least useful chrome on the page.
+        """
+        for block in (".view-switcher {", ".controls-bar {"):
+            start = self.css.index(block)
+            body = self.css[start:start + 700]
+            self.assertNotIn("position: sticky", body,
+                             f"{block.strip(' {')} is sticky again")
+            self.assertIn("position: static", body)
+
+    def test_measurement_ignores_bars_that_are_not_sticky(self):
+        """
+        Below 640px the header is `position: static`. Counting its height would
+        push the mode row 85px down over scrolling content.
+        """
+        self.assertIn("style.position !== 'sticky'", self.app)
+        self.assertIn("function syncStickyOffsets", self.app)
+
+    def test_offsets_are_resynced_when_the_chrome_reflows(self):
+        self.assertIn("ResizeObserver", self.app)
+        self.assertIn("document.fonts", self.app)
+        # …and on every render, because the sub-nav appears with the mode.
+        block = self.app.split("function syncControls", 1)[1][:1200]
+        self.assertIn("syncStickyOffsets()", block)
+
+    def test_asset_version_bumped_with_the_css_change(self):
+        """
+        index.html is unversioned and the service worker caches, so a CSS-only
+        fix that keeps the old ?v= is invisible to every returning visitor.
+        """
+        root = Path(__file__).resolve().parent.parent
+        html = (root / "index.html").read_text(encoding="utf-8")
+        sw = (root / "service-worker.js").read_text(encoding="utf-8")
+        self.assertNotIn("?v=5.0.0", html)
+        self.assertIn("?v=5.0.1", html)
+        self.assertIn('CACHE = "cyberwatch-v7"', sw)
+
+
 if __name__ == "__main__":
     unittest.main()

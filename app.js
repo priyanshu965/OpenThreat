@@ -3806,6 +3806,9 @@ function syncControls() {
   if (feedHeader) feedHeader.style.display = inFeed ? '' : 'none';
 
   renderModeNav();
+  // The sub-nav appears and disappears with the mode, so the pinned height
+  // changes with it.
+  syncStickyOffsets();
   document.querySelectorAll('.stat-pill.is-clickable').forEach((p) => {
     const w = p.dataset.stat;
     const active = w === 'urgent' ? store.filter === 'urgent'
@@ -3911,6 +3914,58 @@ function renderModeNav() {
     btn.setAttribute('aria-current', view === store.view ? 'page' : 'false');
     strip.appendChild(btn);
   });
+}
+
+/**
+ * Publish the real height of the pinned chrome as CSS variables.
+ *
+ * The sticky bars cannot hard-code their offsets, because the header's height
+ * is not a constant. A v4 fix gave it `flex-wrap: wrap; height: auto` so the
+ * four stat pills stop overlapping on a narrow window — correct in itself, but
+ * it means the header is 60px wide-open and 86px at ~880px, and every bar
+ * below it was still pinned at `top: 60px`. The header then covered them, and
+ * once v5 added a second nav row at that same offset the mode row and the view
+ * row were painted on top of each other.
+ *
+ * Measuring is the only thing that survives wrapping, late font loading, zoom,
+ * a long "updated N minutes ago" string, and the mobile breakpoints.
+ */
+function syncStickyOffsets() {
+  const header = document.querySelector('.site-header');
+  const modes = document.querySelector('.mode-switcher');
+  if (!header) return;
+  // Only bars that are ACTUALLY PINNED contribute. Below 640px the header is
+  // `position: static` — it scrolls away — so counting its height would push
+  // everything below it down by 85px of nothing.
+  const pinnedHeight = (node) => {
+    if (!node) return 0;
+    const style = getComputedStyle(node);
+    if (style.display === 'none' || style.position !== 'sticky') return 0;
+    return Math.round(node.getBoundingClientRect().height);
+  };
+  const headerH = pinnedHeight(header);
+  const modesH = pinnedHeight(modes);
+  const root = document.documentElement.style;
+  root.setProperty('--stack-header', `${headerH}px`);
+  root.setProperty('--stack-nav', `${headerH + modesH}px`);
+}
+
+/** Keep the offsets correct as the chrome reflows. */
+function watchStickyOffsets() {
+  syncStickyOffsets();
+  if (typeof ResizeObserver === 'function') {
+    const ro = new ResizeObserver(() => syncStickyOffsets());
+    ['.site-header', '.mode-switcher'].forEach((sel) => {
+      const node = document.querySelector(sel);
+      if (node) ro.observe(node);
+    });
+  } else {
+    window.addEventListener('resize', syncStickyOffsets);
+  }
+  // Fonts land after first paint and change the header's height with them.
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(syncStickyOffsets).catch(() => {});
+  }
 }
 
 /** Switch mode, landing on that mode's first view. */
@@ -5063,6 +5118,9 @@ document.addEventListener('DOMContentLoaded', () => {
   restoreState();
   initAvatar();
   initEvents();
+  // Must run before the first render: the sticky bars read these variables,
+  // and a wrong value for one frame is a visible jump.
+  watchStickyOffsets();
   document.addEventListener('click', (ev) => {
     const ex = ev.target.closest('[data-query-example]');
     if (!ex) return;

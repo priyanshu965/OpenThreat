@@ -10,7 +10,7 @@
 // Bump on every release. The activate handler deletes every cache whose name
 // is not this one, which is what stops old versioned entries accumulating now
 // that staleWhileRevalidate keys on the full URL including ?v=.
-const CACHE = "cyberwatch-v6";
+const CACHE = "cyberwatch-v7";
 const PRECACHE = [
   "./",
   "./index.html",
