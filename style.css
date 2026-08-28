@@ -3662,3 +3662,76 @@ a.ent-detstrat-name:hover { text-decoration: underline; }
   .tool-row { flex-direction: column; gap: 2px; }
   .tool-row-label { flex: none; }
 }
+
+/* ── Catalog tables (KEV, lifecycle, CVE) ────────────────────────────────────
+   Wide tables scroll inside their own container. The page body must never
+   scroll horizontally — that is what makes a table unusable on a phone. */
+.kev-view, .lifecycle-view, .cve-view { max-width: 1400px; }
+
+.cat-status {
+  margin: 6px 0 10px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.cat-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+
+.cat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.cat-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 9px 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-strong);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.cat-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  vertical-align: top;
+}
+.cat-table tr:last-child td { border-bottom: none; }
+.cat-table tbody tr:hover { background: var(--bg-card-hover); }
+
+.cat-id {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.cat-id a { color: var(--ui-link); text-decoration: none; }
+.cat-id a:hover { text-decoration: underline; }
+
+.cat-desc {
+  min-width: 260px;
+  max-width: 560px;
+  color: var(--text-secondary);
+}
+
+.cat-flag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.cat-table td.is-overdue { color: #d9584a; }

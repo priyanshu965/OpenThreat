@@ -178,6 +178,10 @@ try:
 except Exception:
     build_hunt_packs = build_hunt_queue = None
 try:
+    from lifecycle import load_lifecycle
+except Exception:
+    load_lifecycle = None
+try:
     from ransomware_leaks import load_leak_sites
 except Exception:
     load_leak_sites = None
@@ -3154,6 +3158,39 @@ def main():
         except Exception as e:
             log.warning(f"Leak-site view failed: {e}")
 
+    lifecycle_view = None
+    if load_lifecycle:
+        try:
+            lifecycle_view = load_lifecycle()
+            if lifecycle_view:
+                counts = lifecycle_view["counts"]
+                log.info(f"OK Lifecycle: {counts['products']} products "
+                         f"({counts['products_with_eol']} with an EOL cycle), "
+                         f"{counts['releases']} releases")
+        except Exception as e:
+            log.warning(f"Lifecycle view failed: {e}")
+
+    # The KEV catalogue is already loaded for the research modules. Publishing
+    # it as its own endpoint costs one more write and turns 1,600 records the
+    # pipeline was already holding into a browsable table.
+    kev_view = None
+    if CONFIG.enable_kev_table and kev_records:
+        rows = []
+        for cve, rec in kev_records.items():
+            rows.append({"cve": cve, **{k: rec.get(k) for k in
+                                        ("added", "due", "vendor", "product",
+                                         "ransomware", "name", "desc", "action")}})
+        rows.sort(key=lambda r: (r.get("added") or "", r.get("cve")), reverse=True)
+        kev_view = {
+            "built": now_utc(),
+            "count": len(rows),
+            "ransomware_linked": sum(1 for r in rows if r.get("ransomware")),
+            "entries": rows,
+            "source": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+        }
+        log.info(f"OK KEV table: {len(rows)} entries, "
+                 f"{kev_view['ransomware_linked']} ransomware-linked")
+
     telegram_view = None
     if load_telegram:
         try:
@@ -3323,6 +3360,8 @@ def main():
         "control_focus": control_focus,
         "leak_sites": leak_view,
         "telegram": telegram_view,
+        "lifecycle": lifecycle_view,
+        "kev_table": kev_view,
         "items": all_items,
     }
 
@@ -3342,7 +3381,10 @@ def main():
                       # knowledge_base.write_entity_shards.
                       "knowledge_base", "hunt_packs", "hunt_queue",
                       "detection_diff", "control_focus", "leak_sites",
-                      "telegram")
+                      # v6. kev_table is ~1,600 records and lifecycle is 44
+                      # products x 8 cycles; neither belongs in the feed
+                      # payload or in 90 archived copies of it.
+                      "telegram", "lifecycle", "kev_table")
     feed_output = {k: v for k, v in output.items() if k not in _RESEARCH_KEYS}
 
     # ── Archive once per day, not 24x ───────────────────────────────────────

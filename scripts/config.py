@@ -316,6 +316,19 @@ class Config:
     telegram_ttl_hours      = _int("TELEGRAM_TTL_HOURS", 4)
     telegram_max_posts      = _int("TELEGRAM_MAX_POSTS", 40)
 
+    # ── Software lifecycle ─────────────────────────────────────────────────
+    # endoflife.date + GitHub releases. Both are keyless and CORS-open, so the
+    # browser COULD call them; it should not. endoflife.date is one request per
+    # product and a useful board is 45 of them, per visitor, per page load. The
+    # GitHub API is 60/hour per IP unauthenticated, which a visitor behind a
+    # corporate NAT shares with their whole office.
+    enable_lifecycle            = _bool("ENABLE_LIFECYCLE", True)
+    lifecycle_ttl_hours         = _int("LIFECYCLE_TTL_HOURS", 24)
+    lifecycle_cycles_per_product = _int("LIFECYCLE_CYCLES_PER_PRODUCT", 8)
+
+    # ── KEV browser ────────────────────────────────────────────────────────
+    enable_kev_table = _bool("ENABLE_KEV_TABLE", True)
+
     # ── MISP ───────────────────────────────────────────────────────────────
     enable_misp_export = _bool("ENABLE_MISP_EXPORT", True)
     misp_org_name      = _str("MISP_ORG_NAME", "OpenThreat")

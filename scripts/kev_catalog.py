@@ -24,7 +24,14 @@ from fetchlib import CONFIG, SESSION, cached_fetch, log
 
 _KEV_URL = ("https://www.cisa.gov/sites/default/files/feeds/"
             "known_exploited_vulnerabilities.json")
-_CACHE = "cisa_kev.json"
+# Versioned filename. Adding a field to the record shape makes every warm
+# cache incomplete, and an incomplete record is not detectably different from
+# a complete one -- the KEV table would simply render blank names and
+# descriptions for a full TTL, looking broken with nothing reporting an error.
+# That is the same failure the legacy-shape guard below exists to prevent, so
+# the fix is the same: a cache written by an older shape must be a MISS by
+# construction, not by inspection.
+_CACHE = "cisa_kev_v2.json"
 
 
 def _fetch_raw() -> tuple[str | None, str | None]:
@@ -43,6 +50,10 @@ def _fetch_raw() -> tuple[str | None, str | None]:
                 "vendor": entry.get("vendorProject", ""),
                 "product": entry.get("product", ""),
                 "ransomware": entry.get("knownRansomwareCampaignUse", "") == "Known",
+                "name": entry.get("vulnerabilityName", ""),
+                "desc": entry.get("shortDescription", ""),
+                "action": entry.get("requiredAction", ""),
+                "cwes": entry.get("cwes", []) or [],
             }
         return json.dumps({"catalog_version": data.get("catalogVersion", ""),
                            "released": data.get("dateReleased", ""),
@@ -68,7 +79,8 @@ def _parse(cached: str | None):
 
 
 def load_kev(ttl_hours: float = 24) -> dict:
-    """CVE id -> {added, due, vendor, product, ransomware}. {} when unavailable."""
+    """CVE id -> {added, due, vendor, product, ransomware, name, desc,
+    action, cwes}. {} when unavailable."""
     records = _parse(cached_fetch(_CACHE, ttl_hours, _fetch_raw))
     if records is not None:
         return records

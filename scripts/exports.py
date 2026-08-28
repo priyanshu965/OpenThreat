@@ -404,7 +404,9 @@ def write_exports(output: dict, export_dir: Path, darkweb_index: dict = None) ->
                        ("detection_diff", "detection_diff.json"),
                        ("control_focus", "control_focus.json"),
                        ("leak_sites", "leak_sites.json"),
-                       ("telegram", "telegram.json")):
+                       ("telegram", "telegram.json"),
+                       ("lifecycle", "lifecycle.json"),
+                       ("kev_table", "kev.json")):
         if output.get(key):
             (api_dir / fname).write_text(
                 json.dumps(output[key], ensure_ascii=False, separators=(",", ":")),

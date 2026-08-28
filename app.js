@@ -62,6 +62,9 @@ const API = {
   controlFocus:   'data/api/control_focus.json',
   leaks:          'data/api/leak_sites.json',
   telegram:       'data/api/telegram.json',
+  // v6
+  kev:            'data/api/kev.json',
+  lifecycle:      'data/api/lifecycle.json',
 };
 
 // VIEWS replace the screen. FEED FILTERS narrow the list in place. Keeping the
@@ -75,6 +78,8 @@ const VIEWS = ['feed', 'map', 'landscape', 'matrix', 'graph', 'campaigns',
   'library', 'hunt', 'leaks',
   // v6 tools
   'recon', 'creds',
+  // v6 catalogs
+  'kev', 'lifecycle', 'cve',
   // v6 — 'contact' is a route, not a mode: it answers no question about
   // threats, so putting it in the mode nav would dilute what the modes mean.
   'contact'];
@@ -87,11 +92,13 @@ const VIEWS = ['feed', 'map', 'landscape', 'matrix', 'graph', 'campaigns',
 const MODE_VIEWS = {
   feed:      [['feed', 'FEED']],
   library:   [['library', 'BROWSE'], ['graph', 'GRAPH'], ['matrix', 'ATT&CK'],
-              ['campaigns', 'CAMPAIGNS'], ['malware', 'MALWARE']],
+              ['campaigns', 'CAMPAIGNS'], ['malware', 'MALWARE'],
+              ['cve', 'CVE']],
   hunt:      [['hunt', 'BENCH'], ['detections', 'COVERAGE MAP']],
   landscape: [['map', 'THREAT MAP'], ['landscape', 'LANDSCAPE'],
               ['geopol', 'GEOPOLITICS'], ['leaks', 'LEAK SITES'],
-              ['darkweb', 'DARK WEB'], ['exposure', 'EXPOSURE']],
+              ['darkweb', 'DARK WEB'], ['kev', 'KEV'],
+              ['lifecycle', 'LIFECYCLE'], ['exposure', 'EXPOSURE']],
   research:  [['research', 'EVIDENCE'], ['trends', 'TRENDS']],
   // A sixth mode, because these answer a different KIND of question. The other
   // five report on the world from data this project published; these take an
@@ -3726,7 +3733,7 @@ const VIEW_NODES = ['loading-state', 'error-state', 'cards-container', 'matrix-v
   'darkweb-view', 'exposure-view', 'no-results', 'graph-view', 'campaigns-view',
   'detections-view', 'malware-view', 'research-view', 'diff-view',
   'library-view', 'hunt-view', 'leaks-view', 'contact-view',
-  'recon-view', 'creds-view',
+  'recon-view', 'creds-view', 'kev-view', 'lifecycle-view', 'cve-view',
   'triage-bar', 'triage-done'];
 
 function hideAllViews() {
@@ -3857,6 +3864,9 @@ function renderAll() {
     case 'contact':    showContactView(); return;
     case 'recon':      showReconView(); return;
     case 'creds':      showCredsView(); return;
+    case 'kev':        showKevView(); return;
+    case 'lifecycle':  showLifecycleView(); return;
+    case 'cve':        showCveView(); return;
     default: break;
   }
   showContent();
