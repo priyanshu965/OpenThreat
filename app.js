@@ -77,7 +77,7 @@ const VIEWS = ['feed', 'map', 'landscape', 'matrix', 'graph', 'campaigns',
   // v5
   'library', 'hunt', 'leaks',
   // v6 tools
-  'recon', 'creds',
+  'recon', 'creds', 'ioc', 'phish',
   // v6 catalogs
   'kev', 'lifecycle', 'cve',
   // v6 — 'contact' is a route, not a mode: it answers no question about
@@ -104,7 +104,8 @@ const MODE_VIEWS = {
   // five report on the world from data this project published; these take an
   // artifact you have and query third-party APIs live from your browser.
   // Filing them under HUNT would repeat the conflation the split removed.
-  tools:     [['recon', 'RECON'], ['creds', 'CREDENTIALS']],
+  tools:     [['recon', 'RECON'], ['ioc', 'IOC LOOKUP'],
+              ['phish', 'PHISHING'], ['creds', 'CREDENTIALS']],
 };
 
 const MODES = Object.keys(MODE_VIEWS);
@@ -3734,6 +3735,7 @@ const VIEW_NODES = ['loading-state', 'error-state', 'cards-container', 'matrix-v
   'detections-view', 'malware-view', 'research-view', 'diff-view',
   'library-view', 'hunt-view', 'leaks-view', 'contact-view',
   'recon-view', 'creds-view', 'kev-view', 'lifecycle-view', 'cve-view',
+  'ioc-view', 'phish-view',
   'triage-bar', 'triage-done'];
 
 function hideAllViews() {
@@ -3867,6 +3869,8 @@ function renderAll() {
     case 'kev':        showKevView(); return;
     case 'lifecycle':  showLifecycleView(); return;
     case 'cve':        showCveView(); return;
+    case 'ioc':        showIocView(); return;
+    case 'phish':      showPhishView(); return;
     default: break;
   }
   showContent();

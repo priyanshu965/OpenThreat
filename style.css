@@ -3735,3 +3735,29 @@ a.ent-detstrat-name:hover { text-decoration: underline; }
 }
 
 .cat-table td.is-overdue { color: #d9584a; }
+
+/* ── IOC pivot grid ──────────────────────────────────────────────────────── */
+.ioc-view, .phish-view { max-width: 1100px; }
+
+.ioc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.ioc-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ui-link);
+  font-size: 0.78rem;
+  text-decoration: none;
+  /* Flex children do not shrink below their content without this, which is
+     what clipped these rows on mobile the last time this pattern was used. */
+  min-width: 0;
+}
+.ioc-link:hover { border-color: var(--ui-link); background: var(--bg-card-hover); }
+.ioc-link .cat-flag { margin-left: auto; }

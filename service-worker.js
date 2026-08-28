@@ -10,7 +10,7 @@
 // Bump on every release. The activate handler deletes every cache whose name
 // is not this one, which is what stops old versioned entries accumulating now
 // that staleWhileRevalidate keys on the full URL including ?v=.
-const CACHE = "openthreat-v8";
+const CACHE = "openthreat-v9";
 const PRECACHE = [
   "./",
   "./index.html",
@@ -22,6 +22,14 @@ const PRECACHE = [
   "./js/library.js",
   "./js/hunt.js",
   "./js/leaks.js",
+  // v6. Every js/ module belongs here: these are classic scripts sharing one
+  // top-level scope, so a module missing from the precache is not a degraded
+  // offline experience, it is a ReferenceError the moment anything calls into
+  // it. The list has to be kept in step with index.html; a test asserts that.
+  "./js/community.js",
+  "./js/tools.js",
+  "./js/catalogs.js",
+  "./js/investigate.js",
   "./manifest.json",
 ];
 

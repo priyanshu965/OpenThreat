@@ -237,3 +237,31 @@ class TestToolsFrontendHygiene(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestServiceWorkerPrecache(unittest.TestCase):
+    """
+    Every js/ module must be in PRECACHE.
+
+    These are classic scripts sharing one top-level scope, not ES modules. A
+    module missing from the precache is not a degraded offline experience — it
+    is a ReferenceError the moment anything calls into it, and only offline, so
+    nothing in normal testing sees it. Four modules were added in v6 and none
+    of them landed in the list.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sw = (PROJECT_ROOT / "service-worker.js").read_text(encoding="utf-8")
+        cls.html = (PROJECT_ROOT / "index.html").read_text(encoding="utf-8")
+
+    def test_precache_matches_the_modules_index_html_loads(self):
+        loaded = set(re.findall(r'src="(js/[a-z]+\.js)\?', self.html))
+        block = self.sw.split("const PRECACHE = [", 1)[1].split("];", 1)[0]
+        precached = {p.lstrip("./") for p in re.findall(r'"(\./js/[a-z]+\.js)"', block)}
+        self.assertEqual(loaded - precached, set(),
+                         "loaded by index.html but never precached")
+
+    def test_the_check_is_not_vacuous(self):
+        self.assertGreaterEqual(
+            len(re.findall(r'src="js/[a-z]+\.js\?', self.html)), 8)
