@@ -23,7 +23,27 @@ name: Hourly Intel Update
 
 on:
   schedule:
-    - cron: '0 */1 * * *'   # Every hour
+    # TWICE an hour, and deliberately NOT at minute 0.
+    #
+    # `schedule` is best-effort on a shared queue, and minute 0 is the single
+    # most congested minute on the platform because it is every repository's
+    # default. Measured over 44 scheduled runs of this workflow with
+    # `cron: '0 */1 * * *'`: not one started on time. Earliest 11 minutes late,
+    # median 31, worst 51 -- and when the delay exceeds the interval GitHub
+    # does not merely postpone the event, it DROPS it. The cadence held at
+    # ~1.0h while platform load was normal and then decayed to 2.7h, 5h, 11h,
+    # 10h, 8.9h. The job itself takes 1-6 minutes, so this was never duration
+    # or the concurrency group.
+    #
+    # Two entries at odd minutes: off-peak so each is less likely to be
+    # queued behind the top-of-hour crowd, and paired so a dropped event still
+    # leaves one attempt in the hour. A second run is cheap -- the expensive
+    # corpora are all TTL-cached, so it mostly re-publishes.
+    #
+    # This makes hourly LIKELY. It cannot make it guaranteed, and nothing in
+    # this repo should claim otherwise; the dashboard shows the real age of
+    # the data instead.
+    - cron: '17,47 * * * *'
   workflow_dispatch:          # Manual trigger from Actions tab
 
 jobs:

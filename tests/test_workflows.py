@@ -107,5 +107,56 @@ class TestCrossModuleGuardIsIntact(unittest.TestCase):
                          f"{sorted(missing)}")
 
 
+
+
+class TestScheduleIsNotOnTheHour(unittest.TestCase):
+    """
+    `schedule` is best-effort on a shared queue, and minute 0 is the most
+    congested minute on the platform because it is every repository's default.
+
+    Measured over 44 scheduled runs of update.yml with `cron: '0 */1 * * *'`:
+    not one started on time. Earliest 11 minutes late, median 31, worst 51 --
+    and when the delay exceeds the interval the event is DROPPED, not
+    postponed. The observed cadence decayed from ~1.0h to 2.7h, 5h, 11h, 10h.
+    The job runs in 1-6 minutes, so this was never duration or concurrency.
+
+    This pins the mitigation so a later edit cannot quietly restore the
+    default and reintroduce a 10-hour-stale dashboard.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.crons = {}
+        for path in WORKFLOWS:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            # PyYAML parses the bare key `on` as the boolean True.
+            triggers = data.get("on") or data.get(True) or {}
+            schedule = (triggers or {}).get("schedule") or []
+            entries = [s.get("cron", "") for s in schedule if isinstance(s, dict)]
+            if entries:
+                cls.crons[path.name] = entries
+
+    def test_there_is_a_schedule_to_check(self):
+        self.assertIn("update.yml", self.crons)
+
+    def test_no_schedule_fires_on_minute_zero(self):
+        for name, entries in self.crons.items():
+            for cron in entries:
+                minute = cron.split()[0]
+                self.assertNotIn("0", minute.split(","),
+                                 f"{name}: cron '{cron}' fires at minute 0, the "
+                                 f"most contended minute on the platform")
+                self.assertNotEqual(minute, "*",
+                                    f"{name}: cron '{cron}' fires every minute")
+
+    def test_the_intel_update_has_a_spare_attempt_each_hour(self):
+        """One attempt an hour means one dropped event is a missed hour."""
+        entries = self.crons["update.yml"]
+        minutes = [m for cron in entries for m in cron.split()[0].split(",")]
+        self.assertGreaterEqual(len(minutes), 2,
+                                "update.yml should attempt more than once an hour")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,9 +14,16 @@
 
 ---
 
-Every hour, a GitHub Actions job pulls CVEs, advisories, incident reporting and indicator feeds
-from 43 sources, scores each item on how likely it is to actually be exploited, and publishes a
-static site. No server, no database, no backend at runtime.
+Roughly every hour, a GitHub Actions job pulls CVEs, advisories, incident reporting and indicator
+feeds from 43 sources, scores each item on how likely it is to actually be exploited, and
+publishes a static site. No server, no database, no backend at runtime.
+
+*Roughly*, because GitHub's `schedule` event is best-effort: it runs on a shared queue, is
+routinely delayed, and is **dropped** outright under load. Measured over 44 runs, this workflow
+never once started on time — median 31 minutes late — and the gap between runs decayed to as much
+as 11 hours during a busy period. The cron is now twice an hour at off-peak minutes, which makes
+hourly likely but cannot make it guaranteed. The dashboard shows the real age of the data rather
+than the intended cadence.
 
 Three things it does that a feed does not:
 
