@@ -28,16 +28,28 @@ Three things it does that a feed does not:
   800-53 countermeasures that stop it.
 - **It grades its own scoring** against what really happened, and publishes the result even when
   the result is unflattering. See below.
+- **Tools you can point at one thing** — passive recon over DNS and RDAP, an IOC pivot launcher,
+  phishing triage, and a k-anonymity password check. All in your browser; nothing reaches this
+  site, because there is no endpoint here that could receive it.
 
-## The five modes
+## The six modes
 
 | Mode | Answers | Views |
 |---|---|---|
 | **Feed** | what changed | the triage list, defaulting to items with a verdict |
-| **Library** | what is known | entities, graph, ATT&CK matrix, campaigns, malware |
+| **Library** | what is known | entities, graph, ATT&CK matrix, campaigns, malware, CVE browser |
 | **Hunt** | what to do | queue, packs, coverage, controls, new rules |
-| **Landscape** | the world | threat map, geopolitics, leak sites, dark web, exposure |
+| **Landscape** | the world | threat map, geopolitics, leak sites, dark web, KEV, lifecycle, exposure |
 | **Research** | what is proven | scoring backtest, source reliability, exploitation lag, trends |
+| **Tools** | check one thing | passive recon, IOC lookup, phishing triage, credentials |
+
+**Tools runs in your browser, not in the pipeline.** Its input arrives after
+the pipeline has finished, and there is no server here to forward it to — so
+every provider it uses had to be keyless *and* CORS-open, both verified before
+anything was built. That is why live TLS cipher inspection and technology
+fingerprinting are absent rather than faked: JavaScript cannot see a TLS
+handshake, and reading a target's HTML is blocked by that target's own CORS
+policy. Doing either server-side would make this an active scanner.
 
 ## How it works
 
@@ -127,6 +139,9 @@ Pre-rendered every run, relative to the dashboard URL. Everything below is CORS-
 | `data/api/hunt_packs.json` · `hunt/<technique>.json` | Hunt packs: index and one full pack |
 | `data/api/hunt_queue.json` · `control_focus.json` · `detection_diff.json` | Hunt bench |
 | `data/api/leak_sites.json` | Leak-site claims, groups, sectors, freshness |
+| `data/api/kev.json` | The full CISA KEV catalogue, with dates and required actions |
+| `data/api/lifecycle.json` | End-of-life status per product, plus latest tooling releases |
+| `data/api/telegram.json` | Ten monitored public channels, scrubbed of credentials |
 | `data/exports/stix.json` · `misp_event.json` · `feed.xml` | STIX 2.1, MISP event, RSS |
 
 The Library and hunt packs are **sharded** because the merged corpus is 17 MB — served whole,
@@ -146,7 +161,7 @@ built from is keyless. The ones worth knowing:
 | `ALERT_SEVERITIES` | `critical` | What justifies a push; KEV and SSVC active always alert |
 | `PRIORITY_CVSS_WEIGHT`, `PRIORITY_EPSS_WEIGHT`, … | see table above | The scoring weights |
 | `PUBLISH_OWN_ESTATE` | `0` | Whether your own exposure findings are published |
-| `ENABLE_TELEGRAM` | `0` | Public channel watch — off by default; you pick the channels |
+| `TELEGRAM_CHANNELS` | 10 verified channels | Public channel watch. Credential-dump channels are excluded on principle: their posts *are* victim data |
 | `ENABLE_*` | `1` | One switch per module (Library, hunt packs, backtest, leak sites, …) |
 
 Every `ENABLE_*` module degrades to "unavailable" rather than failing the run, so a missing
