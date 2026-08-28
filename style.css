@@ -3407,3 +3407,99 @@ a.ent-detstrat-name:hover { text-decoration: underline; }
    lands underneath them. */
 :target,
 [id] { scroll-margin-top: calc(var(--stack-nav) + 12px); }
+
+/* ── Contact / community ─────────────────────────────────────────────────────
+   Reuses the existing tokens rather than introducing colours: --ui-link for
+   anything that navigates, --ui-accent for the one primary action per block. */
+.contact-view { max-width: 1100px; }
+
+.comm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 18px 0 26px;
+}
+
+.comm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  /* Flex children do not shrink below content width without this, which is
+     what clipped the card rows on mobile the last time this pattern was used. */
+  min-width: 0;
+}
+
+.comm-card-title { margin: 0; font-size: 0.95rem; color: var(--text-primary); }
+.comm-card-text  { margin: 0; font-size: 0.85rem; line-height: 1.55; color: var(--text-secondary); }
+
+.comm-btn {
+  align-self: flex-start;
+  margin-top: auto;
+  padding: 7px 13px;
+  border: 1px solid var(--ui-link);
+  border-radius: 6px;
+  color: var(--ui-link);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.comm-btn:hover  { background: var(--ui-link); color: var(--bg-base); }
+.comm-btn.ghost  { border-color: var(--border); color: var(--text-secondary); }
+.comm-btn.ghost:hover { border-color: var(--ui-link); color: var(--ui-link); background: none; }
+
+.comm-direct {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  margin-bottom: 26px;
+}
+.comm-direct-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.comm-direct-addr {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--ui-link);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.comm-section { margin-bottom: 26px; }
+.comm-section-title {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.comm-linkrow { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.comm-list { margin: 8px 0 0; padding-left: 20px; }
+.comm-list li {
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.footer-links { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.footer-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--ui-link);
+  cursor: pointer;
+  text-decoration: underline;
+}

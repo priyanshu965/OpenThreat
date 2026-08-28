@@ -192,6 +192,11 @@ jobs:
           # setting on every hourly run. The site would silently fall back to
           # priyanshu965.github.io/OpenThreat/ an hour after it was set.
           cp CNAME _site/
+
+          # RFC 9116 security.txt, generated each run so its mandatory Expires
+          # date is never stale. Served from /.well-known/ or nothing reads it.
+          mkdir -p _site/.well-known
+          cp data/wellknown/security.txt _site/.well-known/ 2>/dev/null || true
           # The v4 frontend is app.js PLUS three sibling modules. Forgetting
           # this line ships a page whose every view button throws a
           # ReferenceError, and nothing in the pipeline would notice.

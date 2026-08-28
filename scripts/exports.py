@@ -117,7 +117,29 @@ def _write_json(rows, path: Path, generated: str) -> int:
 
 
 def _write_stix(rows, path: Path, generated: str) -> int:
-    objects = []
+    # An identity object, and every indicator attributed to it.
+    #
+    # The bundle previously carried bare indicators with no producer. On import
+    # that is an anonymous pile of patterns: a TIP cannot tell one feed's
+    # indicators from another's, cannot filter by source, and has nobody to
+    # contact about a false positive. `created_by_ref` is the field that fixes
+    # all three, and it costs one object.
+    #
+    # The uuid5 is derived from the org name only, so the identity id is stable
+    # across runs and re-importing updates in place rather than duplicating.
+    identity_id = f"identity--{uuid.uuid5(_NS, f'identity-{CONFIG.misp_org_name}')}"
+    identity = {
+        "type": "identity",
+        "spec_version": "2.1",
+        "id": identity_id,
+        "created": generated,
+        "modified": generated,
+        "name": str(CONFIG.misp_org_name or "OpenThreat"),
+        "identity_class": "organization",
+        "sectors": ["technology"],
+        "contact_information": str(CONFIG.contact_email or ""),
+    }
+    objects = [identity]
     for ioc_type, value, src, title, cve, published in rows:
         builder = _STIX_PATTERN.get(ioc_type)
         if not builder:
@@ -133,6 +155,7 @@ def _write_stix(rows, path: Path, generated: str) -> int:
             "id": ind_id,
             "created": generated,
             "modified": generated,
+            "created_by_ref": identity_id,
             "name": f"{ioc_type} observed by {src or 'OpenThreat'}",
             "description": (title or "")[:400],
             "indicator_types": ["malicious-activity"],
@@ -147,7 +170,9 @@ def _write_stix(rows, path: Path, generated: str) -> int:
         "objects": objects,
     }
     path.write_text(json.dumps(bundle, indent=2, ensure_ascii=False), encoding="utf-8")
-    return len(objects)
+    # The caller reports this as an INDICATOR count, so the identity object
+    # that now leads the bundle must not be counted as one.
+    return len(objects) - 1
 
 
 # MISP attribute type + category per IOC type. MISP validates both, so a wrong
@@ -275,9 +300,15 @@ def _write_rss(output: dict, path: Path, limit: int = 60) -> None:
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<rss version="2.0"><channel>',
         "<title>OpenThreat Threat Intelligence</title>",
-        "<link>https://github.com/</link>",
+        # This was "https://github.com/" — a placeholder that shipped. A reader
+        # that follows the channel link is supposed to land on the feed's own
+        # site, so it now points where the feed actually lives.
+        f"<link>{xml_escape(str(CONFIG.dashboard_url or '').rstrip('/') or '')}</link>",
         "<description>Aggregated CVEs, advisories, incidents and IOCs</description>",
         f"<lastBuildDate>{xml_escape(updated)}</lastBuildDate>",
+        # RFC-era RSS expects bare addresses here, not mailto: URIs.
+        f"<managingEditor>{xml_escape(str(CONFIG.contact_email or ''))}</managingEditor>",
+        f"<webMaster>{xml_escape(str(CONFIG.contact_email or ''))}</webMaster>",
     ]
     for item in items:
         title = xml_escape((item.get("title") or "Untitled")[:200])

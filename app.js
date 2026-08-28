@@ -72,7 +72,10 @@ const VIEWS = ['feed', 'map', 'landscape', 'matrix', 'graph', 'campaigns',
   'detections', 'malware', 'geopol', 'darkweb', 'exposure', 'trends',
   'research', 'about', 'diff',
   // v5
-  'library', 'hunt', 'leaks'];
+  'library', 'hunt', 'leaks',
+  // v6 — 'contact' is a route, not a mode: it answers no question about
+  // threats, so putting it in the mode nav would dilute what the modes mean.
+  'contact'];
 
 // Views grouped by the QUESTION they answer. The top nav switches MODE; the
 // strip beneath switches views WITHIN the active mode, and hides itself when a
@@ -182,6 +185,29 @@ function safeUrl(url) {
   const trimmed = String(url).trim();
   const normalised = trimmed.replace(/[\u0000-\u0020]/g, '').toLowerCase();
   return /^https?:\/\//.test(normalised) ? trimmed : '';
+}
+
+/**
+ * A mailto: URL, built from parts.
+ *
+ * safeUrl() deliberately allows http(s) ONLY, because every URL it sees came
+ * from one of 43 third-party feeds and the scheme allowlist is what stops a
+ * `javascript:` href reaching an anchor. Widening it to admit mailto: would
+ * weaken that check for all of those feeds in order to serve a handful of
+ * first-party links, which is a bad trade.
+ *
+ * So this is separate and much narrower: the address must look like an address
+ * and carry no CR/LF (a newline in a mailto is how you inject extra headers),
+ * and the subject and body are percent-encoded here rather than by the caller.
+ * It is only ever called with constants defined in this codebase.
+ */
+function safeMailto(address, subject, body) {
+  const addr = String(address || '').trim();
+  if (!/^[^\s@<>,;:"'\\]+@[^\s@<>,;:"'\\]+\.[a-z]{2,}$/i.test(addr)) return '';
+  const params = [];
+  if (subject) params.push('subject=' + encodeURIComponent(String(subject)));
+  if (body) params.push('body=' + encodeURIComponent(String(body)));
+  return 'mailto:' + addr + (params.length ? '?' + params.join('&') : '');
 }
 
 function el(tag, className, text) {
@@ -3692,7 +3718,7 @@ const VIEW_NODES = ['loading-state', 'error-state', 'cards-container', 'matrix-v
   'trends-view', 'map-view', 'landscape-view', 'geopol-view', 'about-view',
   'darkweb-view', 'exposure-view', 'no-results', 'graph-view', 'campaigns-view',
   'detections-view', 'malware-view', 'research-view', 'diff-view',
-  'library-view', 'hunt-view', 'leaks-view',
+  'library-view', 'hunt-view', 'leaks-view', 'contact-view',
   'triage-bar', 'triage-done'];
 
 function hideAllViews() {
@@ -3820,6 +3846,7 @@ function renderAll() {
     case 'library':    showLibraryView(); return;
     case 'hunt':       showHuntView(); return;
     case 'leaks':      showLeaksView(); return;
+    case 'contact':    showContactView(); return;
     default: break;
   }
   showContent();
@@ -3925,7 +3952,7 @@ function backToFeed() {
 // Views worth returning to. `diff` is a comparison of two specific dates and
 // `about` is a profile page — reopening the dashboard onto either is landing
 // on someone else's leftovers, not on your dashboard.
-const TRANSIENT_VIEWS = new Set(['diff', 'about']);
+const TRANSIENT_VIEWS = new Set(['diff', 'about', 'contact']);
 
 /**
  * Paint the mode row and rebuild the sub-nav for the active mode.
@@ -5115,6 +5142,11 @@ function initAvatar() {
   btn.addEventListener('click', () => setView('about'));
 }
 
+function initContactLink() {
+  const btn = $('contact-open');
+  if (btn) btn.addEventListener('click', () => setView('contact'));
+}
+
 /** Query syntax, shown from the `?` next to the search box. */
 function showQueryHelp() {
   const modal = $('entity-modal');
@@ -5167,6 +5199,7 @@ document.addEventListener('DOMContentLoaded', () => {
   migrateLegacyKeys();
   restoreState();
   initAvatar();
+  initContactLink();
   initEvents();
   // Must run before the first render: the sticky bars read these variables,
   // and a wrong value for one frame is a visible jump.

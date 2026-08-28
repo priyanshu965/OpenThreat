@@ -214,6 +214,10 @@ try:
 except Exception:
     write_exports = None
 try:
+    from wellknown import write_wellknown
+except Exception:
+    write_wellknown = None
+try:
     from webhook_post import send_alerts, send_watch_alerts
 except Exception:
     send_alerts = None
@@ -3387,6 +3391,16 @@ def main():
             log.info(f"✓ Wrote exports: {', '.join(written)}")
         except Exception as e:
             log.error(f"Export generation failed: {e}")
+
+    # ── /.well-known/security.txt ─────────────────────────────────────────
+    # Generated rather than committed: RFC 9116 makes `Expires` mandatory and
+    # tells readers to ignore the file once it has passed, so a committed one
+    # silently expires on a date nobody wrote down. See scripts/wellknown.py.
+    if write_wellknown:
+        try:
+            write_wellknown(CONFIG.data_dir / "wellknown")
+        except Exception as e:
+            log.warning(f"security.txt generation failed: {e}")
 
     # ── Time machine: publish a slim snapshot per archived day ─────────────
     # data/archive/ has held 90 days of history that no page could ever open,

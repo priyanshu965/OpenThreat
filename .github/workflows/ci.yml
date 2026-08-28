@@ -123,14 +123,15 @@ jobs:
                     queryExplain queryExamples queryFields \
                     showLibraryView showHuntView showLeaksView \
                     libJump libOpen libSection libLink libCode libAtomic \
-                    libRenderDefence libRenderDetection libSearch huntOpenPack; do
+                    libRenderDefence libRenderDetection libSearch huntOpenPack \
+                    showContactView; do
             if ! grep -qE "function ${fn}\b" js/*.js; then
               echo "::error::app.js calls ${fn}() but no js/ module defines it"
               missing=1
             fi
           done
           for fn in showLazyView emptyState openEntityModal closePanel setView \
-                    setMode showToast writeUrlState modeOf; do
+                    setMode showToast writeUrlState modeOf safeMailto; do
             if ! grep -qE "function ${fn}\b" app.js; then
               echo "::error::js/ modules call ${fn}() but app.js does not define it"
               missing=1

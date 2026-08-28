@@ -281,6 +281,24 @@ class Config:
     enable_misp_export = _bool("ENABLE_MISP_EXPORT", True)
     misp_org_name      = _str("MISP_ORG_NAME", "OpenThreat")
 
+    # ── Identity and contact ───────────────────────────────────────────────
+    # One address, used everywhere something needs a human: security.txt, the
+    # contact page, the STIX identity, the MISP organisation and the RSS
+    # editor fields. It was hardcoded in none of those places before, which is
+    # why the RSS channel link pointed at "https://github.com/".
+    #
+    # This address is PUBLISHED. That is the point of it — a site that reports
+    # other people's vulnerabilities with no way to report one to it is not
+    # arguing in good faith — but it does mean it will be scraped.
+    contact_email     = _str("CONTACT_EMAIL", "priyanshu@openthreat.in")
+    contact_name      = _str("CONTACT_NAME", "OpenThreat")
+    discussions_url   = _str("DISCUSSIONS_URL",
+                             "https://github.com/priyanshu965/OpenThreat/discussions")
+    repo_url          = _str("REPO_URL", "https://github.com/priyanshu965/OpenThreat")
+    # RFC 9116 requires an Expires date and readers are expected to ignore a
+    # stale file, so it is regenerated on every run rather than committed.
+    security_txt_months = _int("SECURITY_TXT_MONTHS", 12)
+
     # ── AI models ──────────────────────────────────────────────────────────
     # Gemini 3.x Flash-Lite is on the free tier and materially better at
     # instruction-following than the 2.5 line this project shipped with.
