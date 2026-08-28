@@ -3938,3 +3938,100 @@ a.rail-row:focus-visible { outline: 2px solid var(--ui-link); outline-offset: 2p
   .rail-ticker-row { animation: none; }
   .rail-cell { transition: none; }
 }
+
+/* ── Second gutter, 1600px and up ────────────────────────────────────────────
+   Placement only. Both rails are grid children of .dashboard, so the third
+   column can be granted or withdrawn without moving a node — which is why no
+   JavaScript decides this. See the note in js/rail.js: the version that
+   branched in JS desynchronised from the media query and could not be
+   verified, because viewport emulation fires neither `resize` nor matchMedia
+   `change`. */
+@media (min-width: 1280px) {
+  /* Two columns. The right rail is re-placed under the left one, so its
+     content is never dropped for want of a third column. */
+  .dashboard.has-rail {
+    grid-template-rows: auto auto;
+  }
+  .dashboard.has-rail > #pulse-rail       { grid-column: 1; grid-row: 1; }
+  .dashboard.has-rail > #pulse-rail-right { grid-column: 1; grid-row: 2; }
+  .dashboard.has-rail > .feed             { grid-column: 2; grid-row: 1 / span 2; }
+
+  /* Stacked in one column, two independently sticky elements would slide
+     over each other. In that arrangement the column simply scrolls. */
+  .pulse-rail-right {
+    position: static;
+    max-height: none;
+    border-left: none;
+    border-right: 1px solid var(--border);
+    padding: 0 0 40px 24px;
+  }
+}
+
+@media (min-width: 1600px) {
+  .dashboard.has-rail {
+    grid-template-columns: 264px minmax(0, 1fr) 288px;
+    grid-template-rows: auto;
+    max-width: 1920px;
+    padding-right: 0;
+  }
+  .dashboard.has-rail > #pulse-rail-right { grid-column: 3; grid-row: 1; }
+  .dashboard.has-rail > .feed             { grid-column: 2; grid-row: 1; }
+  .pulse-rail-right {
+    position: sticky;
+    max-height: calc(100vh - var(--stack-nav, 122px) - 32px);
+    border-left: 1px solid var(--border);
+    border-right: none;
+    padding: 18px 24px 40px 24px;
+  }
+}
+
+/* KEV block. Two lines per row: the identifier reads first, then what it is
+   and when it landed. A single line would truncate the product on a 264px
+   column, and the product is the part that tells you whether it is yours. */
+.rail-kev { list-style: none; margin: 10px 0 0; padding: 0; }
+.rail-kev-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: "cve flag" "what date";
+  gap: 1px 6px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.rail-kev-row:last-child { border-bottom: none; }
+.rail-kev-cve {
+  grid-area: cve;
+  font-size: 0.7rem;
+  color: var(--ui-link);
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+.rail-kev-cve:hover { text-decoration: underline; }
+.rail-kev-flag {
+  grid-area: flag;
+  justify-self: start; align-self: center;
+  font-size: 0.53rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #d9584a; border: 1px solid currentColor;
+  border-radius: 2px; padding: 0 4px;
+}
+.rail-kev-what {
+  grid-area: what;
+  font-size: 0.66rem; color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rail-kev-date {
+  grid-area: date;
+  justify-self: end;
+  font-size: 0.62rem; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-more {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.rail-more:hover { color: var(--ui-link); }
+.rail-more:focus-visible { outline: 2px solid var(--ui-link); outline-offset: 2px; }

@@ -3191,6 +3191,27 @@ def main():
         log.info(f"OK KEV table: {len(rows)} entries, "
                  f"{kev_view['ransomware_linked']} ransomware-linked")
 
+    # A slim summary for the front page, carried in intel.json's metadata.
+    #
+    # The full catalogue is a separate 880 KB endpoint, which is right for a
+    # browsable table and far too heavy for a rail that every visitor loads.
+    # Fourteen rows is about 2 KB on a payload that is already ~500 KB, so
+    # the rail costs no extra request and no meaningful bytes -- the same
+    # bargain library_summary and leak_summary already make.
+    kev_recent = None
+    if kev_view:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+        recent = kev_view["entries"][:CONFIG.kev_recent_count]
+        kev_recent = {
+            "total": kev_view["count"],
+            "ransomware_linked": kev_view["ransomware_linked"],
+            "added_7d": sum(1 for r in kev_view["entries"]
+                            if (r.get("added") or "") >= cutoff),
+            "entries": [{k: r.get(k) for k in
+                         ("cve", "added", "vendor", "product", "ransomware")}
+                        for r in recent],
+        }
+
     telegram_view = None
     if load_telegram:
         try:
@@ -3362,6 +3383,8 @@ def main():
         "telegram": telegram_view,
         "lifecycle": lifecycle_view,
         "kev_table": kev_view,
+        # Slim; rides along in intel.json rather than costing a request.
+        "kev_recent": kev_recent,
         "items": all_items,
     }
 

@@ -10,7 +10,7 @@
 // Bump on every release. The activate handler deletes every cache whose name
 // is not this one, which is what stops old versioned entries accumulating now
 // that staleWhileRevalidate keys on the full URL including ?v=.
-const CACHE = "openthreat-v12";
+const CACHE = "openthreat-v15";
 const PRECACHE = [
   "./",
   "./index.html",

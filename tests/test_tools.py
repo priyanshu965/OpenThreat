@@ -369,9 +369,23 @@ class TestTelemetryRail(unittest.TestCase):
         self.assertIn("store.view === 'feed'", body)
 
     def test_carries_no_controls(self):
-        """Read-only. Every filter stays in the summoned panel."""
-        for control in ("<input", "type = 'checkbox'", "'range'", "addEventListener('change'"):
-            self.assertNotIn(control, self.js)
+        """Read-only. Every filter stays in the summoned panel.
+
+        Checked by the ELEMENTS created, not by event names. The first
+        version also banned addEventListener('change'), as a proxy for a
+        checkbox handler — and then matched the matchMedia listener that
+        moves blocks between the two gutters, which is layout code and not a
+        control. A proxy that fires on unrelated code is a test that has to
+        be argued with instead of trusted.
+        """
+        for element in ("'input'", "'select'", "'textarea'", "'button'"):
+            self.assertNotIn(f"el({element}", self.js,
+                             f"the rail creates a {element} — it must stay read-only")
+
+    def test_the_control_check_is_not_vacuous(self):
+        """It must be looking at code that really does create elements."""
+        self.assertIn("el('section'", self.js)
+        self.assertIn("el('span'", self.js)
 
     def test_hidden_below_1280(self):
         block = self.css.split("Telemetry rail", 1)[1]
@@ -422,3 +436,66 @@ class TestTelemetryRail(unittest.TestCase):
         self.assertIn("js/rail.js", self.html)
         sw = (PROJECT_ROOT / "service-worker.js").read_text(encoding="utf-8")
         self.assertIn("./js/rail.js", sw)
+
+
+class TestRailPlacementIsCssOnly(unittest.TestCase):
+    """
+    Which gutter a block sits in is decided by CSS grid placement, not by
+    JavaScript reading a media query.
+
+    The first version branched in JS and re-rendered from a `resize`
+    listener. It desynchronised: matchMedia reported false at 1450px while
+    the DOM still carried the wide-layout class and the world blocks sat in a
+    column CSS had already un-gridded. Instrumenting the page showed why —
+    under viewport emulation NEITHER `resize` nor matchMedia `change` fires,
+    so the re-render never ran.
+
+    Real browsers fire both, so that code would probably have worked in
+    production. "Probably, and untestable" is the objection: grid placement
+    needs no event, cannot fall out of step with the query that drives it,
+    and is verifiable at any width.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = (PROJECT_ROOT / "js" / "rail.js").read_text(encoding="utf-8")
+        cls.css = (PROJECT_ROOT / "style.css").read_text(encoding="utf-8")
+        cls.html = (PROJECT_ROOT / "index.html").read_text(encoding="utf-8")
+
+    def test_no_width_branching_in_js(self):
+        for banned in ("matchMedia('(min-width", 'matchMedia("(min-width',
+                       "innerWidth", "has-rail-right",
+                       "addEventListener('resize'"):
+            self.assertNotIn(banned, self.js,
+                             f"rail.js decides layout with {banned}")
+
+    def test_both_rails_exist_in_the_dom(self):
+        self.assertIn('id="pulse-rail"', self.html)
+        self.assertIn('id="pulse-rail-right"', self.html)
+
+    def test_right_rail_is_after_the_feed_in_source_order(self):
+        """Keyboard and screen-reader users reach the content before the
+        ambient column, whichever side it is painted on."""
+        self.assertGreater(self.html.find('id="pulse-rail-right"'),
+                           self.html.find('<section class="feed"'))
+
+    def test_css_places_both_rails_at_each_breakpoint(self):
+        block = self.css.split("Second gutter, 1600px and up", 1)[1]
+        self.assertIn("min-width: 1280px", block)
+        self.assertIn("min-width: 1600px", block)
+        # Two columns: the right rail is re-placed UNDER the left one rather
+        # than being dropped for want of a third column.
+        self.assertIn("#pulse-rail-right { grid-column: 1; grid-row: 2; }", block)
+        self.assertIn("#pulse-rail-right { grid-column: 3; grid-row: 1; }", block)
+
+    def test_stacked_rails_are_not_both_sticky(self):
+        """Two independently sticky elements in one column slide over each
+        other."""
+        block = self.css.split("Second gutter, 1600px and up", 1)[1]
+        self.assertIn("position: static", block.split("min-width: 1600px")[0])
+
+    def test_the_world_blocks_always_render(self):
+        """`right || left` — never conditional on width, so the content
+        cannot be stranded in a hidden element."""
+        body = self.js.split("function renderRail", 1)[1]
+        self.assertIn("const world = right || left;", body)

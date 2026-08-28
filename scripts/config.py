@@ -328,6 +328,10 @@ class Config:
 
     # ── KEV browser ────────────────────────────────────────────────────────
     enable_kev_table = _bool("ENABLE_KEV_TABLE", True)
+    # Rows of the KEV catalogue carried in intel.json metadata for the
+    # front-page rail. Small on purpose: the browsable table is its own
+    # 880 KB endpoint and must not be loaded by every visitor.
+    kev_recent_count = _int("KEV_RECENT_COUNT", 14)
 
     # ── MISP ───────────────────────────────────────────────────────────────
     enable_misp_export = _bool("ENABLE_MISP_EXPORT", True)

@@ -187,6 +187,52 @@ function railRenderCorpus(host, meta) {
   rows.forEach(([label, value, view]) => railLedgerRow(block, label, value, view));
 }
 
+/* ── KEV ──────────────────────────────────────────────────────────────────
+ * The newest additions to CISA's catalogue of vulnerabilities known to be
+ * exploited. This is the shortest list on the site of things that are
+ * definitely being used against somebody right now, which makes it the one
+ * block here that is not merely evidence of activity but a reason to act.
+ *
+ * Fed by `kev_recent`, a 14-row summary the pipeline puts in intel.json's
+ * metadata. The browsable catalogue is a separate 880 KB endpoint and has no
+ * business being downloaded by every visitor for a rail.
+ */
+function railRenderKev(host, meta) {
+  const kev = meta.kev_recent || {};
+  const entries = kev.entries || [];
+  if (!entries.length) return;
+
+  const block = railBlock(host, 'KEV', kev.added_7d ? `+${kev.added_7d} this week` : '');
+  const note = el('p', 'rail-note');
+  note.textContent = `${(kev.total || 0).toLocaleString()} confirmed exploited`
+    + (kev.ransomware_linked
+      ? ` · ${kev.ransomware_linked.toLocaleString()} ransomware-linked` : '');
+  block.appendChild(note);
+
+  const list = el('ul', 'rail-kev');
+  entries.slice(0, 6).forEach((entry) => {
+    const row = el('li', 'rail-kev-row');
+    const link = el('a', 'rail-kev-cve', entry.cve);
+    link.href = safeUrl('https://nvd.nist.gov/vuln/detail/'
+      + encodeURIComponent(entry.cve || ''));
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    row.appendChild(link);
+    if (entry.ransomware) row.appendChild(el('span', 'rail-kev-flag', 'ransomware'));
+    // Vendor and product are CISA's strings, rendered as text.
+    const what = [entry.vendor, entry.product].filter(Boolean).join(' ');
+    row.appendChild(el('span', 'rail-kev-what', what || '—'));
+    row.appendChild(el('span', 'rail-kev-date', entry.added || ''));
+    list.appendChild(row);
+  });
+  block.appendChild(list);
+
+  const more = el('a', 'rail-more', 'All KEV entries →');
+  more.href = '#';
+  more.dataset.railView = 'kev';
+  block.appendChild(more);
+}
+
 /* ── Extortion ticker ─────────────────────────────────────────────────────
  * The one moving thing on the page, and it is deliberately slow.
  *
@@ -287,33 +333,89 @@ function railTickerItem(entry) {
 
 /* ── Entry point ──────────────────────────────────────────────────────── */
 
+/*
+ * Both gutters, above 1600px.
+ *
+ * A single left rail still left the right side bare on a wide screen, and an
+ * unbalanced page reads as an unfinished one. Rather than pad it out, the
+ * blocks are SPLIT by the question they answer, because that is a real
+ * distinction and not a way to fill space:
+ *
+ *   left   is the machine healthy   ingest · sources · corpus
+ *   right  what is happening        KEV · claimed
+ *
+ * Below 1600px there is only room for one column, so everything collapses
+ * back into the left rail rather than anything being dropped. Below 1280px
+ * neither rail appears and the feed gets the screen, exactly as before.
+ */
+/*
+ * Both gutters, and the decision is CSS's alone.
+ *
+ * The blocks are SPLIT by the question they answer, which is a real
+ * distinction rather than a way to fill space:
+ *
+ *   left   is the machine healthy   ingest · sources · corpus
+ *   right  what is happening        KEV · claimed
+ *
+ * Below 1600px there is no room for a third column, so the right rail is
+ * re-placed by CSS into the bottom of the left column — same DOM, same
+ * content, different grid cell. Below 1280px neither appears.
+ *
+ * WHY NO JAVASCRIPT DECIDES THIS
+ * ------------------------------
+ * The first version branched in JS on a matchMedia query and re-rendered
+ * from a `resize` listener. It left the rail in a split-brain state: the
+ * query reported false at 1450px while the DOM still carried the wide
+ * layout class and the world blocks sat in a column CSS had un-gridded.
+ * Instrumenting it showed why — under viewport emulation NEITHER `resize`
+ * nor matchMedia `change` fired at all, so the re-render never ran.
+ *
+ * Real browsers do fire both, so that code would probably have worked in
+ * production. "Probably, and untestable here" is the problem: a layout that
+ * depends on an event I cannot observe is one I cannot claim to have
+ * verified. Grid placement needs no event, cannot desynchronise from the
+ * media query that drives it, and is fully checkable at any width.
+ */
+
 function renderRail() {
-  const host = $('pulse-rail');
+  const left = $('pulse-rail');
+  const right = $('pulse-rail-right');
   const dash = document.querySelector('.dashboard');
-  if (!host || !dash) return;
+  if (!left || !dash) return;
 
   // Feed view only. In LIBRARY or HUNT the content fills the width on its
   // own, and a second column there would be the old sidebar's mistake.
   const show = store.view === 'feed' && store.items && store.items.length > 0;
   dash.classList.toggle('has-rail', show);
-  host.style.display = show ? '' : 'none';
+  left.style.display = show ? '' : 'none';
+  if (right) right.style.display = show ? '' : 'none';
+
   if (!show) {
     clearInterval(railTickerTimer);
     railTickerTimer = null;
-    host.replaceChildren();
+    left.replaceChildren();
+    if (right) right.replaceChildren();
     return;
   }
 
   const meta = store.meta || {};
-  host.replaceChildren();
-  railRenderIngest(host, meta, store.items);
-  railRenderSources(host, meta);
-  railRenderCorpus(host, meta);
-  railRenderTicker(host, meta);
+  left.replaceChildren();
+  if (right) right.replaceChildren();
+  const world = right || left;
+
+  railRenderIngest(left, meta, store.items);
+  railRenderSources(left, meta);
+  railRenderCorpus(left, meta);
+  railRenderKev(world, meta);
+  railRenderTicker(world, meta);
 
   // Ledger rows that name a view navigate to it. Delegated, because the rows
-  // are rebuilt on every render and the CSP forbids inline handlers.
-  host.addEventListener('click', railOnClick);
+  // are rebuilt on every render and the CSP forbids inline handlers. Adding
+  // the same named listener repeatedly is a no-op, so this is safe to call on
+  // every render.
+  left.addEventListener('click', railOnClick);
+  if (right) right.addEventListener('click', railOnClick);
+
 }
 
 function railOnClick(event) {
