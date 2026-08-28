@@ -3948,6 +3948,7 @@ function syncControls() {
   if (feedHeader) feedHeader.style.display = inFeed ? '' : 'none';
 
   renderModeNav();
+  renderRail();
   // The sub-nav appears and disappears with the mode, so the pinned height
   // changes with it.
   syncStickyOffsets();

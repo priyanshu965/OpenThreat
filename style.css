@@ -3772,3 +3772,169 @@ a.ent-detstrat-name:hover { text-decoration: underline; }
 
 .status-dot.is-stale         { background: #d9a441; box-shadow: 0 0 6px #d9a44188; }
 .status-dot.is-very-stale    { background: #d9584a; box-shadow: 0 0 6px #d9584a88; animation: none; }
+
+/* ── Telemetry rail ──────────────────────────────────────────────────────────
+   The sidebar left this space for good reasons — eight always-on cards
+   competing with the content, several duplicating the nav. This is not that
+   coming back: read-only, four blocks, feed view only, and nothing here is
+   repeated anywhere else on the page.
+
+   It appears only where there is genuinely spare width. Below 1280px the feed
+   gets the screen, exactly as before. */
+.pulse-rail { display: none; }
+
+@media (min-width: 1280px) {
+  .dashboard.has-rail {
+    grid-template-columns: 264px minmax(0, 1fr);
+    gap: 32px;
+    max-width: 1720px;
+    margin: 0 auto;
+    padding-right: 24px;
+    align-items: start;
+  }
+  /* The pair is centred as a unit now, so the feed must stop centring
+     itself or the two columns drift apart at wide viewports. */
+  .dashboard.has-rail .feed { max-width: none; margin: 0; }
+
+  .pulse-rail {
+    display: block;
+    position: sticky;
+    /* Clears the header + mode nav, whose heights are measured at runtime. */
+    top: calc(var(--stack-nav, 122px) + 16px);
+    padding: 18px 0 40px 24px;
+    border-right: 1px solid var(--border);
+    font-family: var(--font-mono);
+    max-height: calc(100vh - var(--stack-nav, 122px) - 32px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+}
+
+.rail-block { margin-bottom: 26px; }
+.rail-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 5px;
+}
+.rail-title {
+  margin: 0; font-size: 0.64rem; font-weight: 500;
+  letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.rail-meta { font-size: 0.62rem; color: var(--text-muted); letter-spacing: 0.08em; }
+.rail-note {
+  margin: 8px 0 0; font-size: 0.66rem; line-height: 1.5; color: var(--text-muted);
+}
+
+/* Ingest histogram. Bars, not a line: hourly counts are discrete events and
+   a smoothed curve would imply a continuity the data does not have. */
+.rail-spark {
+  display: flex; align-items: flex-end; gap: 2px;
+  height: 38px; width: 100%;
+}
+.rail-spark-bar {
+  flex: 1 1 0; min-width: 0;
+  background: var(--ui-active);
+  opacity: 0.75;
+  border-radius: 1px 1px 0 0;
+}
+.rail-spark-bar.is-zero { background: var(--border-strong); opacity: 1; }
+.rail-spark-bar:hover { opacity: 1; }
+
+/* The signature. 43 cells, one per configured feed. */
+.rail-matrix {
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  gap: 3px;
+}
+.rail-cell {
+  aspect-ratio: 1;
+  border-radius: 1px;
+  background: var(--border-strong);
+  transition: transform 90ms ease;
+}
+.rail-cell:hover { transform: scale(1.45); }
+.rail-cell.is-live  { background: var(--ui-active); }
+.rail-cell.is-stale { background: #d9a441; }
+.rail-cell.is-empty { background: var(--border-strong); }
+.rail-cell.is-error { background: #d9584a; }
+
+.rail-legend {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  margin: 9px 0 0; font-size: 0.62rem; color: var(--text-muted);
+}
+.rail-legend-item { display: flex; align-items: center; gap: 4px; }
+.rail-dot { width: 7px; height: 7px; border-radius: 1px; display: inline-block; }
+.rail-dot.is-live { background: var(--ui-active); }
+.rail-dot.is-stale { background: #d9a441; }
+.rail-dot.is-empty { background: var(--border-strong); }
+.rail-dot.is-error { background: #d9584a; }
+
+/* Ledger rows: label, leader, right-aligned figure. A station log, not a
+   stat card — these are records, and they should read like records. */
+.rail-row {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 3px 0;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+a.rail-row { cursor: pointer; }
+a.rail-row:hover .rail-row-label,
+a.rail-row:hover .rail-row-value { color: var(--ui-link); }
+a.rail-row:focus-visible { outline: 2px solid var(--ui-link); outline-offset: 2px; }
+.rail-row-label { flex: 0 0 auto; }
+.rail-leader {
+  flex: 1 1 auto; min-width: 8px;
+  border-bottom: 1px dotted var(--border-strong);
+  transform: translateY(-3px);
+}
+.rail-row-value {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* Ticker. One row at a time, four seconds apart, paused on hover or focus.
+   Slow on purpose: it sits beside a triage list and must not compete with it. */
+.rail-ticker { list-style: none; margin: 10px 0 0; padding: 0; min-height: 44px; }
+.rail-ticker.is-static { min-height: 0; }
+.rail-ticker-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: "kind lead" ".    trail";
+  gap: 2px 7px;
+  padding: 3px 0;
+  animation: rail-fade 320ms ease both;
+}
+.rail-ticker.is-static .rail-ticker-row { animation: none; }
+.rail-kind {
+  grid-area: kind;
+  align-self: center;
+  font-size: 0.55rem; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 2px;
+  border: 1px solid currentColor;
+}
+.rail-kind.is-extortion { color: #d9584a; }
+.rail-kind.is-breach { color: #d9a441; }
+.rail-ticker-lead {
+  grid-area: lead;
+  font-size: 0.72rem; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rail-ticker-trail {
+  grid-area: trail;
+  font-size: 0.64rem; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes rail-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-ticker-row { animation: none; }
+  .rail-cell { transition: none; }
+}

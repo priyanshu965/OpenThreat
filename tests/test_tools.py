@@ -338,3 +338,87 @@ class TestExternalTriggerIsDocumented(unittest.TestCase):
     def test_concurrent_triggers_queue_rather_than_race(self):
         block = self.wf.split("concurrency:", 1)[1][:200]
         self.assertIn("cancel-in-progress: false", block)
+
+
+class TestTelemetryRail(unittest.TestCase):
+    """
+    The rail exists because the feed understated what the tool holds by about
+    four orders of magnitude: nine cards on screen, while the same payload
+    carried 8,889 entities, 2,876 rules and the status of 43 feeds.
+
+    The constraints pinned here are the ones that keep it from becoming the
+    sidebar that was correctly removed from this exact space.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = (PROJECT_ROOT / "js" / "rail.js").read_text(encoding="utf-8")
+        cls.app = (PROJECT_ROOT / "app.js").read_text(encoding="utf-8")
+        cls.html = (PROJECT_ROOT / "index.html").read_text(encoding="utf-8")
+        cls.css = (PROJECT_ROOT / "style.css").read_text(encoding="utf-8")
+
+    def test_costs_no_extra_request(self):
+        """Every figure comes from store.meta, which arrived with the feed. A
+        permanent rail is only affordable because of this."""
+        self.assertNotIn("fetch(", self.js)
+
+    def test_feed_view_only(self):
+        """In LIBRARY or HUNT the content fills the width on its own, and a
+        second column there is the old sidebar's mistake."""
+        body = self.js.split("function renderRail", 1)[1]
+        self.assertIn("store.view === 'feed'", body)
+
+    def test_carries_no_controls(self):
+        """Read-only. Every filter stays in the summoned panel."""
+        for control in ("<input", "type = 'checkbox'", "'range'", "addEventListener('change'"):
+            self.assertNotIn(control, self.js)
+
+    def test_hidden_below_1280(self):
+        block = self.css.split("Telemetry rail", 1)[1]
+        self.assertIn("min-width: 1280px", block)
+        self.assertIn(".pulse-rail { display: none; }", block)
+
+    def test_no_html_sink(self):
+        self.assertNotRegex(self.js, r"\.(innerHTML|outerHTML)\s*=")
+        self.assertNotIn("insertAdjacentHTML", self.js)
+
+    def test_third_party_names_go_through_text_content(self):
+        """A leak-site group name is attacker-supplied; a breach name comes
+        from a third party."""
+        body = self.js.split("function railTickerItem", 1)[1].split("\n}", 1)[0]
+        self.assertNotIn("innerHTML", body)
+        self.assertIn("el('span'", body)
+
+    def test_ticker_stops_when_the_rail_leaves(self):
+        """A timer that outlives the element it draws is a leak that only
+        shows up later as a mystery."""
+        self.assertIn("document.body.contains(stage)", self.js)
+        body = self.js.split("function renderRail", 1)[1]
+        self.assertIn("clearInterval(railTickerTimer)", body)
+
+    def test_reduced_motion_renders_a_static_list(self):
+        """Motion is the enhancement, not the mechanism — nothing may be
+        unreachable without it."""
+        self.assertIn("prefers-reduced-motion: reduce", self.js)
+        self.assertIn("is-static", self.js)
+
+    def test_the_timer_is_cleared_before_either_branch(self):
+        """The static branch returns early; clearing inside the rotating
+        branch would make cleanup a property of the environment."""
+        block = self.js.split("function railRenderTicker", 1)[1]
+        clear_at = block.find("clearInterval(railTickerTimer)")
+        branch_at = block.find("if (reduced)")
+        self.assertGreater(clear_at, 0)
+        self.assertLess(clear_at, branch_at)
+
+    def test_claims_are_labelled_as_claims(self):
+        """A leak-site listing is the group's assertion, not a confirmed
+        breach, and the page has to say so where it shows them."""
+        self.assertIn("not a confirmed breach", self.js)
+
+    def test_wired_into_the_render_loop_and_precached(self):
+        self.assertIn("renderRail();", self.app)
+        self.assertIn('id="pulse-rail"', self.html)
+        self.assertIn("js/rail.js", self.html)
+        sw = (PROJECT_ROOT / "service-worker.js").read_text(encoding="utf-8")
+        self.assertIn("./js/rail.js", sw)
