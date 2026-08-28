@@ -10,7 +10,7 @@
 // Bump on every release. The activate handler deletes every cache whose name
 // is not this one, which is what stops old versioned entries accumulating now
 // that staleWhileRevalidate keys on the full URL including ?v=.
-const CACHE = "openthreat-v7";
+const CACHE = "openthreat-v8";
 const PRECACHE = [
   "./",
   "./index.html",
@@ -99,6 +99,12 @@ async function networkFirst(req) {
   } catch {
     const fallback = await cache.match(new Request(new URL(req.url).pathname));
     if (fallback) return fallback;
+    // Last resort: nothing cached and no network. This is a 200 so that the
+    // page keeps working offline rather than throwing, but `offline: true` is
+    // load-bearing — app.js MUST treat it as a failed load. Without that check
+    // an unreachable network renders as a successful load of an empty feed:
+    // "TOTAL 0", no error, which reads as a quiet day rather than a broken
+    // one. Do not remove the flag, and do not add a consumer that ignores it.
     return new Response(JSON.stringify({ items: [], offline: true }), {
       status: 200,
       headers: { "Content-Type": "application/json" },

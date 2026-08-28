@@ -368,7 +368,18 @@ async function loadIntelData() {
     const resp = await fetch(DATA_URL, { cache: 'no-cache' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     store.stamp = resp.headers.get('etag') || resp.headers.get('last-modified');
-    ingest(await resp.json());
+    const data = await resp.json();
+    // When the network is unreachable and nothing is cached, the service
+    // worker answers with a SYNTHETIC 200 carrying {items: [], offline: true}
+    // rather than letting the fetch reject. Without this check the dashboard
+    // renders that as a perfectly successful load of an empty feed: no error,
+    // no banner, just "TOTAL 0" and "No results match your filters" — which
+    // reads as "quiet day" and is the single most misleading thing this page
+    // can show. It is a failure, so it has to surface as one.
+    if (data && data.offline) {
+      throw new Error('Could not reach the network, and no cached feed was available.');
+    }
+    ingest(data);
     await loadHealthSummary();
     applyFilters();
     showContent();
@@ -3713,6 +3724,10 @@ async function showLazyView(nodeId, apiKey, builder, emptyMessage) {
     try {
       const resp = await fetch(API[apiKey], { cache: 'no-cache' });
       data = resp.ok ? await resp.json() : null;
+      // Same synthetic offline response as in loadIntelData(). Treated as no
+      // data, so the view says so instead of rendering an empty chart that
+      // looks like a real measurement of nothing.
+      if (data && data.offline) data = null;
     } catch (_) { data = null; }
     store.research[apiKey] = data;
   }

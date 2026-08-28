@@ -19,6 +19,7 @@ Each of those is pinned here.
 """
 
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -872,9 +873,49 @@ class TestStickyChrome(unittest.TestCase):
         root = Path(__file__).resolve().parent.parent
         html = (root / "index.html").read_text(encoding="utf-8")
         sw = (root / "service-worker.js").read_text(encoding="utf-8")
-        self.assertNotIn("?v=5.0.0", html)
-        self.assertIn("?v=5.0.1", html)
-        self.assertIn('CACHE = "openthreat-v7"', sw)
+        self.assertNotIn("?v=5.0.1", html)
+        self.assertIn("?v=5.0.2", html)
+        self.assertIn('CACHE = "openthreat-v8"', sw)
+
+    def test_every_asset_carries_the_same_version(self):
+        """A half-bumped set ships the new app.js against the old style.css."""
+        root = Path(__file__).resolve().parent.parent
+        html = (root / "index.html").read_text(encoding="utf-8")
+        versions = set(re.findall(r"\?v=([0-9.]+)", html))
+        self.assertEqual(len(versions), 1, f"mixed asset versions: {versions}")
+
+
+class TestOfflinePlaceholderIsNotMistakenForData(unittest.TestCase):
+    """
+    The service worker answers an unreachable network with a synthetic 200
+    carrying {items: [], offline: true}. That is deliberate — it keeps the page
+    working offline instead of throwing — but it means `resp.ok` is true and
+    the JSON parses, so a consumer that does not check the flag renders a
+    total failure as a successful load of an empty feed: "TOTAL 0", no error
+    banner, "No results match your filters". That reads as a quiet day rather
+    than a broken one, which is the most misleading state this page has.
+
+    This was live on openthreat.in: the app shell came from the precache, the
+    data fetch failed, and the dashboard showed zero items and no error.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parent.parent
+        cls.app = (root / "app.js").read_text(encoding="utf-8")
+        cls.sw = (root / "service-worker.js").read_text(encoding="utf-8")
+
+    def test_worker_still_emits_the_flag(self):
+        self.assertIn('offline: true', self.sw)
+
+    def test_feed_loader_rejects_the_placeholder(self):
+        block = self.app.split("async function loadIntelData", 1)[1][:1600]
+        self.assertIn("data.offline", block)
+        self.assertIn("throw new Error", block)
+
+    def test_lazy_views_reject_the_placeholder(self):
+        block = self.app.split("async function showLazyView", 1)[1][:1200]
+        self.assertIn("data.offline", block)
 
 
 if __name__ == "__main__":
