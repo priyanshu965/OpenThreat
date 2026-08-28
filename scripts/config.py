@@ -311,7 +311,7 @@ class Config:
     webhook_url   = os.environ.get("WEBHOOK_URL", "")
     webhook_type  = _str("WEBHOOK_TYPE", "slack")
     telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    dashboard_url = _str("DASHBOARD_URL", "https://priyanshu965.github.io/OpenThreat/")
+    dashboard_url = _str("DASHBOARD_URL", "https://openthreat.in/")
     # Which items justify a push. Comma-separated severities, plus KEV always alerts.
     alert_severities     = _str("ALERT_SEVERITIES", "critical").lower()
     alert_max_items      = _int("ALERT_MAX_ITEMS", 10)

@@ -10,7 +10,7 @@ Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 43 co
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 
-**[Live dashboard](https://priyanshu965.github.io/OpenThreat/)**
+**[Live dashboard](https://openthreat.in/)**
 
 </div>
 

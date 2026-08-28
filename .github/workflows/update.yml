@@ -107,7 +107,7 @@ jobs:
             echo "State present from cache or repo seed - nothing to restore."
             exit 0
           fi
-          URL="${DASHBOARD_URL:-https://priyanshu965.github.io/OpenThreat/}"
+          URL="${DASHBOARD_URL:-https://openthreat.in/}"
           echo "Cache missed; pulling state from ${URL}data/state.tar.gz"
           if curl -fsSL --max-time 120 -o /tmp/state.tar.gz "${URL}data/state.tar.gz"; then
             mkdir -p data && tar -xzf /tmp/state.tar.gz -C data
@@ -185,6 +185,13 @@ jobs:
           set -euo pipefail
           mkdir -p _site
           cp index.html app.js style.css service-worker.js manifest.json robots.txt _site/
+          # CNAME is what tells GitHub Pages the custom domain. It must be in
+          # the PUBLISHED artifact, not just the repo — this job builds _site/
+          # from an explicit file list, so without this line the deployment
+          # would contain no CNAME and GitHub would clear the custom domain
+          # setting on every hourly run. The site would silently fall back to
+          # priyanshu965.github.io/OpenThreat/ an hour after it was set.
+          cp CNAME _site/
           # The v4 frontend is app.js PLUS three sibling modules. Forgetting
           # this line ships a page whose every view button throws a
           # ReferenceError, and nothing in the pipeline would notice.
@@ -253,8 +260,12 @@ jobs:
           # Fail loudly rather than deploying a broken page. A missing js/
           # module is invisible until a visitor clicks a view; a missing
           # intel.json is invisible until the feed fails to load.
+          # CNAME is in this list deliberately. Losing it does not break the
+          # page — it silently un-sets the custom domain, so the site keeps
+          # working at the github.io URL and openthreat.in starts 404ing an
+          # hour later. That is exactly the kind of failure nobody notices.
           for required in \
-              index.html app.js style.css \
+              index.html app.js style.css CNAME \
               js/query.js js/research.js js/timetravel.js \
               js/library.js js/hunt.js js/leaks.js \
               data/intel.json; do
