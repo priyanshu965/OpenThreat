@@ -576,6 +576,99 @@ class TestTelegramWatch(unittest.TestCase):
         self.assertTrue(posts[0]["unverified"])
 
 
+class TestTelegramScrubber(unittest.TestCase):
+    """
+    These channels sometimes paste a sample OF a breach, not just a report
+    about one. Republishing that would make this project a distribution point
+    for other people's credentials -- the same objection that keeps ransomware
+    extortion notes off the leak-site page, and a sharper one, because these
+    are individuals rather than companies.
+
+    Both directions are pinned, because both failures happened:
+      * too permissive -- a live GitHub token survived, because it is exactly
+        as long as a SHA-1 and the check was on length alone;
+      * too aggressive -- `_COMBO_RE` matches `word:word`, which is the shape
+        of every URL, so ordinary research posts were being deleted as
+        "credential dumps" and links inside surviving posts were rewritten to
+        "[redacted:credential]". Measured on the ten configured channels that
+        was 4 posts dropped and 59% of the rest damaged.
+    """
+
+    def test_a_combolist_is_dropped_entirely(self):
+        text = ("FRESH COMBOLIST 10k\nbob@x.com:hunter2\n"
+                "sue@y.com:letmein1\njan@z.com:qwerty99")
+        self.assertTrue(telegram_watch._looks_like_a_dump(text))
+
+    def test_card_numbers_are_a_dump(self):
+        self.assertTrue(telegram_watch._looks_like_a_dump(
+            "new drop 4111 1111 1111 1111 exp 12/29"))
+
+    def test_a_post_full_of_links_is_not_a_dump(self):
+        text = ("New paper at https://vx-underground.org/papers and code at "
+                "https://github.com/x/y, discussion https://t.me/abc")
+        self.assertFalse(telegram_watch._looks_like_a_dump(text))
+
+    def test_reporting_survives_untouched(self):
+        text = "APT29 phishing campaign targets EU government, per new report."
+        self.assertFalse(telegram_watch._looks_like_a_dump(text))
+        self.assertEqual(telegram_watch._redact(text), text)
+
+    def test_urls_survive_redaction(self):
+        text = "Details: https://example.org/a/b?c=d and https://t.me/chan/1"
+        out = telegram_watch._redact(text)
+        self.assertIn("https://example.org/a/b?c=d", out)
+        self.assertNotIn("[redacted", out)
+
+    def test_placeholder_never_leaks_into_output(self):
+        out = telegram_watch._redact("see https://a.test/x and https://b.test/y")
+        self.assertNotIn("\x00", out)
+
+    def test_file_hashes_are_kept(self):
+        """A digest is the most useful indicator a post can carry, and it is
+        not a secret. The first cut redacted all three lengths."""
+        for digest in ("5d41402abc4b2a76b9719d911017c592",
+                       "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d",
+                       "e3b0c44298fc1c149afbf4c8996fb924"
+                       "27ae41e4649b934ca495991b7852b855"):
+            self.assertIn(digest, telegram_watch._redact(f"IOC {digest} seen"))
+
+    def test_tokens_are_redacted_even_at_hash_length(self):
+        token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0"
+        out = telegram_watch._redact(f"leaked {token} in repo")
+        self.assertNotIn("Q7r8S9t0", out)
+        self.assertIn("[redacted:secret]", out)
+
+    def test_addresses_are_redacted(self):
+        out = telegram_watch._redact("mail jane.doe@vendor.com for details")
+        self.assertNotIn("jane.doe@vendor.com", out)
+
+
+class TestTelegramDefaultChannels(unittest.TestCase):
+
+    def test_ten_channels_ship_by_default(self):
+        names = telegram_watch._channels()
+        self.assertEqual(len(names), 10, names)
+
+    def test_canonical_username_not_the_vanity_alias(self):
+        """t.me serves t.me/s/infosecurity fine, but stamps every post with
+        the canonical `it_secur`. telegram_watch rejects posts whose channel
+        does not match the one requested, so the alias yields ZERO posts and
+        reports no error at all."""
+        names = telegram_watch._channels()
+        self.assertIn("it_secur", names)
+        self.assertNotIn("infosecurity", names)
+
+    def test_no_credential_dump_channels_in_the_default_list(self):
+        """The standing rule: their posts ARE victim data. The scrubber is a
+        second line of defence, not a licence to subscribe to these."""
+        banned = ("combo", "cloud", "logs", "fullz", "carding", "cc_",
+                  "mailpass", "stealer", "breachdetector", "leaked")
+        for name in telegram_watch._channels():
+            low = name.lower()
+            for token in banned:
+                self.assertNotIn(token, low, f"{name} looks like a dump channel")
+
+
 # ── Wiring ───────────────────────────────────────────────────────────────────
 
 class TestPipelineWiring(unittest.TestCase):

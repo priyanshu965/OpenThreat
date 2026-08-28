@@ -270,10 +270,49 @@ class Config:
 
     # ── Telegram public-channel previews ───────────────────────────────────
     # t.me/s/<channel> is the ordinary public web preview. No API key, no
-    # login, nothing private. Off by default: it is the one v5 source whose
-    # value depends entirely on which channels YOU choose to watch.
-    enable_telegram         = _bool("ENABLE_TELEGRAM", False)
-    telegram_channels       = _str("TELEGRAM_CHANNELS", "")
+    # login, nothing private.
+    #
+    # THE DEFAULT LIST, AND WHAT IS DELIBERATELY NOT ON IT
+    # ----------------------------------------------------
+    # v5 shipped this off with an empty list, on the grounds that choosing
+    # channels is editorial rather than technical. That was the right caution
+    # and the wrong default: an editorial choice made by nobody is still a
+    # choice, and it was "watch nothing".
+    #
+    # So there is a list, and the criteria are written down. Every entry was
+    # verified to have a live public preview with real posts before it was
+    # added. Nine report on threats; one is an adversary channel, because
+    # hacktivist crews announce on Telegram before anything reaches a leak
+    # site and that lead time is the entire point of this source.
+    #
+    # NOT included, as a standing rule: credential-dump, stealer-log and
+    # carding channels. They are the most-recommended channels in every "top
+    # dark web Telegram" listicle, and they are exactly the ones this project
+    # must not ingest — their posts ARE victim data. Pulling them into a
+    # public static site would republish other people's credentials and
+    # personal information, at scale, with no way to take it back. The
+    # scrubber in telegram_watch.py is a second line of defence for material
+    # that slips through a channel that is normally fine, not a licence to
+    # subscribe to channels whose whole purpose is dumping.
+    enable_telegram         = _bool("ENABLE_TELEGRAM", True)
+    telegram_channels       = _str("TELEGRAM_CHANNELS", ",".join([
+        # `it_secur`, not the `infosecurity` vanity alias: t.me serves the
+        # preview under either, but every post is stamped with the CANONICAL
+        # username, and telegram_watch rejects posts whose channel does not
+        # match the one it asked for (that check is what stops a forwarded or
+        # crafted post being attributed here). Configured by the alias, the
+        # channel fetches fine and yields zero posts, silently.
+        "it_secur",                # infosec - 61K, general security news
+        "Cyber_Security_Channel",  # Cyber Security News - 56K
+        "vxunderground",           # vx-underground - 52K, malware research
+        "CTINOW",                  # Cyber Threat Intelligence - 38K, CTI feed
+        "Hacker_News_Feed",        # Hacker News - 29K
+        "cvenotify",               # CVE Notify - 20K, vulnerability alerts
+        "cyber_anarchy_squad",     # hacktivist claims - 13K, ADVERSARY channel
+        "BleepingComputer",        # BleepingComputer - 12K, vendor newsroom
+        "secharvester",            # Security Harvester - 9.6K, aggregator
+        "CVEfeed",                 # CVE & Vulnerability RSS Feed
+    ]))
     telegram_ttl_hours      = _int("TELEGRAM_TTL_HOURS", 4)
     telegram_max_posts      = _int("TELEGRAM_MAX_POSTS", 40)
 
