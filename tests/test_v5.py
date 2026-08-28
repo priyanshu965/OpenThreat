@@ -979,9 +979,9 @@ class TestStickyChrome(unittest.TestCase):
         root = Path(__file__).resolve().parent.parent
         html = (root / "index.html").read_text(encoding="utf-8")
         sw = (root / "service-worker.js").read_text(encoding="utf-8")
-        self.assertNotIn("?v=5.0.2", html)
-        self.assertIn("?v=5.0.3", html)
-        self.assertIn('CACHE = "openthreat-v9"', sw)
+        self.assertNotIn("?v=5.0.3", html)
+        self.assertIn("?v=5.0.4", html)
+        self.assertIn('CACHE = "openthreat-v10"', sw)
 
     def test_every_asset_carries_the_same_version(self):
         """A half-bumped set ships the new app.js against the old style.css."""

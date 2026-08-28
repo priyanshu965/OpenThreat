@@ -44,7 +44,30 @@ on:
     # this repo should claim otherwise; the dashboard shows the real age of
     # the data instead.
     - cron: '17,47 * * * *'
-  workflow_dispatch:          # Manual trigger from Actions tab
+
+  # Also driven from OUTSIDE GitHub, which is the only way to get a cadence
+  # that does not depend on GitHub's shared scheduler at all. An external
+  # cron service calls:
+  #
+  #   POST https://api.github.com/repos/priyanshu965/OpenThreat/actions/
+  #        workflows/update.yml/dispatches
+  #   Authorization: Bearer <fine-grained PAT>
+  #   Accept: application/vnd.github+json
+  #   Body:   {"ref":"main"}
+  #
+  # workflow_dispatch is used rather than repository_dispatch ON PURPOSE, and
+  # the reason is the token. A fine-grained PAT for workflow_dispatch needs
+  # only `Actions: Read and write`; repository_dispatch needs
+  # `Contents: Read and write`, which is permission to PUSH CODE. That token
+  # has to be stored at a third-party cron provider, so the one that cannot
+  # rewrite this repository is the correct choice.
+  #
+  # Extra triggers are safe: the `pages-deploy` concurrency group below has
+  # cancel-in-progress: false, so overlapping runs queue rather than race, and
+  # every expensive corpus is TTL-cached so a redundant run mostly
+  # re-publishes.
+  workflow_dispatch:          # Manual trigger from the Actions tab, and the
+                              # entry point for the external scheduler above.
 
 jobs:
   fetch-and-update:

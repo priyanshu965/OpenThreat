@@ -3761,3 +3761,14 @@ a.ent-detstrat-name:hover { text-decoration: underline; }
 }
 .ioc-link:hover { border-color: var(--ui-link); background: var(--bg-card-hover); }
 .ioc-link .cat-flag { margin-left: auto; }
+
+/* ── Feed staleness ──────────────────────────────────────────────────────────
+   The age was already on screen and read identically at 20 minutes and at
+   11 hours, which is how a stalled pipeline passed for a quiet day. Colour
+   is the secondary cue; app.js also appends the words, because colour alone
+   is not available to every reader. */
+#last-updated.is-stale       { color: #d9a441; }
+#last-updated.is-very-stale  { color: #d9584a; font-weight: 600; }
+
+.status-dot.is-stale         { background: #d9a441; box-shadow: 0 0 6px #d9a44188; }
+.status-dot.is-very-stale    { background: #d9584a; box-shadow: 0 0 6px #d9584a88; animation: none; }

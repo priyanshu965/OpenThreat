@@ -265,3 +265,76 @@ class TestServiceWorkerPrecache(unittest.TestCase):
     def test_the_check_is_not_vacuous(self):
         self.assertGreaterEqual(
             len(re.findall(r'src="js/[a-z]+\.js\?', self.html)), 8)
+
+
+class TestFeedStalenessIsVisible(unittest.TestCase):
+    """
+    A stalled pipeline must not read as a quiet day.
+
+    The feed age was already on screen and rendered identically at 20 minutes
+    and at 11 hours, which is exactly how the scheduler failure went
+    unnoticed: GitHub drops `schedule` events under load, the cadence decayed
+    to one run in 11 hours, and the dashboard reported it in the same neutral
+    voice it uses for fresh data.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (PROJECT_ROOT / "app.js").read_text(encoding="utf-8")
+        cls.css = (PROJECT_ROOT / "style.css").read_text(encoding="utf-8")
+
+    def test_staleness_is_computed_and_applied(self):
+        self.assertIn("function markFeedStaleness", self.app)
+        self.assertIn("FEED_STALE_HOURS", self.app)
+        self.assertIn("FEED_VERY_STALE_HOURS", self.app)
+
+    def test_it_is_called_when_the_header_is_painted(self):
+        block = self.app.split("const updated = $('last-updated')", 1)[1][:600]
+        self.assertIn("markFeedStaleness", block)
+
+    def test_thresholds_allow_for_an_unreliable_scheduler(self):
+        """The cron attempts twice an hour, so the warning must not fire on
+        one unlucky dropped event."""
+        body = self.app.split("const FEED_STALE_HOURS =", 1)[1][:60]
+        self.assertGreaterEqual(int(body.split(";")[0].strip()), 2)
+
+    def test_the_state_is_named_not_only_coloured(self):
+        """Colour is not available to every reader, and 'stalled' is a
+        different statement from 'quiet'."""
+        self.assertIn("PIPELINE STALLED", self.app)
+        self.assertIn("UPDATE OVERDUE", self.app)
+
+    def test_styles_exist_for_both_levels(self):
+        for cls in ("is-stale", "is-very-stale"):
+            self.assertIn(f"#last-updated.{cls}", self.css)
+
+
+class TestExternalTriggerIsDocumented(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        path = PROJECT_ROOT / ".github" / "workflows" / "update.yml"
+        cls.wf = path.read_text(encoding="utf-8")
+        data = yaml.safe_load(cls.wf)
+        # PyYAML reads the bare key `on` as the boolean True.
+        cls.triggers = data.get("on") or data.get(True) or {}
+
+    def test_workflow_dispatch_is_available_to_an_external_caller(self):
+        self.assertIn("workflow_dispatch", self.triggers)
+
+    def test_repository_dispatch_is_not_used(self):
+        """It needs Contents: write on the PAT -- permission to push code --
+        and that token lives at a third-party cron provider. workflow_dispatch
+        needs only Actions: write.
+
+        Asserted against the PARSED triggers, not the file text: the comment
+        above the trigger explains why repository_dispatch was rejected, and
+        the first version of this test matched that explanation and failed on
+        its own documentation.
+        """
+        self.assertNotIn("repository_dispatch", self.triggers)
+
+    def test_concurrent_triggers_queue_rather_than_race(self):
+        block = self.wf.split("concurrency:", 1)[1][:200]
+        self.assertIn("cancel-in-progress: false", block)

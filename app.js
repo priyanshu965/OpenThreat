@@ -1400,6 +1400,49 @@ function updateHeaderStats() {
     updated.textContent = `Updated ${timeAgo(date)} · ${meta.sources_ok || 0} sources live`
       + (meta.sources_stale ? ` · ${meta.sources_stale} stale` : '');
     updated.title = date.toUTCString();
+    markFeedStaleness(date);
+  }
+}
+
+/**
+ * Say so when the pipeline has stopped publishing.
+ *
+ * The age was already on screen and it was a small grey timestamp that read
+ * the same at 20 minutes and at 11 hours. That is precisely how the scheduler
+ * failure went unnoticed: GitHub's `schedule` event is best-effort and drops
+ * runs under load, the cadence decayed from hourly to one run in 11 hours,
+ * and the dashboard reported it in the same neutral voice it uses for fresh
+ * data. A feed that has quietly stopped moving looks exactly like a quiet
+ * day, which is the failure mode this project exists to refuse.
+ *
+ * The thresholds allow for the scheduler being unreliable: the cron attempts
+ * twice an hour, so three hours is several missed attempts rather than one
+ * unlucky one, and twelve hours means it is not coming back on its own.
+ */
+const FEED_STALE_HOURS = 3;
+const FEED_VERY_STALE_HOURS = 12;
+
+function markFeedStaleness(date) {
+  const node = $('last-updated');
+  const dot = document.querySelector('.status-dot');
+  if (!node) return;
+  const hours = (Date.now() - date.getTime()) / 3600000;
+  const level = hours >= FEED_VERY_STALE_HOURS ? 'very-stale'
+    : hours >= FEED_STALE_HOURS ? 'stale' : '';
+  node.classList.toggle('is-stale', level === 'stale');
+  node.classList.toggle('is-very-stale', level === 'very-stale');
+  if (dot) {
+    dot.classList.toggle('is-stale', level === 'stale');
+    dot.classList.toggle('is-very-stale', level === 'very-stale');
+  }
+  if (level) {
+    // Named plainly rather than implied by colour alone: colour is not
+    // available to everyone, and "the pipeline has not run" is a different
+    // statement from "nothing happened".
+    node.textContent += level === 'very-stale'
+      ? ' · PIPELINE STALLED' : ' · UPDATE OVERDUE';
+    node.title = `${node.title} — the publishing pipeline has not run for `
+      + `${Math.floor(hours)} hours. This is a delivery problem, not a quiet day.`;
   }
 }
 
