@@ -1,4 +1,4 @@
-"""Integration smoke tests for the CyberWatch pipeline.
+"""Integration smoke tests for the OpenThreat pipeline.
 
 Two layers:
   1. Offline schema validation of the committed data/intel.json — always runs.
@@ -201,7 +201,7 @@ class TestLiveSources(unittest.TestCase):
     def _get(self, url, **kw):
         import requests
         return requests.get(url, timeout=self.TIMEOUT,
-                            headers={"User-Agent": "CyberWatch-CI/1.0 (+github actions health check)"}, **kw)
+                            headers={"User-Agent": "OpenThreat-CI/1.0 (+github actions health check)"}, **kw)
 
     def test_epss_api(self):
         r = self._get("https://api.first.org/data/v1/epss?cve=CVE-2021-44228")

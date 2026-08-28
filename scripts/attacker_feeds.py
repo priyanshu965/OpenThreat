@@ -1,5 +1,5 @@
 """
-CYBERWATCH — attacker_feeds.py
+OPENTHREAT — attacker_feeds.py
 ==============================
 Ingest free attacker-infrastructure feeds and aggregate them, server-side, into
 a small country/category summary for the live attacker map.

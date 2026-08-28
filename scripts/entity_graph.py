@@ -1,5 +1,5 @@
 """
-CYBERWATCH — entity_graph.py
+OPENTHREAT — entity_graph.py
 =============================
 Turns the feed from a list of rows into connected intelligence.
 

@@ -1,5 +1,5 @@
 /**
- * CYBERWATCH — js/hunt.js
+ * OPENTHREAT — js/hunt.js
  * =======================
  * THE HUNT BENCH: what I should do.
  *
@@ -41,9 +41,9 @@ const huntState = {
   tab: 'queue',
   packQuery: '',
   openPack: null,
-  backend: readLS('cw.hunt.backend', 'splunk'),
-  inventory: readLS('cw.hunt.inventory', ''),
-  done: readLS('cw.hunt.done', []),
+  backend: readLS('ot.hunt.backend', 'splunk'),
+  inventory: readLS('ot.hunt.inventory', ''),
+  done: readLS('ot.hunt.done', []),
 };
 
 // ─── Hunt queue ───────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ function huntToggleDone(tid) {
   const idx = huntState.done.indexOf(tid);
   if (idx >= 0) huntState.done.splice(idx, 1);
   else huntState.done.push(tid);
-  writeLS('cw.hunt.done', huntState.done);
+  writeLS('ot.hunt.done', huntState.done);
 }
 
 function renderHuntQueue(host, data) {
@@ -94,7 +94,7 @@ function renderHuntQueue(host, data) {
     reset.type = 'button';
     reset.addEventListener('click', () => {
       huntState.done = [];
-      writeLS('cw.hunt.done', []);
+      writeLS('ot.hunt.done', []);
       renderHuntQueue(host, data);
     });
     finished.appendChild(reset);
@@ -349,7 +349,7 @@ function huntPackDetail(pack, data) {
         btn.type = 'button';
         btn.addEventListener('click', () => {
           huntState.backend = b.key;
-          writeLS('cw.hunt.backend', b.key);
+          writeLS('ot.hunt.backend', b.key);
           // Re-render into the pack HOST, not into #hunt-view: the latter also
           // carries the tab strip, which would be wiped.
           const host = sec.closest('.rv-body') || sec.parentElement;
@@ -447,7 +447,7 @@ function renderHuntCoverage(host, packs) {
   save.type = 'button';
   save.addEventListener('click', () => {
     huntState.inventory = area.value;
-    writeLS('cw.hunt.inventory', huntState.inventory);
+    writeLS('ot.hunt.inventory', huntState.inventory);
     renderHuntCoverage(host, packs);
   });
   actions.appendChild(save);
@@ -456,7 +456,7 @@ function renderHuntCoverage(host, packs) {
   clear.type = 'button';
   clear.addEventListener('click', () => {
     huntState.inventory = '';
-    writeLS('cw.hunt.inventory', '');
+    writeLS('ot.hunt.inventory', '');
     renderHuntCoverage(host, packs);
   });
   actions.appendChild(clear);
@@ -563,10 +563,10 @@ function renderHuntCoverage(host, packs) {
  */
 function huntExportLayer(rows) {
   const layer = {
-    name: 'CyberWatch coverage',
+    name: 'OpenThreat coverage',
     versions: { attack: '16', navigator: '5.1.0', layer: '4.5' },
     domain: 'enterprise-attack',
-    description: 'Detection coverage vs techniques active in the CyberWatch feed.',
+    description: 'Detection coverage vs techniques active in the OpenThreat feed.',
     techniques: rows.map(({ pack, covered, available }) => ({
       techniqueID: pack.technique,
       score: covered ? 100 : available ? 50 : 0,

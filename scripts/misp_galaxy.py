@@ -1,5 +1,5 @@
 """
-CYBERWATCH — misp_galaxy.py
+OPENTHREAT — misp_galaxy.py
 ============================
 The MISP galaxy clusters: the best free machine-readable threat encyclopedia.
 

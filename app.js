@@ -1,5 +1,5 @@
 /**
- * CYBERWATCH DASHBOARD — app.js
+ * OPENTHREAT DASHBOARD — app.js
  *
  * Architecture notes (this replaced a 1,612-line render-everything-on-load file):
  *
@@ -28,12 +28,12 @@ const POLL_INTERVAL = 600000;
 const PAGE_SIZE     = 40;
 
 const LS = {
-  filter: 'cw_filter', severity: 'cw_severity', sort: 'cw_sort',
-  watchlist: 'cw_watchlist', watchlistOnly: 'cw_watchlistOnly',
-  stack: 'cw_stack', dismissed: 'cw_dismissed', starred: 'cw_starred',
-  density: 'cw_density', lastVisit: 'cw_lastVisit', darkwebWatch: 'cw_darkwebWatch', notes: 'cw_notes',
-  view: 'cw_view', reviewed: 'cw_reviewed', saved: 'cw_saved', theme: 'cw_theme',
-  lastSeen: 'cw_lastSeen',
+  filter: 'ot_filter', severity: 'ot_severity', sort: 'ot_sort',
+  watchlist: 'ot_watchlist', watchlistOnly: 'ot_watchlistOnly',
+  stack: 'ot_stack', dismissed: 'ot_dismissed', starred: 'ot_starred',
+  density: 'ot_density', lastVisit: 'ot_lastVisit', darkwebWatch: 'ot_darkwebWatch', notes: 'ot_notes',
+  view: 'ot_view', reviewed: 'ot_reviewed', saved: 'ot_saved', theme: 'ot_theme',
+  lastSeen: 'ot_lastSeen',
 };
 
 // Endpoints published by the pipeline, fetched on demand. Every one of these is
@@ -192,6 +192,39 @@ function el(tag, className, text) {
 }
 
 function $(id) { return document.getElementById(id); }
+
+// ─── localStorage ─────────────────────────────────────────────────────────────
+// Keys were prefixed `cw_` / `cw.` when the project was called CyberWatch. They
+// are now `ot_` / `ot.`.
+//
+// The rename has to carry the old values across, because these keys are not
+// bookkeeping — they hold analyst notes, starred and dismissed items, saved
+// investigations, the watchlist, the stack and the pasted detection inventory.
+// Renaming the keys without moving the values would have silently wiped all of
+// it the first time anyone loaded the page after the rename, with no error and
+// no way back.
+//
+// Runs once: after the copy, a marker stops it re-reading old keys the user may
+// since have deliberately cleared.
+const LS_MIGRATION_MARKER = 'ot_migrated_from_cw';
+
+function migrateLegacyKeys() {
+  try {
+    if (localStorage.getItem(LS_MIGRATION_MARKER)) return;
+    let moved = 0;
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key || !/^cw[_.]/.test(key)) continue;
+      const next = key.replace(/^cw([_.])/, 'ot$1');
+      if (localStorage.getItem(next) === null) {
+        localStorage.setItem(next, localStorage.getItem(key));
+        moved += 1;
+      }
+    }
+    localStorage.setItem(LS_MIGRATION_MARKER, '1');
+    if (moved) console.info(`OpenThreat: carried ${moved} saved setting(s) over from the old key names.`);
+  } catch (_) { /* private mode, quota, or storage disabled — nothing to do */ }
+}
 
 function readLS(key, fallback) {
   try {
@@ -3004,12 +3037,12 @@ const PROFILE = {
   ],
   projects: [
     {
-      name: 'CyberWatch', tag: 'this dashboard',
+      name: 'OpenThreat', tag: 'this dashboard',
       desc: 'Self-updating threat-intelligence pipeline: 45 sources, SSVC-based prioritisation, ' +
             'an attacker-infrastructure map over ~160k geolocated hosts, sector segregation and ' +
             'geopolitical attribution. Python + vanilla JS, zero infrastructure, runs hourly on ' +
             'GitHub Actions.',
-      link: 'https://github.com/priyanshu965/Cyberwatch',
+      link: 'https://github.com/priyanshu965/OpenThreat',
     },
     {
       name: 'ICS Vulnerability Assessment Tool',
@@ -4354,7 +4387,7 @@ function exportCsv() {
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
   const a = el('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `cyberwatch-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `openthreat-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
   showToast(`Exported ${store.filtered.length} items`);
@@ -5115,6 +5148,8 @@ function showQueryHelp() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Before restoreState(), which is what reads the keys.
+  migrateLegacyKeys();
   restoreState();
   initAvatar();
   initEvents();

@@ -1,5 +1,5 @@
 /**
- * CYBERWATCH — js/query.js
+ * OPENTHREAT — js/query.js
  * ========================
  * A real query layer over the loaded corpus, plus a natural-language front end.
  *

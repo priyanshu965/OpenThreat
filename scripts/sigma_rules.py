@@ -1,5 +1,5 @@
 """
-CYBERWATCH — sigma_rules.py
+OPENTHREAT — sigma_rules.py
 ============================
 Closes the loop from intelligence to detection.
 

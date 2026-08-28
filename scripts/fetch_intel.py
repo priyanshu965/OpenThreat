@@ -1,5 +1,5 @@
 """
-CYBERWATCH DASHBOARD — fetch_intel.py
+OPENTHREAT DASHBOARD — fetch_intel.py
 ======================================
 Fetches threat intelligence from multiple free sources:
   - 14 RSS feeds          → News, advisories, incident reports
@@ -2634,7 +2634,7 @@ def run_source(name: str, fetcher, health: dict) -> list[dict]:
 
 def main():
     log.info("═" * 60)
-    log.info("CYBERWATCH v4.0 — Starting intel pipeline")
+    log.info("OPENTHREAT v4.0 — Starting intel pipeline")
     log.info("═" * 60)
 
     all_items = []
@@ -3428,7 +3428,7 @@ def main():
     _save_feed_meta()
 
     log.info("═" * 60)
-    log.info(f"CYBERWATCH — Complete. {len(all_items)} items from {len(source_counter)} sources.")
+    log.info(f"OPENTHREAT — Complete. {len(all_items)} items from {len(source_counter)} sources.")
     for src, cnt in source_counter.most_common():
         log.info(f"  {src}: {cnt}")
     log.info("═" * 60)

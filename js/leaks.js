@@ -1,5 +1,5 @@
 /**
- * CYBERWATCH — js/leaks.js
+ * OPENTHREAT — js/leaks.js
  * ========================
  * Ransomware leak-site activity, and the Telegram watch.
  *

@@ -1,5 +1,5 @@
 """
-CYBERWATCH — telegram_watch.py
+OPENTHREAT — telegram_watch.py
 ===============================
 Public Telegram channel previews.
 

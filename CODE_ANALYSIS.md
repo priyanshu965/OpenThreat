@@ -1,6 +1,6 @@
-# CyberWatch — Code Analysis
+# OpenThreat — Code Analysis
 
-**Repo:** `Cyberwatch-main` · **Analysed:** 2026-08-20 · ~7,500 LOC (Python 3.11 + vanilla JS)
+**Repo:** `OpenThreat-main` · **Analysed:** 2026-08-20 · ~7,500 LOC (Python 3.11 + vanilla JS)
 
 Every finding below was verified against the code and, where possible, against the committed
 `data/intel.json` and `data/exports/` produced by the live pipeline.
@@ -290,12 +290,12 @@ http-equiv>` is ignored by all browsers; use `frame-ancestors` in the CSP (and r
 const PRECACHE = ["/", "/index.html", "/style.css", "/app.js", "/manifest.json"];
 ```
 
-On `priyanshu965.github.io/Cyberwatch/` these resolve to the **user root**, not the project
+On `priyanshu965.github.io/OpenThreat/` these resolve to the **user root**, not the project
 subpath. `cache.addAll()` rejects on any 404, so `install` fails and the SW never activates —
 i.e. no offline support at all, which is the entire point.
 
 Compounding it, the fetch handler tests `url.pathname.startsWith("/data/")`, which never matches
-`/Cyberwatch/data/intel.json`, so intel would take the `cacheFirst` path if it ever ran.
+`/OpenThreat/data/intel.json`, so intel would take the `cacheFirst` path if it ever ran.
 
 Use relative paths (`"./"`, `"./index.html"`, …) and match on `pathname.includes("/data/")`.
 
@@ -338,7 +338,7 @@ disclosure.
 Add a `.dockerignore` (`.git`, `.github`, `scripts`, `tests`, `data/archive`, `__pycache__`) and
 a `location ~ /\. { deny all; }` block.
 
-Minor: `docker build -t cyberwatch .` with no `--target` builds only the *last* stage
+Minor: `docker build -t openthreat .` with no `--target` builds only the *last* stage
 (`fetcher`), so the README's Docker section can't produce the dashboard image. `docker-compose`
 gets this right with explicit `target:`.
 

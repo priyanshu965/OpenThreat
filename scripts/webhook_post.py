@@ -1,5 +1,5 @@
 """
-CyberWatch Webhook Poster
+OpenThreat Webhook Poster
 ==========================
 Pushes high-priority threat intel to Slack / Discord / Telegram / generic
 webhooks — with retry-on-failure and a persistent dedup memory so the same CVE
@@ -115,7 +115,7 @@ def build_payload(items, webhook_type: str, total: int) -> dict:
     if webhook_type == "slack":
         blocks = [
             {"type": "header", "text": {"type": "plain_text",
-             "text": f"🚨 CyberWatch: {len(items)} new high-priority ({crit} critical)"}},
+             "text": f"🚨 OpenThreat: {len(items)} new high-priority ({crit} critical)"}},
             {"type": "divider"},
         ]
         for item in items:
@@ -128,7 +128,7 @@ def build_payload(items, webhook_type: str, total: int) -> dict:
                         f"<{item.get('url','')}|{(item.get('title') or '')[:200]}>{action}"}})
         # Slack rejects payloads over 50 blocks.
         blocks = blocks[:48]
-        return {"text": f"CyberWatch: {len(items)} new high-priority threats", "blocks": blocks}
+        return {"text": f"OpenThreat: {len(items)} new high-priority threats", "blocks": blocks}
 
     if webhook_type == "discord":
         embeds = []
@@ -148,10 +148,10 @@ def build_payload(items, webhook_type: str, total: int) -> dict:
                 "description": (item.get("description") or "")[:400],
                 "color": color, "fields": fields,
             })
-        return {"content": "🚨 **CyberWatch Intel Update**", "embeds": embeds}
+        return {"content": "🚨 **OpenThreat Intel Update**", "embeds": embeds}
 
     if webhook_type == "telegram":
-        text = "🚨 *CyberWatch Intel Update*\n\n"
+        text = "🚨 *OpenThreat Intel Update*\n\n"
         for item in items:
             kev = " (KEV)" if item.get("cisa_kev") else ""
             act = f" — {item['action']}" if item.get("action") else ""
@@ -169,13 +169,13 @@ def build_payload(items, webhook_type: str, total: int) -> dict:
         return payload
 
     if webhook_type == "email":
-        body_lines = [f"🚨 CyberWatch Intel Update — {len(items)} new alert(s)"]
+        body_lines = [f"🚨 OpenThreat Intel Update — {len(items)} new alert(s)"]
         for item in items:
             kev = " (KEV)" if item.get("cisa_kev") else ""
             body_lines.append(f"\n• {(item.get('severity') or '').upper()}{kev}: {item.get('title','')[:200]}")
             if item.get("url"):
                 body_lines.append(f"  {item['url']}")
-        return {"subject": f"CyberWatch: {len(items)} new threat(s)", "body": "\n".join(body_lines)}
+        return {"subject": f"OpenThreat: {len(items)} new threat(s)", "body": "\n".join(body_lines)}
 
     return {"type": webhook_type, "items": items, "total": total}
 
@@ -213,7 +213,7 @@ def _send_email(config, items: list) -> bool:
     user = os.environ.get("SMTP_USER", "")
     pwd  = os.environ.get("SMTP_PASS", "")
     to   = os.environ.get("SMTP_TO", "")
-    frm  = os.environ.get("SMTP_FROM", user or "cyberwatch@localhost")
+    frm  = os.environ.get("SMTP_FROM", user or "openthreat@localhost")
     if not host or not to:
         print("Email alerts requested but SMTP_HOST / SMTP_TO not set — printing instead.")
         payload = build_payload(items, "email", 0)
@@ -326,7 +326,7 @@ def build_watch_payload(term: str, matches: list, webhook_type: str,
             "title": "[dark web] " + headline,
             "description": body + "\n\n_" + caveat + "_",
             "color": 0xD6454F,
-            "footer": {"text": "CyberWatch dark-web watch"},
+            "footer": {"text": "OpenThreat dark-web watch"},
         }]}
     if webhook_type == "telegram":
         return {"text": "*" + headline + "*\n" + body + "\n\n_" + caveat + "_",
@@ -369,7 +369,7 @@ def send_watch_alerts(output: dict, config) -> int:
             rows = [str(m.get("v")) + " - claimed by " + str(m.get("g")) +
                     " on " + str(m.get("d")) for m in fresh[:10]]
             ok = _send_email_payload(config, {
-                "subject": "[CyberWatch] Dark-web watchlist hit: " + term,
+                "subject": "[OpenThreat] Dark-web watchlist hit: " + term,
                 "body": "\n".join(rows),
             })
         else:
@@ -450,7 +450,7 @@ def build_digest_payload(output: dict, webhook_type: str, dashboard_url: str = "
     if webhook_type == "slack":
         blocks = [
             {"type": "header", "text": {"type": "plain_text",
-             "text": f"📊 CyberWatch Daily Digest — {total} items ({critical} critical, {high} high)"}},
+             "text": f"📊 OpenThreat Daily Digest — {total} items ({critical} critical, {high} high)"}},
         ]
         if headline:
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"_{headline}_"}})
@@ -471,7 +471,7 @@ def build_digest_payload(output: dict, webhook_type: str, dashboard_url: str = "
             blocks.append({"type": "context", "elements": [{"type": "mrkdwn",
                 "text": f"🕐 {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC} · "
                         f"<{dashboard_url}|Open Dashboard>"}]})
-        return {"text": f"CyberWatch Daily Digest: {total} items", "blocks": blocks[:48]}
+        return {"text": f"OpenThreat Daily Digest: {total} items", "blocks": blocks[:48]}
 
     if webhook_type == "discord":
         lines = ([f"_{headline}_", ""] if headline else [])
@@ -480,7 +480,7 @@ def build_digest_payload(output: dict, webhook_type: str, dashboard_url: str = "
             lines.append(f"**{emoji} {cat.title()}** ({len(cat_items)})")
             lines.append(_summarise(cat_items, 2))
         return {"embeds": [{
-            "title": f"📊 CyberWatch Daily Digest — {total} items",
+            "title": f"📊 OpenThreat Daily Digest — {total} items",
             "description": "\n".join(lines)[:4000],
             "url": dashboard_url or None,
             "color": 0x3366FF,
@@ -493,7 +493,7 @@ def build_digest_payload(output: dict, webhook_type: str, dashboard_url: str = "
         }]}
 
     if webhook_type == "telegram":
-        text = f"📊 *CyberWatch Daily Digest* — {total} items\n"
+        text = f"📊 *OpenThreat Daily Digest* — {total} items\n"
         if headline:
             text += f"_{headline}_\n"
         text += f"Critical: {critical} · High: {high} · KEV: {kev} · PoC: {poc}\n\n"
@@ -507,7 +507,7 @@ def build_digest_payload(output: dict, webhook_type: str, dashboard_url: str = "
             payload["chat_id"] = chat_id
         return payload
 
-    lines = [f"CyberWatch Daily Digest — {datetime.now(timezone.utc):%Y-%m-%d}"]
+    lines = [f"OpenThreat Daily Digest — {datetime.now(timezone.utc):%Y-%m-%d}"]
     if headline:
         lines.append(headline)
     lines.append(f"Total: {total} · Critical: {critical} · High: {high} · KEV: {kev} · PoC: {poc}")
@@ -520,7 +520,7 @@ def build_digest_payload(output: dict, webhook_type: str, dashboard_url: str = "
         lines.append(dashboard_url)
     body = "\n".join(lines)
     if webhook_type == "email":
-        return {"subject": f"CyberWatch Daily Digest — {total} items ({critical} critical)",
+        return {"subject": f"OpenThreat Daily Digest — {total} items ({critical} critical)",
                 "body": body}
     return {"text": body}
 
@@ -562,8 +562,8 @@ def _send_email_payload(config, payload: dict) -> bool:
         print(payload.get("body", ""))
         return True
     msg = MIMEText(payload.get("body", ""))
-    msg["Subject"] = payload.get("subject", "CyberWatch Digest")
-    msg["From"] = os.environ.get("SMTP_FROM", os.environ.get("SMTP_USER") or "cyberwatch@localhost")
+    msg["Subject"] = payload.get("subject", "OpenThreat Digest")
+    msg["From"] = os.environ.get("SMTP_FROM", os.environ.get("SMTP_USER") or "openthreat@localhost")
     msg["To"] = to
     try:
         with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT", "587"))) as s:
@@ -582,7 +582,7 @@ def _send_email_payload(config, payload: dict) -> bool:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="CyberWatch Webhook Poster")
+    parser = argparse.ArgumentParser(description="OpenThreat Webhook Poster")
     parser.add_argument("intel_file", help="Path to intel.json")
     parser.add_argument("--url", help="Webhook URL (defaults to WEBHOOK_URL env var)")
     parser.add_argument("--type", choices=["slack", "discord", "telegram", "generic"],

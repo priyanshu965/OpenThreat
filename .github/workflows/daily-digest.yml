@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# CYBERWATCH — .github/workflows/daily-digest.yml
+# OPENTHREAT — .github/workflows/daily-digest.yml
 #
 # One rollup per day of everything the hourly pipeline collected, sent to the
 # same webhook as the per-item alerts. Now driven by webhook_post.py --mode
@@ -56,7 +56,7 @@ jobs:
           # the newest committed archive snapshot, so a network blip degrades the
           # digest to "up to 24h old" instead of failing it.
           python scripts/resolve_feed.py --out "${RUNNER_TEMP}/intel.json" \
-            --url "${DASHBOARD_URL:-https://priyanshu965.github.io/Cyberwatch/}"
+            --url "${DASHBOARD_URL:-https://priyanshu965.github.io/OpenThreat/}"
           python scripts/webhook_post.py "${RUNNER_TEMP}/intel.json" --mode digest \
             --type "${WEBHOOK_TYPE:-slack}" \
             ${{ inputs.dry_run && '--dry-run' || '' }}

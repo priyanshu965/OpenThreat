@@ -1,5 +1,5 @@
 """
-CYBERWATCH — trends.py
+OPENTHREAT — trends.py
 =======================
 The pipeline already keeps ~90 daily snapshots under data/archive/. This module
 turns that history into a compact data/trends.json the dashboard renders as a

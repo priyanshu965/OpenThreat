@@ -16,7 +16,7 @@ descending order of freshness:
 
 Usage:
     python scripts/resolve_feed.py --out feed.json
-    python scripts/resolve_feed.py --out feed.json --url https://example.github.io/Cyberwatch/
+    python scripts/resolve_feed.py --out feed.json --url https://example.github.io/OpenThreat/
 """
 
 import argparse
@@ -30,7 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOCAL_INTEL = PROJECT_ROOT / "data" / "intel.json"
 ARCHIVE_DIR = PROJECT_ROOT / "data" / "archive"
 
-USER_AGENT = "CyberWatch-resolve-feed/1.0"
+USER_AGENT = "OpenThreat-resolve-feed/1.0"
 
 
 def _valid(doc) -> bool:

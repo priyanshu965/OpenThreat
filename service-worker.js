@@ -1,8 +1,8 @@
-// CyberWatch service worker.
+// OpenThreat service worker.
 //
 // Paths are RELATIVE. The previous version precached "/", "/index.html", … —
 // absolute root paths that, on a project page like
-// https://<user>.github.io/Cyberwatch/, resolved to the USER root instead of
+// https://<user>.github.io/OpenThreat/, resolved to the USER root instead of
 // the project subpath. cache.addAll() rejects if any request 404s, so install
 // failed and the worker never activated: no offline support at all, which was
 // the entire point of shipping one.
@@ -10,7 +10,7 @@
 // Bump on every release. The activate handler deletes every cache whose name
 // is not this one, which is what stops old versioned entries accumulating now
 // that staleWhileRevalidate keys on the full URL including ?v=.
-const CACHE = "cyberwatch-v7";
+const CACHE = "openthreat-v7";
 const PRECACHE = [
   "./",
   "./index.html",
@@ -50,7 +50,7 @@ self.addEventListener("fetch", (e) => {
   if (url.origin !== self.location.origin) return;   // never cache third-party
 
   // `includes` rather than `startsWith("/data/")`: under a project subpath the
-  // real path is /Cyberwatch/data/intel.json, which the old check never matched,
+  // real path is /OpenThreat/data/intel.json, which the old check never matched,
   // so live intel fell through to the cache-first branch.
   if (url.pathname.includes("/data/") || url.pathname.includes("/api/")) {
     e.respondWith(networkFirst(e.request));

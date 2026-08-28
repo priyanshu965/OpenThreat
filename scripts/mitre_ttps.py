@@ -1,5 +1,5 @@
 """
-CYBERWATCH — mitre_ttps.py
+OPENTHREAT — mitre_ttps.py
 ===========================
 Full MITRE ATT&CK Enterprise matrix (v15.1)
 246 techniques · 445 sub-techniques · 14 tactics

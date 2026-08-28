@@ -1,5 +1,5 @@
 """
-CYBERWATCH — control_mappings.py
+OPENTHREAT — control_mappings.py
 =================================
 ATT&CK techniques mapped to the control frameworks people are audited against.
 

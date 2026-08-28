@@ -1,5 +1,5 @@
 """
-CYBERWATCH — geopolitics.py
+OPENTHREAT — geopolitics.py
 ===========================
 Cross the SUSPECTED origin of a threat actor with the country and sector it is
 targeting, for the geopolitical dashboard.

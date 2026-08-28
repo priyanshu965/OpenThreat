@@ -1,4 +1,4 @@
-# CyberWatch — Efficiency, UI & Feature Roadmap
+# OpenThreat — Efficiency, UI & Feature Roadmap
 
 **Written:** 2026-08-20 · Companion to `CODE_ANALYSIS.md`
 All numbers below are measured from your committed `data/intel.json`, `data/exports/`, and `source_health`.
@@ -20,7 +20,7 @@ All numbers below are measured from your committed `data/intel.json`, `data/expo
 
 Before any feature list, the honest diagnosis:
 
-> **CyberWatch is currently an aggregator that shows you everything. To be useful it has to become a triage tool that tells you what matters.**
+> **OpenThreat is currently an aggregator that shows you everything. To be useful it has to become a triage tool that tells you what matters.**
 
 Right now a run produces **251 items**. A human cannot read 251 items an hour. And of those 251:
 

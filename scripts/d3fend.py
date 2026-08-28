@@ -1,5 +1,5 @@
 """
-CYBERWATCH — d3fend.py
+OPENTHREAT — d3fend.py
 =======================
 MITRE D3FEND: what to DO about a technique.
 

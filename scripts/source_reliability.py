@@ -1,5 +1,5 @@
 """
-CYBERWATCH — source_reliability.py
+OPENTHREAT — source_reliability.py
 ===================================
 Which of the 43 feeds are actually worth reading?
 

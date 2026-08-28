@@ -1,5 +1,5 @@
 /**
- * CYBERWATCH — js/library.js
+ * OPENTHREAT — js/library.js
  * ==========================
  * THE LIBRARY: what is known.
  *

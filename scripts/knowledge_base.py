@@ -1,5 +1,5 @@
 """
-CYBERWATCH — knowledge_base.py
+OPENTHREAT — knowledge_base.py
 ===============================
 The Library: one canonical page per actor, malware family, tool, technique,
 mitigation and campaign, merged from every corpus the pipeline holds.

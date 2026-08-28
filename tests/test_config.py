@@ -1,4 +1,4 @@
-"""Unit tests for CyberWatch config helpers (scripts/config.py)."""
+"""Unit tests for OpenThreat config helpers (scripts/config.py)."""
 
 import os
 import sys

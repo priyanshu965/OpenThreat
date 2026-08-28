@@ -1,5 +1,5 @@
 """
-CYBERWATCH — timeline.py
+OPENTHREAT — timeline.py
 =========================
 Ninety days of daily snapshots that the dashboard could never open.
 

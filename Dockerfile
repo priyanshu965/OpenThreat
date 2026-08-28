@@ -1,4 +1,4 @@
-# ── CyberWatch Dockerfile ──────────────────────────────────────────
+# ── OpenThreat Dockerfile ──────────────────────────────────────────
 # Serves the dashboard via nginx and optionally runs the fetcher via cron
 # ────────────────────────────────────────────────────────────────────
 
@@ -11,9 +11,9 @@ ARG VERSION=latest
 # web root.
 FROM nginx:alpine AS frontend
 ARG VERSION=latest
-LABEL org.opencontainers.image.title="CyberWatch Dashboard" \
+LABEL org.opencontainers.image.title="OpenThreat Dashboard" \
       org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.source="https://github.com/priyanshu965/Cyberwatch"
+      org.opencontainers.image.source="https://github.com/priyanshu965/OpenThreat"
 WORKDIR /usr/share/nginx/html
 COPY index.html app.js style.css service-worker.js manifest.json robots.txt ./
 # js/ is not optional: index.html loads three sibling modules from it, and
@@ -29,9 +29,9 @@ CMD ["nginx", "-g", "daemon off;"]
 # ── Fetcher ────────────────────────────────────────────────────────
 FROM python:3.11-slim AS fetcher
 ARG VERSION=latest
-LABEL org.opencontainers.image.title="CyberWatch Fetcher" \
+LABEL org.opencontainers.image.title="OpenThreat Fetcher" \
       org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.source="https://github.com/priyanshu965/Cyberwatch"
+      org.opencontainers.image.source="https://github.com/priyanshu965/OpenThreat"
 WORKDIR /app
 COPY requirements.txt requirements-hunt.txt ./
 RUN pip install --no-cache-dir -r requirements.txt  # runtime only; dev deps not needed in image
@@ -44,6 +44,6 @@ RUN pip install --no-cache-dir -r requirements-hunt.txt \
 COPY scripts/ scripts/
 # Run as a non-root user; the image only ever needs to write into /app/data,
 # which is a bind mount at runtime.
-RUN useradd --create-home --uid 10001 cyberwatch && chown -R cyberwatch /app
-USER cyberwatch
+RUN useradd --create-home --uid 10001 openthreat && chown -R openthreat /app
+USER openthreat
 CMD ["python", "scripts/fetch_intel.py"]

@@ -1,5 +1,5 @@
 """
-CYBERWATCH — geoip.py
+OPENTHREAT — geoip.py
 =====================
 Offline IP → country lookup, for the attacker map.
 

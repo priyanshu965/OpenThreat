@@ -1,5 +1,5 @@
 """
-CYBERWATCH — sectors.py
+OPENTHREAT — sectors.py
 =======================
 Assign each intel item a target SECTOR, on a confidence ladder so a guess is
 never presented as a fact.

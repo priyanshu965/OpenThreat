@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# CYBERWATCH DASHBOARD — .github/workflows/update.yml
+# OPENTHREAT DASHBOARD — .github/workflows/update.yml
 #
 # Runs every hour. Fetches fresh threat intel, enriches the top AI_ENRICH_LIMIT
 # items in batches via Gemini (primary) with Groq as failover, then:
@@ -63,7 +63,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-cyberwatch-v2
+          key: ${{ runner.os }}-pip-openthreat-v2
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -89,9 +89,9 @@ jobs:
             data/source_health_summary.json
             data/.alert_state.json
             data/.digest_state.json
-          key: cyberwatch-state-${{ github.run_id }}
+          key: openthreat-state-${{ github.run_id }}
           restore-keys: |
-            cyberwatch-state-
+            openthreat-state-
 
       # The cache is the fast path and, being read every hour, is never evicted
       # in practice. This is the fallback for when it is: the previous run
@@ -107,7 +107,7 @@ jobs:
             echo "State present from cache or repo seed - nothing to restore."
             exit 0
           fi
-          URL="${DASHBOARD_URL:-https://priyanshu965.github.io/Cyberwatch/}"
+          URL="${DASHBOARD_URL:-https://priyanshu965.github.io/OpenThreat/}"
           echo "Cache missed; pulling state from ${URL}data/state.tar.gz"
           if curl -fsSL --max-time 120 -o /tmp/state.tar.gz "${URL}data/state.tar.gz"; then
             mkdir -p data && tar -xzf /tmp/state.tar.gz -C data
@@ -341,10 +341,10 @@ jobs:
           import json, pathlib
           p = pathlib.Path("data/intel.json")
           if not p.exists():
-              print("## CyberWatch — no output produced"); raise SystemExit
+              print("## OpenThreat — no output produced"); raise SystemExit
           d = json.loads(p.read_text(encoding="utf-8"))
           items = d.get("items", [])
-          print("## CyberWatch Update Complete\n")
+          print("## OpenThreat Update Complete\n")
           print(f"- **Items:** {len(items)}")
           print(f"- **Last updated:** {d.get('last_updated','?')}")
           print(f"- **Sources:** {d.get('sources_ok',0)} ok · "

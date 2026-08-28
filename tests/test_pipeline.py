@@ -1,4 +1,4 @@
-"""Unit tests for CyberWatch pipeline helpers.
+"""Unit tests for OpenThreat pipeline helpers.
 
 These import the REAL implementations from scripts/fetch_intel.py.
 

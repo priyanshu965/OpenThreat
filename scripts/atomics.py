@@ -1,5 +1,5 @@
 """
-CYBERWATCH — atomics.py
+OPENTHREAT — atomics.py
 ========================
 Atomic Red Team tests, indexed by ATT&CK technique.
 

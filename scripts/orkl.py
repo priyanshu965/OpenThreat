@@ -1,5 +1,5 @@
 """
-CYBERWATCH — orkl.py
+OPENTHREAT — orkl.py
 =====================
 ORKL: the open threat-report library, indexed by actor.
 

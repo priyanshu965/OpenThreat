@@ -1,5 +1,5 @@
 """
-CYBERWATCH — kev_catalog.py
+OPENTHREAT — kev_catalog.py
 ============================
 The CISA Known Exploited Vulnerabilities catalogue, with its dates kept.
 

@@ -1,5 +1,5 @@
 """
-CYBERWATCH — tests/test_v5.py
+OPENTHREAT — tests/test_v5.py
 =============================
 Tests for the Library, the hunt bench and leak-site tracking.
 
@@ -874,7 +874,7 @@ class TestStickyChrome(unittest.TestCase):
         sw = (root / "service-worker.js").read_text(encoding="utf-8")
         self.assertNotIn("?v=5.0.0", html)
         self.assertIn("?v=5.0.1", html)
-        self.assertIn('CACHE = "cyberwatch-v7"', sw)
+        self.assertIn('CACHE = "openthreat-v7"', sw)
 
 
 if __name__ == "__main__":

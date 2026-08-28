@@ -1,5 +1,5 @@
 /**
- * CYBERWATCH — js/research.js
+ * OPENTHREAT — js/research.js
  * ===========================
  * The views that turn the feed into connected intelligence and into evidence:
  *

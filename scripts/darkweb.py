@@ -1,5 +1,5 @@
 """
-CYBERWATCH — darkweb.py
+OPENTHREAT — darkweb.py
 =======================
 Dark-web monitoring: ransomware leak-site activity.
 
@@ -163,7 +163,7 @@ def build_darkweb_summary() -> dict | None:
         "source": "RansomLook (https://www.ransomlook.io)",
         "collection_note": (
             "Leak-site posts observed on Tor hidden services by RansomLook and "
-            "republished over HTTPS. CyberWatch consumes that mirror; it does "
+            "republished over HTTPS. OpenThreat consumes that mirror; it does "
             "not crawl Tor itself. A listing is the group's claim, not a "
             "confirmed breach."
         ),

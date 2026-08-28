@@ -1,5 +1,5 @@
 """
-CYBERWATCH — fetchlib.py
+OPENTHREAT — fetchlib.py
 =========================
 The HTTP session and the on-disk cache, extracted so every module shares ONE
 of each.
@@ -67,7 +67,7 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
 )
-log = StructuredAdapter(logging.getLogger("cyberwatch"), {})
+log = StructuredAdapter(logging.getLogger("openthreat"), {})
 
 HEADERS = {"User-Agent": CONFIG.http_user_agent}
 

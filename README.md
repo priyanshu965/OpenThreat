@@ -1,16 +1,16 @@
 <div align="center">
 
-# 🛡️ CyberWatch
+# 🛡️ OpenThreat
 
 **A self-updating threat intelligence pipeline, encyclopedia, hunt bench and research bench.**
 
 Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 43 configured sources every hour and scores each item against how likely it is to actually be exploited. Then it does three things most feeds do not: it merges nine public corpora into **one page per threat actor, malware family, ATT&CK technique and campaign** — with every vendor's alias resolving to the same entry — it turns each technique into a **hunt pack** carrying paste-ready queries for six SIEMs and the Atomic Red Team tests that prove they fire, and it **checks its own scoring against what really happened** and publishes the result even when the result is unflattering.
 
-[![CI](https://github.com/priyanshu965/Cyberwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/priyanshu965/Cyberwatch/actions/workflows/ci.yml)
+[![CI](https://github.com/priyanshu965/OpenThreat/actions/workflows/ci.yml/badge.svg)](https://github.com/priyanshu965/OpenThreat/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 
-**[Live dashboard](https://priyanshu965.github.io/Cyberwatch/)**
+**[Live dashboard](https://priyanshu965.github.io/OpenThreat/)**
 
 </div>
 

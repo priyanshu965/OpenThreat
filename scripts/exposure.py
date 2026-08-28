@@ -1,5 +1,5 @@
 """
-CYBERWATCH — exposure.py
+OPENTHREAT — exposure.py
 ========================
 Credential and infostealer exposure for a domain you own, plus the public
 breach catalogue. This is the half of CASM that leak-site monitoring cannot
@@ -115,7 +115,7 @@ def check_domain_exposure(domain: str) -> dict | None:
         "last_user_compromised": str(data.get("last_user_compromised") or "")[:10] or None,
         "source": "Hudson Rock Cavalier (free OSINT tools)",
         "note": ("Counts of machines found in infostealer logs. Credentials "
-                 "themselves are neither requested nor stored by CyberWatch."),
+                 "themselves are neither requested nor stored by OpenThreat."),
     }
 
 

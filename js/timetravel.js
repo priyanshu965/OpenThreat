@@ -1,5 +1,5 @@
 /**
- * CYBERWATCH — js/timetravel.js
+ * OPENTHREAT — js/timetravel.js
  * =============================
  * Ninety days of daily snapshots that the dashboard could never open.
  *

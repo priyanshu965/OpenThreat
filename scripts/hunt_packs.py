@@ -1,5 +1,5 @@
 """
-CYBERWATCH — hunt_packs.py
+OPENTHREAT — hunt_packs.py
 ===========================
 The thing that turns a reader into an instrument.
 

@@ -1,5 +1,5 @@
 """
-CYBERWATCH — provenance.py
+OPENTHREAT — provenance.py
 ==========================
 Tag every item with WHO PRODUCED IT.
 

@@ -1,5 +1,5 @@
 """
-CYBERWATCH — config.py
+OPENTHREAT — config.py
 =======================
 Central configuration for the intel pipeline. Every "magic number" that used to
 live inline in fetch_intel.py has a single home here, and each value can be
@@ -279,7 +279,7 @@ class Config:
 
     # ── MISP ───────────────────────────────────────────────────────────────
     enable_misp_export = _bool("ENABLE_MISP_EXPORT", True)
-    misp_org_name      = _str("MISP_ORG_NAME", "CyberWatch")
+    misp_org_name      = _str("MISP_ORG_NAME", "OpenThreat")
 
     # ── AI models ──────────────────────────────────────────────────────────
     # Gemini 3.x Flash-Lite is on the free tier and materially better at
@@ -311,7 +311,7 @@ class Config:
     webhook_url   = os.environ.get("WEBHOOK_URL", "")
     webhook_type  = _str("WEBHOOK_TYPE", "slack")
     telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    dashboard_url = _str("DASHBOARD_URL", "https://priyanshu965.github.io/Cyberwatch/")
+    dashboard_url = _str("DASHBOARD_URL", "https://priyanshu965.github.io/OpenThreat/")
     # Which items justify a push. Comma-separated severities, plus KEV always alerts.
     alert_severities     = _str("ALERT_SEVERITIES", "critical").lower()
     alert_max_items      = _int("ALERT_MAX_ITEMS", 10)
@@ -331,7 +331,7 @@ class Config:
     priority_ssvc_auto_bonus   = _float("PRIORITY_SSVC_AUTO_BONUS", 10.0)
     priority_ssvc_total_bonus  = _float("PRIORITY_SSVC_TOTAL_BONUS", 5.0)
 
-    http_user_agent = _str("HTTP_USER_AGENT", "CyberWatch/3.0 (+https://github.com/priyanshu965/Cyberwatch)")
+    http_user_agent = _str("HTTP_USER_AGENT", "OpenThreat/5.0 (+https://github.com/priyanshu965/OpenThreat)")
 
     @property
     def domain_list(self) -> list:

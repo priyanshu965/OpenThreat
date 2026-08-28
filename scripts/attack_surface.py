@@ -1,5 +1,5 @@
 """
-CYBERWATCH — attack_surface.py
+OPENTHREAT — attack_surface.py
 ==============================
 External attack surface discovery from Certificate Transparency.
 
@@ -10,7 +10,7 @@ EASM, and it needs no key and no scanning: we read a public log, we do not
 touch the hosts.
 
 NOTHING HERE PROBES ANYTHING. No port scan, no HTTP request to a discovered
-host, no DNS brute force. CyberWatch reads the CT log and stops. Anyone wanting
+host, no DNS brute force. OpenThreat reads the CT log and stops. Anyone wanting
 liveness or service detail should take the list to a tool they are authorised
 to point at that estate.
 
@@ -147,5 +147,5 @@ def build_attack_surface(domains: list[str]) -> dict | None:
         "total_hostnames": sum(d["hostnames"] for d in out),
         "unavailable": failed,
         "note": ("Discovered from public Certificate Transparency logs. "
-                 "CyberWatch does not probe, scan or resolve these hosts."),
+                 "OpenThreat does not probe, scan or resolve these hosts."),
     }

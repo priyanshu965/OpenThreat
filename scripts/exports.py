@@ -1,5 +1,5 @@
 """
-CYBERWATCH — exports.py
+OPENTHREAT — exports.py
 ========================
 Turns the aggregated intel feed into machine-consumable artifacts so the
 dashboard can feed SIEMs, firewalls, and RSS readers — not just eyeballs.
@@ -133,7 +133,7 @@ def _write_stix(rows, path: Path, generated: str) -> int:
             "id": ind_id,
             "created": generated,
             "modified": generated,
-            "name": f"{ioc_type} observed by {src or 'CyberWatch'}",
+            "name": f"{ioc_type} observed by {src or 'OpenThreat'}",
             "description": (title or "")[:400],
             "indicator_types": ["malicious-activity"],
             "pattern": builder(value),
@@ -143,7 +143,7 @@ def _write_stix(rows, path: Path, generated: str) -> int:
         })
     bundle = {
         "type": "bundle",
-        "id": f"bundle--{uuid.uuid5(_NS, 'cyberwatch-bundle')}",
+        "id": f"bundle--{uuid.uuid5(_NS, 'openthreat-bundle')}",
         "objects": objects,
     }
     path.write_text(json.dumps(bundle, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -178,7 +178,7 @@ def _write_misp(output: dict, rows, path: Path, generated: str) -> int:
     in place instead of creating a duplicate every hour.
     """
     date = (generated or "")[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    event_uuid = str(uuid.uuid5(_NS, f"cyberwatch-event-{date}"))
+    event_uuid = str(uuid.uuid5(_NS, f"openthreat-event-{date}"))
     org_uuid = str(uuid.uuid5(_NS, f"org-{CONFIG.misp_org_name}"))
 
     attributes = []
@@ -205,7 +205,7 @@ def _write_misp(output: dict, rows, path: Path, generated: str) -> int:
             "distribution": "1",
             "comment": f"{source}: {title}"[:250],
             "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
-            "Tag": [{"name": f'cyberwatch:source="{source}"'}] if source else [],
+            "Tag": [{"name": f'openthreat:source="{source}"'}] if source else [],
         })
 
     # Vulnerabilities that are actively exploited ride along as attributes too:
@@ -230,7 +230,7 @@ def _write_misp(output: dict, rows, path: Path, generated: str) -> int:
             "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
         })
 
-    tags = [{"name": "tlp:clear"}, {"name": "cyberwatch:automated"}]
+    tags = [{"name": "tlp:clear"}, {"name": "openthreat:automated"}]
     for actor in sorted({a for i in output.get("items", []) or []
                          for a in (i.get("threat_actors") or [])})[:20]:
         tags.append({"name": f'misp-galaxy:threat-actor="{actor}"'})
@@ -238,11 +238,11 @@ def _write_misp(output: dict, rows, path: Path, generated: str) -> int:
                        for t in (i.get("ttps") or []) if t.get("id")})[:40]:
         tags.append({"name": f'mitre-attack-pattern:{tid}'})
 
-    brief = (output.get("brief") or {}).get("headline") or "CyberWatch daily intelligence"
+    brief = (output.get("brief") or {}).get("headline") or "OpenThreat daily intelligence"
     event = {
         "Event": {
             "uuid": event_uuid,
-            "info": f"CyberWatch {date} — {brief}"[:255],
+            "info": f"OpenThreat {date} — {brief}"[:255],
             "date": date,
             "threat_level_id": "2",
             "analysis": "2",
@@ -274,7 +274,7 @@ def _write_rss(output: dict, path: Path, limit: int = 60) -> None:
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<rss version="2.0"><channel>',
-        "<title>CyberWatch Threat Intelligence</title>",
+        "<title>OpenThreat Threat Intelligence</title>",
         "<link>https://github.com/</link>",
         "<description>Aggregated CVEs, advisories, incidents and IOCs</description>",
         f"<lastBuildDate>{xml_escape(updated)}</lastBuildDate>",

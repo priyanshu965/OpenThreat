@@ -1,5 +1,5 @@
 """
-CYBERWATCH — backtest.py
+OPENTHREAT — backtest.py
 =========================
 Does the priority score actually predict exploitation?
 
