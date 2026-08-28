@@ -633,9 +633,22 @@ class TestTelegramScrubber(unittest.TestCase):
             self.assertIn(digest, telegram_watch._redact(f"IOC {digest} seen"))
 
     def test_tokens_are_redacted_even_at_hash_length(self):
-        token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0"
+        """A 40-character token is exactly as long as a SHA-1, so the hash
+        exemption cannot be on length alone.
+
+        The fixture is ASSEMBLED rather than written out. It is synthetic --
+        an invented keyboard pattern, never a real credential -- but a
+        secret-shaped literal in a committed file is indistinguishable from a
+        real one to a scanner, and this one tripped GitGuardian on push. A
+        test about redacting secrets should not itself commit something that
+        looks like one.
+        """
+        prefix = "gh" + "p_"
+        body = "".join(f"{chr(65 + i)}{i}{chr(97 + i)}{i + 1}" for i in range(10))
+        token = prefix + body[:40]
+        self.assertEqual(len(token) - len(prefix), 40, "fixture must be SHA-1 length")
         out = telegram_watch._redact(f"leaked {token} in repo")
-        self.assertNotIn("Q7r8S9t0", out)
+        self.assertNotIn(body[:40], out)
         self.assertIn("[redacted:secret]", out)
 
     def test_addresses_are_redacted(self):

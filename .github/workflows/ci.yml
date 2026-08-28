@@ -76,9 +76,23 @@ jobs:
         run: |
           # Cheap, targeted guard for the key shapes this project actually uses.
           # A leaked key in a public repo is scraped within minutes.
-          PATTERNS='vulncheck_[a-f0-9]{40,}|AIza[0-9A-Za-z_-]{30,}|gsk_[A-Za-z0-9]{40,}|xoxb-[0-9A-Za-z-]{20,}'
+          #
+          # GitHub token shapes were MISSING from this list until a synthetic
+          # ghp_ fixture in tests/test_v5.py tripped GitGuardian on push. That
+          # fixture was never a real credential, but this guard would not have
+          # caught a real one either -- and the pipeline is handed a
+          # GITHUB_TOKEN on every run, so it is exactly the shape most likely
+          # to be pasted in by accident here.
+          PATTERNS='vulncheck_[a-f0-9]{40,}|AIza[0-9A-Za-z_-]{30,}|gsk_[A-Za-z0-9]{40,}|xoxb-[0-9A-Za-z-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|AKIA[0-9A-Z]{16}'
+          # data/ is excluded, and that is a correctness fix rather than a
+          # speed one. It holds archived feed content from 43 third-party
+          # sources: a security article quoting a leaked AWS key id would
+          # match AKIA... and fail the build over data the pipeline ingested,
+          # not over a credential anybody committed. This guard is about
+          # SOURCE. (It also stops the scan walking the 48 MB ATT&CK cache.)
           if grep -rInE "$PATTERNS" --include='*.py' --include='*.js' --include='*.yml' \
-               --include='*.yaml' --include='*.json' --include='*.md' . ; then
+               --include='*.yaml' --include='*.json' --include='*.md' \
+               --exclude-dir=data --exclude-dir=.git . ; then
             echo "::error::A credential appears to be committed. Rotate it, then remove it from the tree."
             exit 1
           fi
@@ -124,7 +138,9 @@ jobs:
                     showLibraryView showHuntView showLeaksView \
                     libJump libOpen libSection libLink libCode libAtomic \
                     libRenderDefence libRenderDetection libSearch huntOpenPack \
-                    showContactView showReconView showCredsView \n                    showKevView showLifecycleView showCveView \n                    showIocView showPhishView; do
+                    showContactView showReconView showCredsView \
+                    showKevView showLifecycleView showCveView \
+                    showIocView showPhishView; do
             if ! grep -qE "function ${fn}\b" js/*.js; then
               echo "::error::app.js calls ${fn}() but no js/ module defines it"
               missing=1
