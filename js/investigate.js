@@ -225,6 +225,21 @@ function iocSourcesFor(type) {
 
 const CIRCL_CVE = 'https://cve.circl.lu/api/cve/';
 
+/*
+ * Two more that pass the keyless + CORS test, both verified by probing them
+ * rather than by trusting a directory.
+ *
+ * Shodan InternetDB is the free, keyless slice of Shodan: open ports,
+ * hostnames, CPEs and known CVEs for an address. It is PASSIVE in the sense
+ * that matters here -- Shodan scanned the internet already and this reads
+ * their result. Nothing in this page ever touches the address itself.
+ *
+ * EPSS per-CVE. The pipeline already ingests the full daily corpus, but that
+ * covers the feed; an arbitrary CVE somebody pastes in is usually not in it.
+ */
+const SHODAN_INTERNETDB = 'https://internetdb.shodan.io/';
+const FIRST_EPSS = 'https://api.first.org/data/v1/epss?cve=';
+
 async function iocLiveCve(cve, host) {
   const block = el('div', 'tool-block');
   block.appendChild(el('h4', 'tool-block-title', 'Live: CIRCL CVE database'));
@@ -252,6 +267,93 @@ async function iocLiveCve(cve, host) {
   } catch (err) {
     block.appendChild(el('p', 'tool-note',
       'CIRCL could not be reached from the browser.'));
+  }
+}
+
+async function iocLiveEpss(cve, host) {
+  const block = el('div', 'tool-block');
+  block.appendChild(el('h4', 'tool-block-title', 'Live: EPSS (FIRST.org)'));
+  host.appendChild(block);
+  try {
+    const resp = await fetch(FIRST_EPSS + encodeURIComponent(cve.toUpperCase()));
+    if (!resp.ok) throw new Error(String(resp.status));
+    const data = await resp.json();
+    const row = (data.data || [])[0];
+    if (!row) {
+      block.appendChild(el('p', 'tool-note',
+        'No EPSS score. Scores exist only for published CVEs with enough '
+        + 'signal, so a very new id often has none yet.'));
+      return;
+    }
+    const score = Number(row.epss);
+    const pct = Number(row.percentile);
+    const head = el('div', 'tool-graded-head');
+    head.appendChild(el('span', 'tool-row-label', 'Exploitation probability'));
+    head.appendChild(toolVerdict(
+      score >= 0.5 ? 'bad' : score >= 0.1 ? 'warn' : 'good',
+      `${(score * 100).toFixed(1)}% in 30 days`));
+    block.appendChild(head);
+    block.appendChild(el('p', 'tool-graded-detail',
+      `Higher than ${(pct * 100).toFixed(1)}% of all scored CVEs. `
+      + 'EPSS is the probability of exploitation being OBSERVED in the next 30 '
+      + 'days — not a measure of how bad the bug is if it happens. This '
+      + `project's own backtest found EPSS the single best predictor it has, `
+      + 'ahead of its own blended score.'));
+    block.appendChild(toolRow('Scored on', row.date));
+  } catch (err) {
+    block.appendChild(el('p', 'tool-note', 'FIRST.org could not be reached.'));
+  }
+}
+
+/**
+ * Shodan InternetDB: the keyless slice of Shodan.
+ *
+ * Passive in the way that matters — Shodan scanned the internet already and
+ * this reads the stored result. Nothing here contacts the address, so running
+ * it against someone else's host is a database lookup, not a scan.
+ */
+async function iocLiveIp(ip, host) {
+  const block = el('div', 'tool-block');
+  block.appendChild(el('h4', 'tool-block-title', 'Live: Shodan InternetDB'));
+  host.appendChild(block);
+  try {
+    const resp = await fetch(SHODAN_INTERNETDB + encodeURIComponent(ip));
+    if (resp.status === 404) {
+      block.appendChild(el('p', 'tool-note',
+        'Shodan has no record for this address — not scanned, or nothing '
+        + 'was listening when it looked.'));
+      return;
+    }
+    if (!resp.ok) throw new Error(String(resp.status));
+    const data = await resp.json();
+    block.appendChild(toolRow('Open ports', (data.ports || []).join(', ')));
+    block.appendChild(toolRow('Hostnames', (data.hostnames || []).slice(0, 8).join(', ')));
+    block.appendChild(toolRow('Software', (data.cpes || []).slice(0, 8).join(', ')));
+    block.appendChild(toolRow('Tags', (data.tags || []).join(', ')));
+
+    const vulns = data.vulns || [];
+    if (vulns.length) {
+      const head = el('div', 'tool-graded-head');
+      head.appendChild(el('span', 'tool-row-label', 'Known CVEs'));
+      head.appendChild(toolVerdict('warn', `${vulns.length} reported`));
+      block.appendChild(head);
+      block.appendChild(el('p', 'tool-graded-detail',
+        'Inferred from the banners Shodan saw, so these are what the exposed '
+        + 'software VERSION is associated with — not confirmed exploitable, '
+        + 'and not evidence the host is unpatched. Backported fixes do not '
+        + 'change a banner.'));
+      const grid = el('div', 'ioc-grid');
+      vulns.slice(0, 24).forEach((cve) => {
+        const a = el('a', 'ioc-link', cve);
+        a.href = safeUrl('https://nvd.nist.gov/vuln/detail/' + encodeURIComponent(cve));
+        a.target = '_blank'; a.rel = 'noopener noreferrer';
+        grid.appendChild(a);
+      });
+      block.appendChild(grid);
+    }
+  } catch (err) {
+    block.appendChild(el('p', 'tool-note',
+      'Shodan InternetDB could not be reached from the browser.'));
   }
 }
 
@@ -287,7 +389,7 @@ function showIocView() {
     + 'that type. Defanged input is accepted — hxxp://evil[.]com works.'));
 
   const panel = toolPanel(host, 'Indicator',
-    ['CIRCL CVE', 'Cloudflare DNS'],
+    ['CIRCL CVE', 'FIRST.org EPSS', 'Shodan InternetDB', 'Cloudflare DNS'],
     'Nothing is submitted automatically. Several of these services log lookups, '
     + 'and quietly sending an indicator to a dozen third parties on page load '
     + 'would tip off an adversary watching for exactly that. Links open when '
@@ -349,8 +451,12 @@ function showIocView() {
     block.appendChild(grid);
     results.appendChild(block);
 
-    if (type === 'cve') await iocLiveCve(value, results);
+    if (type === 'cve') {
+      await iocLiveCve(value, results);
+      await iocLiveEpss(value, results);
+    }
     if (type === 'domain') await iocLiveDomain(value, results);
+    if (type === 'ipv4' || type === 'ipv6') await iocLiveIp(value, results);
   });
 }
 
