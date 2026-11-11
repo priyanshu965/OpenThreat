@@ -15,7 +15,6 @@ Fetches threat intelligence from multiple free sources:
   - ThreatFox             → C2 IOCs (API key)
   - MSRC                  → Microsoft advisories (RSS)
   - Fedora Bodhi          → Fedora security updates (API)
-  - Gentoo GLSA           → Gentoo advisories (RSS)
   - Arch Linux            → Arch security issues (JSON)
   - Amazon Linux          → ALAS advisories (RSS)
   - CentOS Stream         → CentOS blog (RSS)
@@ -302,7 +301,6 @@ from sources import (                                   # noqa: E402,F401
     _fetch_rss_source,
     fetch_msrc,
     fetch_fedora,
-    fetch_gentoo,
     fetch_archlinux,
     fetch_amazon_linux,
     fetch_debian,

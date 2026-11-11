@@ -235,10 +235,6 @@ class TestLiveSources(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("<rss", r.text[:200])
 
-    def test_gentoo_glsa_rss(self):
-        r = self._get("https://security.gentoo.org/glsa/feed.rss")
-        self.assertEqual(r.status_code, 200)
-
     def test_msrc_rss(self):
         r = self._get("https://api.msrc.microsoft.com/update-guide/rss")
         self.assertEqual(r.status_code, 200)

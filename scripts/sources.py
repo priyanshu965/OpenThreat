@@ -76,7 +76,6 @@ RSS_SOURCES = [
     {"name": "Malwarebytes",     "url": "https://www.malwarebytes.com/blog/feed/index.xml",      "category": "news",     "severity": "medium"},
     {"name": "Recorded Future",  "url": "https://www.recordedfuture.com/feed",                   "category": "news",     "severity": "medium"},
     {"name": "CyberSecurity News","url": "https://cybersecuritynews.com/feed/",                   "category": "news",     "severity": "medium"},
-    # GBHackers removed — feed returns 403 from all automated clients
     # ── Wider news coverage ─────────────────────────────────────────────────
     # The original list leaned on a handful of outlets, so a story none of
     # them ran simply did not exist here. These broaden it by beat: general
@@ -119,6 +118,53 @@ RSS_SOURCES = [
     {"name": "Canadian Centre for Cyber Security",    "url": "https://www.cyber.gc.ca/api/cccs/rss/v1/get?feed=alerts_advisories&lang=en",        "category": "advisory", "severity": "high"},
     {"name": "Ubuntu",                                "url": "https://ubuntu.com/security/notices/rss.xml",                                       "category": "advisory", "severity": "medium"},
     {"name": "Full Disclosure",                       "url": "https://seclists.org/rss/fulldisclosure.rss",                                       "category": "advisory", "severity": "medium"},
+    # ── Second sweep ────────────────────────────────────────────────────────
+    # ~230 candidate feeds were probed with this pipeline's own client; these
+    # are the ones that answered, parsed, dated their entries and had a median
+    # item age inside SOURCE_STALE_DAYS. Well-known names that are absent
+    # failed one of those: no feed any more (Mandiant, SC Media, Decipher),
+    # blocked (Trellix, Trend Micro, Security Boulevard), undated entries
+    # (CrowdStrike, BankInfoSecurity) or too slow a cadence (Google Threat
+    # Intelligence, Volexity, watchTowr, Project Zero, The DFIR Report).
+    {"name": "Cybernews",                              "url": "https://cybernews.com/feed/",                                                              "category": "news",     "severity": "medium"},
+    {"name": "GBHackers",                              "url": "https://gbhackers.com/feed/",                                                              "category": "news",     "severity": "medium"},
+    {"name": "SecurityOnline",                         "url": "https://securityonline.info/feed/",                                                        "category": "news",     "severity": "medium"},
+    {"name": "Cyber Press",                            "url": "https://cyberpress.org/feed/",                                                             "category": "news",     "severity": "medium"},
+    {"name": "The420",                                 "url": "https://the420.in/feed/",                                                                  "category": "news",     "severity": "medium"},
+    {"name": "ET CISO",                                "url": "https://ciso.economictimes.indiatimes.com/rss/topstories",                                 "category": "news",     "severity": "medium"},
+    {"name": "IT Security Guru",                       "url": "https://www.itsecurityguru.org/feed/",                                                     "category": "news",     "severity": "medium"},
+    {"name": "Nextgov",                                "url": "https://www.nextgov.com/rss/cybersecurity/",                                               "category": "news",     "severity": "medium"},
+    {"name": "Risky Business",                         "url": "https://news.risky.biz/rss/",                                                              "category": "news",     "severity": "medium"},
+    {"name": "Have I Been Pwned",                      "url": "https://feeds.feedburner.com/HaveIBeenPwnedLatestBreaches",                                "category": "news",     "severity": "medium"},
+    {"name": "Hacker News",                            "url": "https://hnrss.org/newest?q=security+OR+vulnerability+OR+CVE&points=100",                   "category": "news",     "severity": "medium"},
+    {"name": "Lobsters",                               "url": "https://lobste.rs/t/security.rss",                                                         "category": "news",     "severity": "medium"},
+    # Research teams
+    {"name": "Elastic Security Labs",                  "url": "https://www.elastic.co/security-labs/rss/feed.xml",                                        "category": "news",     "severity": "medium"},
+    {"name": "Symantec",                               "url": "https://sed-cms.broadcom.com/rss/v1/blogs/rss.xml",                                        "category": "news",     "severity": "medium"},
+    {"name": "Zscaler ThreatLabz",                     "url": "https://www.zscaler.com/blogs/feeds/security-research",                                    "category": "news",     "severity": "medium"},
+    {"name": "Sekoia",                                 "url": "https://blog.sekoia.io/feed/",                                                             "category": "news",     "severity": "medium"},
+    {"name": "Bitdefender",                            "url": "https://www.bitdefender.com/blog/api/rss/hotforsecurity/",                                 "category": "news",     "severity": "medium"},
+    {"name": "AhnLab ASEC",                            "url": "https://asec.ahnlab.com/en/feed/",                                                         "category": "news",     "severity": "medium"},
+    {"name": "Cyble",                                  "url": "https://cyble.com/feed/",                                                                  "category": "news",     "severity": "medium"},
+    {"name": "SOCRadar",                               "url": "https://socradar.io/feed/",                                                                "category": "news",     "severity": "medium"},
+    {"name": "VulnCheck",                              "url": "https://www.vulncheck.com/feed/blog/atom.xml",                                             "category": "news",     "severity": "medium"},
+    {"name": "Censys",                                 "url": "https://censys.com/feed/",                                                                 "category": "news",     "severity": "medium"},
+    {"name": "Eclypsium",                              "url": "https://eclypsium.com/feed/",                                                              "category": "news",     "severity": "medium"},
+    {"name": "ReversingLabs",                          "url": "https://www.reversinglabs.com/blog/rss.xml",                                               "category": "news",     "severity": "medium"},
+    {"name": "Socket",                                 "url": "https://socket.dev/api/blog/feed.atom",                                                    "category": "news",     "severity": "medium"},
+    {"name": "Wordfence",                              "url": "https://www.wordfence.com/feed/",                                                          "category": "news",     "severity": "medium"},
+    {"name": "SpecterOps",                             "url": "https://specterops.io/feed/",                                                              "category": "news",     "severity": "medium"},
+    # Government, vendor PSIRTs, disclosure lists and public exploits
+    {"name": "UK NCSC",                                "url": "https://www.ncsc.gov.uk/api/1/services/v1/all-rss-feed.xml",                               "category": "advisory", "severity": "medium"},
+    {"name": "CERT/CC",                                "url": "https://www.kb.cert.org/vuls/atomfeed/",                                                   "category": "advisory", "severity": "high"},
+    {"name": "HKCERT",                                 "url": "https://www.hkcert.org/getrss/security-bulletin",                                          "category": "advisory", "severity": "medium"},
+    {"name": "Fortinet PSIRT",                         "url": "https://filestore.fortinet.com/fortiguard/rss/ir.xml",                                     "category": "advisory", "severity": "high"},
+    {"name": "Siemens ProductCERT",                    "url": "https://cert-portal.siemens.com/productcert/rss/advisories.atom",                          "category": "advisory", "severity": "medium"},
+    {"name": "Synology",                               "url": "https://www.synology.com/api/rssfeed/security/en-global",                                  "category": "advisory", "severity": "medium"},
+    {"name": "Splunk",                                 "url": "https://advisory.splunk.com/feed.xml",                                                     "category": "advisory", "severity": "medium"},
+    {"name": "Chrome Releases",                        "url": "https://chromereleases.googleblog.com/feeds/posts/default",                                "category": "advisory", "severity": "medium"},
+    {"name": "oss-security",                           "url": "https://seclists.org/rss/oss-sec.rss",                                                     "category": "advisory", "severity": "medium"},
+    {"name": "Exploit-DB",                             "url": "https://www.exploit-db.com/rss.xml",                                                       "category": "advisory", "severity": "high"},
 ]
 
 
@@ -127,7 +173,7 @@ RSS_SOURCES = [
 # Per-feed ETag / Last-Modified store, so hourly runs can send a conditional
 # request instead of re-downloading unchanged feeds 24x/day. Most of these
 # feeds publish a handful of times daily; several have already started 403ing
-# aggressive clients (GBHackers is commented out of RSS_SOURCES for exactly
+# aggressive clients (GBHackers spent months out of RSS_SOURCES for exactly
 # that reason), so this is politeness as much as speed.
 _FEED_META: dict[str, dict] = {}
 _FEED_META_LOCK = threading.Lock()
@@ -621,7 +667,6 @@ def fetch_threatfox() -> list[dict]:
 
 _RSS_SOURCE_CONFIG: list[dict] = [
     {"name": "MSRC",          "url": "https://api.msrc.microsoft.com/update-guide/rss",                                   "severity": "high"},
-    {"name": "Gentoo",        "url": "https://security.gentoo.org/glsa/feed.rss",                                         "severity": "medium"},
     {"name": "Debian",        "url": "https://www.debian.org/security/dsa-long",                                          "severity": "medium"},
     {"name": "VMware",        "url": "https://www.broadcom.com/support/security/advisories/json",                         "severity": "high"},
 ]
@@ -703,11 +748,6 @@ def fetch_fedora() -> list[dict]:
 
     log.info(f"  Got {len(items)} from Fedora")
     return items
-
-# ── Gentoo GLSA Fetcher (RSS) ──────────────────────────────────────────────
-
-def fetch_gentoo() -> list[dict]:
-    return _fetch_rss_source("Gentoo", "https://security.gentoo.org/glsa/feed.rss", "medium")
 
 # ── Arch Linux Security Fetcher ─────────────────────────────────────────────
 
@@ -998,7 +1038,6 @@ API_SOURCES = [
     ("SSL Blacklist",  fetch_sslbl),
     ("MSRC",           fetch_msrc),
     ("Fedora",         fetch_fedora),
-    ("Gentoo",         fetch_gentoo),
     ("Arch Linux",     fetch_archlinux),
     ("Amazon Linux",   fetch_amazon_linux),
     ("Debian",         fetch_debian),

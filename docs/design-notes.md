@@ -21,7 +21,7 @@ to reconstruct.
 
 ## What it is
 
-Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 71 configured sources every hour and scores each item against how likely it is to actually be exploited. Then it does three things most feeds do not: it merges nine public corpora into **one page per threat actor, malware family, ATT&CK technique and campaign** — with every vendor's alias resolving to the same entry — it turns each technique into a **hunt pack** carrying paste-ready queries for six SIEMs and the Atomic Red Team tests that prove they fire, and it **checks its own scoring against what really happened** and publishes the result even when the result is unflattering.
+Pulls CVEs, vendor advisories, incident reporting and indicator feeds from 107 configured sources every hour and scores each item against how likely it is to actually be exploited. Then it does three things most feeds do not: it merges nine public corpora into **one page per threat actor, malware family, ATT&CK technique and campaign** — with every vendor's alias resolving to the same entry — it turns each technique into a **hunt pack** carrying paste-ready queries for six SIEMs and the Atomic Red Team tests that prove they fire, and it **checks its own scoring against what really happened** and publishes the result even when the result is unflattering.
 
 ---
 
@@ -37,7 +37,7 @@ Most threat feeds answer *what happened*. This one is built to answer **what do 
 | Are these separate stories or one operation? | **Campaigns** |
 | Can I detect it? | **Detections** — ATT&CK activity crossed with SigmaHQ rules, and the gaps |
 | Does the score actually work? | **Research → Scoring backtest** |
-| Which of my 71 feeds are worth reading? | **Research → Source reliability** |
+| Which of my 107 feeds are worth reading? | **Research → Source reliability** |
 | How long is the patch window, really? | **Research → Exploitation lag** |
 | What did the board look like the day this dropped? | **Time machine**, over 90 days of archives |
 | What changed since yesterday? | **Diff**, two dates side by side |
@@ -234,7 +234,7 @@ It did. The defaults moved from 40/40 to **10 CVSS / 60 EPSS**. On the same coho
 
 ## Which sources are worth reading?
 
-The same archive, the same outcome variable, applied to the 71 feeds. The important distinction is between **coverage** and **early warning**:
+The same archive, the same outcome variable, applied to the 107 feeds. The important distinction is between **coverage** and **early warning**:
 
 - `precision` — of the CVEs a source carried, how many are in KEV at all.
 - `ahead_precision` — the same, restricted to CVEs it carried **before** the listing date.

@@ -44,7 +44,9 @@ def _canonical_url(url: str) -> str:
 # beat aggregators, which beat news rewrites of the same story.
 _SOURCE_AUTHORITY = {
     "NVD": 100, "CISA": 95, "MSRC": 90, "GitHub Advisories": 85, "ZDI": 85,
-    "VMware": 80, "Fedora": 75, "Gentoo": 75, "Arch Linux": 75,
+    "VMware": 80, "Fedora": 75, "Arch Linux": 75,
+    "Fortinet PSIRT": 80, "Siemens ProductCERT": 80, "Synology": 80, "Splunk": 80,
+    "Chrome Releases": 80, "CERT/CC": 85, "UK NCSC": 75, "HKCERT": 70,
     "Amazon Linux": 75, "CentOS": 70, "Mitre CWE": 70,
     "PoC-in-GitHub": 65, "Ransomware.live": 60, "AlienVault OTX": 60,
     "ThreatFox": 60, "URLhaus": 60, "Feodo Tracker": 60, "Spamhaus": 60,

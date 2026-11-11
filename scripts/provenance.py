@@ -71,6 +71,9 @@ _SOURCE_PROVENANCE = {
     "Mitre CWE": GOVERNMENT,
     "Canadian Centre for Cyber Security": GOVERNMENT,
     "SANS ISC": GOVERNMENT,
+    "UK NCSC": GOVERNMENT,
+    "CERT/CC": GOVERNMENT,
+    "HKCERT": GOVERNMENT,
 
     # Vendor advisories (disclosing their own or their distro's flaws)
     "MSRC": VENDOR_ADVISORY,
@@ -78,7 +81,6 @@ _SOURCE_PROVENANCE = {
     "ZDI": VENDOR_ADVISORY,
     "VMware": VENDOR_ADVISORY,
     "Fedora": VENDOR_ADVISORY,
-    "Gentoo": VENDOR_ADVISORY,
     "Arch Linux": VENDOR_ADVISORY,
     "Amazon Linux": VENDOR_ADVISORY,
     "CentOS Stream": VENDOR_ADVISORY,
@@ -87,6 +89,11 @@ _SOURCE_PROVENANCE = {
     "Cisco PSIRT": VENDOR_ADVISORY,
     "Palo Alto Networks": VENDOR_ADVISORY,
     "Ubuntu": VENDOR_ADVISORY,
+    "Fortinet PSIRT": VENDOR_ADVISORY,
+    "Siemens ProductCERT": VENDOR_ADVISORY,
+    "Synology": VENDOR_ADVISORY,
+    "Splunk": VENDOR_ADVISORY,
+    "Chrome Releases": VENDOR_ADVISORY,
 
     # Vendor research teams
     "Cisco Talos": VENDOR_RESEARCH,
@@ -108,6 +115,21 @@ _SOURCE_PROVENANCE = {
     "ANY.RUN": VENDOR_RESEARCH,
     "Cloudflare": VENDOR_RESEARCH,
     "Datadog Security Labs": VENDOR_RESEARCH,
+    "Elastic Security Labs": VENDOR_RESEARCH,
+    "Symantec": VENDOR_RESEARCH,
+    "Zscaler ThreatLabz": VENDOR_RESEARCH,
+    "Sekoia": VENDOR_RESEARCH,
+    "Bitdefender": VENDOR_RESEARCH,
+    "AhnLab ASEC": VENDOR_RESEARCH,
+    "Cyble": VENDOR_RESEARCH,
+    "SOCRadar": VENDOR_RESEARCH,
+    "VulnCheck": VENDOR_RESEARCH,
+    "Censys": VENDOR_RESEARCH,
+    "Eclypsium": VENDOR_RESEARCH,
+    "ReversingLabs": VENDOR_RESEARCH,
+    "Socket": VENDOR_RESEARCH,
+    "Wordfence": VENDOR_RESEARCH,
+    "SpecterOps": VENDOR_RESEARCH,
 
     # Independent researchers / community
     "Krebs on Security": INDEPENDENT,
@@ -117,6 +139,11 @@ _SOURCE_PROVENANCE = {
     "Full Disclosure": INDEPENDENT,
     "Reddit/netsec": INDEPENDENT,
     "PoC-in-GitHub": INDEPENDENT,
+    "Have I Been Pwned": INDEPENDENT,
+    "Hacker News": INDEPENDENT,
+    "Lobsters": INDEPENDENT,
+    "oss-security": INDEPENDENT,
+    "Exploit-DB": INDEPENDENT,
 
     # Journalism
     "The Hacker News": JOURNALISM,
@@ -138,6 +165,15 @@ _SOURCE_PROVENANCE = {
     "DataBreaches.net": JOURNALISM,
     "Industrial Cyber": JOURNALISM,
     "The Cyber Express": JOURNALISM,
+    "Cybernews": JOURNALISM,
+    "GBHackers": JOURNALISM,
+    "SecurityOnline": JOURNALISM,
+    "Cyber Press": JOURNALISM,
+    "The420": JOURNALISM,
+    "ET CISO": JOURNALISM,
+    "IT Security Guru": JOURNALISM,
+    "Nextgov": JOURNALISM,
+    "Risky Business": JOURNALISM,
 
     # Adversary-authored: leak-site posts are written BY the attacker.
     "Ransomware.live": ADVERSARY,

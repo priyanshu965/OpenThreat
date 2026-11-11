@@ -287,7 +287,7 @@ class TestSourceListIsSound(unittest.TestCase):
         for source in fi.RSS_SOURCES:
             self.assertTrue(source["url"].startswith("https://"), source["name"])
             self.assertIn(source["name"], provenance._SOURCE_PROVENANCE, source["name"])
-        self.assertGreaterEqual(len(fi.RSS_SOURCES) + len(fi.API_SOURCES), 70)
+        self.assertGreaterEqual(len(fi.RSS_SOURCES) + len(fi.API_SOURCES), 100)
 
     def test_no_third_party_actions(self):
         """Every action must be GitHub's own, so the repository can refuse
