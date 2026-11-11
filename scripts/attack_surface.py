@@ -1,0 +1,159 @@
+"""
+OPENTHREAT — attack_surface.py
+==============================
+External attack surface discovery from Certificate Transparency.
+
+Every publicly-trusted TLS certificate is logged to CT, so querying crt.sh for
+a domain enumerates subdomains that certificates were issued for - including
+the ones nobody told the security team about. That is the shadow-IT half of
+EASM, and it needs no key and no scanning: we read a public log, we do not
+touch the hosts.
+
+NOTHING HERE PROBES ANYTHING. No port scan, no HTTP request to a discovered
+host, no DNS brute force. OpenThreat reads the CT log and stops. Anyone wanting
+liveness or service detail should take the list to a tool they are authorised
+to point at that estate.
+
+crt.sh is free but genuinely flaky (frequent 502s and timeouts under load), so
+every call retries and degrades to the cached copy rather than failing the run.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections import Counter
+
+from config import CONFIG
+
+# The pooled session and the disk cache live in fetchlib so every module shares
+# one of each. This used to be a `from fetch_intel import ...` inside a
+# try/except that ALWAYS fell through in production (fetch_intel imports this
+# module before it defines those names, and running the pipeline as a script
+# makes it `__main__` anyway) — so the fallback ran with `_cached_fetch = None`
+# and this module re-downloaded everything on all 24 daily runs.
+from fetchlib import SESSION as _SESSION, cached_fetch as _cached_fetch, log, now_utc  # noqa: F401,E402
+
+_CRTSH = "https://crt.sh/?q=%25.{domain}&output=json"
+
+_HOST_RE = re.compile(r"^(?!-)[a-z0-9*_-]{1,63}(?<!-)(\.(?!-)[a-z0-9_-]{1,63}(?<!-))+$")
+
+# Hostname prefixes that usually mean "not production", which is exactly what
+# shadow-IT review wants surfaced first.
+_INTERESTING = (
+    "dev", "test", "staging", "stage", "uat", "qa", "sandbox", "demo",
+    "internal", "intranet", "vpn", "admin", "portal", "jenkins", "git",
+    "jira", "confluence", "grafana", "kibana", "backup", "old", "legacy",
+    "beta", "preprod", "mail", "remote", "citrix", "rdp", "ftp",
+)
+
+
+def _valid_host(h: str) -> bool:
+    return bool(h) and len(h) <= 253 and bool(_HOST_RE.match(h))
+
+
+def discover_subdomains(domain: str) -> dict | None:
+    """Enumerate hostnames seen in Certificate Transparency for one domain."""
+    from exposure import valid_domain          # shared, strict domain check
+    d = valid_domain(domain)
+    if not d:
+        log.warning("  attack surface: refusing a malformed domain"
+                    + (f" {domain!r}" if CONFIG.own_estate_in_logs else ""))
+        return None
+
+    name = "ct_" + re.sub(r"[^a-z0-9]+", "_", d) + ".json"
+
+    def _raw():
+        last = None
+        for _ in range(3):                      # crt.sh 502s often; retry
+            try:
+                resp = _SESSION.get(_CRTSH.format(domain=d),
+                                    timeout=max(CONFIG.request_timeout, 60))
+                resp.raise_for_status()
+                if resp.text.strip().startswith(("[", "{")):
+                    return resp.text, None
+                last = "non-JSON response (crt.sh returned an error page)"
+            except Exception as e:
+                last = str(e)
+        return None, last or "crt.sh unavailable"
+
+    text = _cached_fetch(name, CONFIG.attack_surface_ttl_hours, _raw) if _cached_fetch else _raw()[0]
+    if not text:
+        return None
+    try:
+        records = json.loads(text)
+    except Exception:
+        return None
+    if not isinstance(records, list):
+        return None
+
+    hosts: set[str] = set()
+    issuers: Counter = Counter()
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        issuer = str(rec.get("issuer_name") or "")
+        m = re.search(r"O=([^,]+)", issuer)
+        if m:
+            issuers[m.group(1).strip().strip('"')[:40]] += 1
+        for raw in str(rec.get("name_value") or "").split("\n"):
+            h = raw.strip().lower().lstrip("*.")
+            if _valid_host(h) and (h == d or h.endswith("." + d)):
+                hosts.add(h)
+
+    ordered = sorted(hosts)
+    flagged = [h for h in ordered
+               if any(h.split(".")[0].startswith(p) for p in _INTERESTING)]
+
+    return {
+        "domain": d,
+        "hostnames": len(ordered),
+        "sample": ordered[:CONFIG.attack_surface_max_hosts],
+        "truncated": len(ordered) > CONFIG.attack_surface_max_hosts,
+        "noteworthy": flagged[:40],
+        "issuers": [{"issuer": k, "certs": v} for k, v in issuers.most_common(6)],
+        "source": "crt.sh Certificate Transparency logs",
+    }
+
+
+def build_attack_surface(domains: list[str]) -> dict | None:
+    """Enumerate every configured domain."""
+    if not CONFIG.enable_attack_surface or not domains:
+        return None
+    out = []
+    failed = []
+    for raw in domains:
+        res = discover_subdomains(raw)
+        if res:
+            out.append(res)
+            if CONFIG.own_estate_in_logs:
+                log.info(f"  attack surface: {res['domain']} — {res['hostnames']} hostname(s), "
+                         f"{len(res['noteworthy'])} noteworthy")
+                for host in res["noteworthy"][:10]:
+                    log.warning(f"    SHADOW IT: {host}")
+        else:
+            failed.append(raw)
+
+    if out and not CONFIG.own_estate_in_logs:
+        # A public log gets the fact that the check ran, not what it found.
+        log.info(f"Attack surface: enumerated {len(out)} domain(s) — findings "
+                 f"withheld from this log (see OWN_ESTATE_IN_LOGS)")
+
+    # crt.sh 502s often enough that a missing domain is far more likely to mean
+    # "the log was unreachable" than "this domain has no certificates". Say so,
+    # rather than letting an outage read as a clean result.
+    if failed:
+        log.warning(f"Attack surface: crt.sh returned nothing for "
+                    f"{len(failed)} domain(s)"
+                    + (f": {', '.join(failed)}" if CONFIG.own_estate_in_logs else "")
+                    + " (usually a crt.sh outage, not an empty estate)")
+    if not out:
+        return None
+    return {
+        "generated": now_utc(),
+        "domains": out,
+        "total_hostnames": sum(d["hostnames"] for d in out),
+        "unavailable": failed,
+        "note": ("Discovered from public Certificate Transparency logs. "
+                 "OpenThreat does not probe, scan or resolve these hosts."),
+    }

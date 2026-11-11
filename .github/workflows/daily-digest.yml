@@ -1,0 +1,62 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# OPENTHREAT — .github/workflows/daily-digest.yml
+#
+# One rollup per day of everything the hourly pipeline collected, sent to the
+# same webhook as the per-item alerts. Now driven by webhook_post.py --mode
+# digest; the separate scripts/daily_digest.py duplicated 241 lines of this
+# module and was deleted.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: Daily Digest
+
+on:
+  schedule:
+    - cron: '30 2 * * *'    # 08:00 IST
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print the payload instead of sending it'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  digest:
+    name: Send daily digest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Send digest
+        env:
+          WEBHOOK_URL:      ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_TYPE:     ${{ vars.WEBHOOK_TYPE }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DASHBOARD_URL:    ${{ vars.DASHBOARD_URL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_TO:   ${{ secrets.SMTP_TO }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+        run: |
+          # data/intel.json is no longer committed - it is published as a Pages
+          # deploy artifact. resolve_feed.py pulls the live copy, falling back to
+          # the newest committed archive snapshot, so a network blip degrades the
+          # digest to "up to 24h old" instead of failing it.
+          python scripts/resolve_feed.py --out "${RUNNER_TEMP}/intel.json" \
+            --url "${DASHBOARD_URL:-https://openthreat.in/}"
+          python scripts/webhook_post.py "${RUNNER_TEMP}/intel.json" --mode digest \
+            --type "${WEBHOOK_TYPE:-slack}" \
+            ${{ inputs.dry_run && '--dry-run' || '' }}

@@ -1,0 +1,49 @@
+# ── OpenThreat Dockerfile ──────────────────────────────────────────
+# Serves the dashboard via nginx and optionally runs the fetcher via cron
+# ────────────────────────────────────────────────────────────────────
+
+ARG VERSION=latest
+
+# ── Dashboard ──────────────────────────────────────────────────────
+# Copies an EXPLICIT file list rather than `COPY .`. The context has to keep
+# scripts/ and requirements.txt for the fetcher stage below, so allow-listing
+# here is what keeps the pipeline source, and anything else, out of the public
+# web root.
+FROM nginx:alpine AS frontend
+ARG VERSION=latest
+LABEL org.opencontainers.image.title="OpenThreat Dashboard" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/priyanshu965/OpenThreat"
+WORKDIR /usr/share/nginx/html
+COPY index.html app.js style.css service-worker.js manifest.json robots.txt ./
+# js/ is not optional: index.html loads three sibling modules from it, and
+# without them every view button throws a ReferenceError. The allow-list above
+# is the reason this needs saying — a `COPY .` would have picked it up, and
+# would also have served .git/ to the internet.
+COPY js/ ./js/
+COPY data/ ./data/
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+
+# ── Fetcher ────────────────────────────────────────────────────────
+FROM python:3.13-slim AS fetcher
+ARG VERSION=latest
+LABEL org.opencontainers.image.title="OpenThreat Fetcher" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/priyanshu965/OpenThreat"
+WORKDIR /app
+COPY requirements.txt requirements-hunt.txt ./
+RUN pip install --no-cache-dir -r requirements.txt  # runtime only; dev deps not needed in image
+# Sigma -> SIEM query compilation. Best effort, exactly as in CI: these are
+# fast-moving packages with tight inter-version constraints, and a resolver
+# conflict must cost the hunt packs their compiled queries rather than failing
+# the image build. hunt_packs probes each backend independently at import.
+RUN pip install --no-cache-dir -r requirements-hunt.txt \
+    || echo "Sigma query backends unavailable; hunt packs will carry raw rules only"
+COPY scripts/ scripts/
+# Run as a non-root user; the image only ever needs to write into /app/data,
+# which is a bind mount at runtime.
+RUN useradd --create-home --uid 10001 openthreat && chown -R openthreat /app
+USER openthreat
+CMD ["python", "scripts/fetch_intel.py"]

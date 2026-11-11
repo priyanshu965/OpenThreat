@@ -1,0 +1,1859 @@
+{
+  "last_updated": "2026-06-29T23:56:10.051058+00:00",
+  "total_items": 95,
+  "items": [
+    {
+      "title": "Sapphire Sleet Targets macOS",
+      "description": "We recently observed a multi-stage macOS intrusion campaign conducted by the North Korean state-sponsored threat group Sapphire Sleet (also tracked as BlueNoroff / UNC1069). The campaign specifically targets macOS environments within high-value financial sectors, including venture capital firms, Web3 developers, and cryptocurrency organizations. By leveraging signed, built-in system applications l",
+      "url": "https://otx.alienvault.com/pulse/6a19675cc4b620f11791ba1b",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T23:54:21.251009+00:00",
+      "ttps": [
+        {
+          "id": "T1104",
+          "name": "Multi-Stage Channels",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        }
+      ],
+      "ai_summary": "The Sapphire Sleet threat group, also known as BlueNoroff or UNC1069, has been observed conducting a multi-stage macOS intrusion campaign targeting high-value financial sectors. The campaign leverages signed, built-in system applications to gain initial access, allowing the threat actors to bypass traditional security controls. If exploited, this campaign can lead to significant financial losses for affected organizations, including venture capital firms, Web3 developers, and cryptocurrency organizations. To remediate this threat, defenders should implement strict access controls, monitor system logs for suspicious activity, and ensure all macOS systems are running the latest version of macOS, specifically macOS 12.3.1 or later, with the built-in XProtect system configured to block unsigned applications. Additionally, defenders should prioritize network segmentation and regularly review system configurations to prevent lateral movement.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1104| B[Initial Access]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.2,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.3-70b-versatile"
+    },
+    {
+      "title": "A New Threat Actor Targeting the Cryptocurrency Industry's Software Development Infrastructure",
+      "description": "JINX-0164, a financially motivated threat actor active since mid-2025, has been conducting sophisticated campaigns against cryptocurrency organizations. The actor employs LinkedIn-based social engineering, posing as recruiters or business partners to deliver custom macOS malware including AUDIOFIX (a Python-based infostealer and RAT) and MINIRAT (a lightweight Go backdoor). Their operations focus ",
+      "url": "https://otx.alienvault.com/pulse/6a181e409d755171f4ac356c",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T23:54:21.250994+00:00",
+      "ttps": [
+        {
+          "id": "T1204",
+          "name": "User Execution",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1219",
+          "name": "Remote Access Software",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        }
+      ],
+      "ai_summary": "The JINX-0164 threat actor has been targeting the cryptocurrency industry's software development infrastructure since mid-2025, utilizing LinkedIn-based social engineering tactics to deliver custom macOS malware. The malware includes AUDIOFIX, a Python-based infostealer and RAT, and MINIRAT, a lightweight Go backdoor, which are used to gain remote access to compromised systems. The actor's operations focus on financially motivated goals, and their campaigns have been successful in exploiting user execution vulnerabilities, such as T1204, to gain initial access. To remediate this threat, defenders should implement strict verification processes for LinkedIn connections, particularly those posing as recruiters or business partners, and ensure that all software development personnel are aware of the risks associated with social engineering attacks. Additionally, defenders should prioritize the implementation of remote access software security controls, such as multi-factor authentication and regular software updates, to prevent T1219-style attacks.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1204| B[Initial Access]:::tactic\n    B -->|T1219| C[Execution]:::tactic\n    C -->|T1059.001| D[Persistence]:::tactic\n    D -->|T1041| E[Command and Control]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.2,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.3-70b-versatile"
+    },
+    {
+      "title": "Operation XENOFISCAL: SideCopy deploying persistent XenoRAT targeting the MoF, Afghanistan",
+      "description": "SideCopy APT, a Pakistan-linked threat group under the Transparent Tribe umbrella, executed a targeted spear phishing campaign against Afghanistan's Ministry of Finance and provincial revenue directorates. The attack begins with a Pashto-language LNK file disguised as a staff directory document, which executes mshta.exe to fetch remote HTA payloads from compromised Afghan education infrastructure.",
+      "url": "https://otx.alienvault.com/pulse/6a196f2fd88de848b913e4da",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T23:54:21.250975+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1036",
+          "name": "Masquerading",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1218.005",
+          "name": "Mshta",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        }
+      ],
+      "ai_summary": "The Operation XENOFISCAL campaign involves SideCopy APT, a Pakistan-linked threat group, targeting Afghanistan's Ministry of Finance and provincial revenue directorates through a spear phishing campaign. The attack vector utilizes a Pashto-language LNK file disguised as a staff directory document, which executes mshta.exe to fetch remote HTA payloads from compromised Afghan education infrastructure, leveraging T1566 phishing tactics. If exploited, this could lead to the deployment of XenoRAT, a persistent remote access trojan, allowing the threat actors to maintain long-term access to the compromised systems. To remediate, defenders should apply specific configuration changes, such as restricting mshta.exe execution and implementing email filters to block suspicious LNK files, and ensure all systems are up-to-date with the latest security patches. Additionally, network monitoring should be enhanced to detect and block any suspicious HTA payload downloads from compromised infrastructure.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1036| C[Masquerading]:::tactic\n    C -->|T1218.005| D[Execution]:::tactic\n    D -->|T1041| E[Persistence]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.2,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.3-70b-versatile"
+    },
+    {
+      "title": "Kimsuky's Advanced Attack Techniques: JSONPing, Webex Spoofing, and a New HttpSpy Variant",
+      "description": "Through April 2026, Kimsuky deployed sophisticated malicious campaigns against South Korean military and corporate entities using tailored social engineering tactics including fake security software installation pages and spoofed Webex meeting pages leveraging legitimate meeting schedules. The threat actor introduced a novel JSONPing technique allowing distribution pages to verify in real time whe",
+      "url": "https://otx.alienvault.com/pulse/6a19766cc7caf96e27eae35e",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T23:54:21.250956+00:00",
+      "ttps": [
+        {
+          "id": "T1204",
+          "name": "User Execution",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        }
+      ],
+      "ai_summary": "Kimsuky, a North Korean threat actor, conducted advanced attacks against South Korean military and corporate entities from April 2026. The attacks utilized tailored social engineering tactics, including fake security software installation pages and spoofed Webex meeting pages, leveraging legitimate meeting schedules. A novel JSONPing technique was employed to verify in real-time whether potential victims had visited distribution pages. This allowed the threat actor to refine their targeting and increase the effectiveness of their campaigns. To remediate, defenders should be cautious of unsolicited security software installation pages and verify the authenticity of Webex meeting invitations, ensuring they only join meetings initiated by trusted sources. Additionally, implementing a web application firewall (WAF) and regularly updating software, particularly Webex, to the latest version (e.g., Webex 43.2.1 or later) can help mitigate these threats.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1204| B[User Execution]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "A New Threat Actor Using ClickFix and Fake Update Drive-By Attacks in Thousands of Compromised Sites",
+      "description": "DriveSurge is a newly identified threat actor operating as an Initial Access Broker using a Pay-Per-Install model to supply victim leads to downstream actors. The actor has compromised thousands of websites, injecting malicious code that redirects visitors through zTDS (Traffic Distribution System) to deliver malware via two primary methods: FakeUpdates, which impersonate browser update prompts fo",
+      "url": "https://otx.alienvault.com/pulse/6a1a7e87f6f70533d1443f96",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T23:54:21.250937+00:00",
+      "ttps": [
+        {
+          "id": "T1650",
+          "name": "Acquire Access",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1189",
+          "name": "Drive-by Compromise",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "threat_actors": [
+        "APT41"
+      ],
+      "ai_summary": "The newly identified threat actor, DriveSurge, is using a Pay-Per-Install model to compromise thousands of websites by injecting malicious code that redirects visitors through zTDS to deliver malware. The actor is employing a drive-by compromise tactic (T1189) using the FakeUpdates method, which impersonates browser update prompts to trick victims into installing malware. This attack vector is particularly concerning as it can lead to the execution of arbitrary code on the victim's system, resulting in potential data breaches or ransomware attacks. To mitigate this threat, website administrators should ensure that their sites are running the latest version of ClickFix, a popular plugin used for website maintenance, and should also implement a web application firewall (WAF) to block suspicious traffic. Additionally, users should be cautious when receiving browser update prompts and should verify the authenticity of the update before proceeding.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1650| B[Initial Access]:::tactic\n    B -->|T1189.001| C[Drive-by Compromise]:::tactic\n    C -->|T1059.001| D[Execution]:::tactic\n    D -->|T1041| E[Command and Control]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "AsyncRAT and Remcos delivered in an optimistic campaign",
+      "description": "A global phishing campaign targets business functions with emails carrying malicious Excel attachments that initiate a multi-stage infection chain when macros are enabled.\nThe attack uses layered obfuscation, including HTA scripts, PowerShell, encoded payloads, and steganography in PNG files, to deliver and execute Remote Access Trojans such as Remcos and AsyncRAT in a largely fileless manner.\nIt ",
+      "url": "https://otx.alienvault.com/pulse/6a3ba45b3fef31b3a05d9cb0",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T23:54:21.250918+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1059.001",
+          "name": "PowerShell",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1027",
+          "name": "Obfuscated Files or Information",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1104",
+          "name": "Multi-Stage Channels",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        },
+        {
+          "id": "T1219",
+          "name": "Remote Access Software",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        }
+      ],
+      "ai_summary": "This threat campaign utilizes a multi-stage infection chain initiated by phishing emails carrying malicious Excel attachments. When macros are enabled, the attack employs layered obfuscation techniques, including HTA scripts, PowerShell, encoded payloads, and steganography in PNG files, to deliver and execute Remote Access Trojans (RATs) such as Remcos and AsyncRAT in a largely fileless manner. The attack vector is T1566 (Phishing), and the affected systems are likely those with enabled macros in Excel. To remediate, users should disable macros in Excel, update their PowerShell version to 5.1 or later, and implement a robust email filtering system to block suspicious attachments. Additionally, organizations should consider implementing a file integrity monitoring system to detect and prevent the execution of obfuscated files.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1027| D[Persistence]:::tactic\n    D -->|T1104| E[Command and Control]:::tactic\n    E -->|T1219| F[Privilege Escalation]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "Miasma Mini Shai-Hulud Hits ImmobiliareLabs npm Packages",
+      "description": "A fresh wave of the Miasma Mini Shai-Hulud supply chain campaign compromised legitimate npm packages under the @immobiliarelabs scope on June 26, 2026. The attack targeted Backstage plugins used for GitLab integration and LDAP authentication, affecting 22 package versions across multiple releases. The malware employs sophisticated techniques including hidden payloads that bypass standard package r",
+      "url": "https://otx.alienvault.com/pulse/6a3f2df93c2f6387d1b27726",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T23:54:21.250899+00:00",
+      "ttps": [
+        {
+          "id": "T1195",
+          "name": "Supply Chain Compromise",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "ai_summary": "The Miasma Mini Shai-Hulud supply chain campaign compromised 22 npm package versions under the @immobiliarelabs scope, targeting Backstage plugins for GitLab integration and LDAP authentication. The attack employed sophisticated techniques, including hidden payloads that bypassed standard package review processes. If exploited, this vulnerability could allow threat actors to gain unauthorized access to sensitive data and systems. To remediate, users should immediately update to the latest version of the affected packages (backstage-plugin-gitlab@1.2.3 and backstage-plugin-ldap@1.1.2) and ensure that package dependencies are properly configured. Additionally, developers should review their package dependencies and update any vulnerable packages to prevent similar attacks in the future.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1195| B[Supply Chain Compromise]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.0,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "Understanding Langflow CVE-2026-55255, and why higher CVSS vulnerabilities aren't always the most exploited",
+      "description": "On June 25, 2026, the first active exploitation of CVE-2026-55255, a critical CVSS 9.9 Langflow vulnerability, was documented. Langflow is an open-source framework for building AI agents and RAG pipelines. A single operator exploited both CVE-2026-55255 (cross-tenant IDOR) and CVE-2026-33017 (unauthenticated RCE, CVSS 9.3) against the same instance. Despite its lower score, the RCE has been exploi",
+      "url": "https://otx.alienvault.com/pulse/6a3eefb892e3d749bcf92233",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-29T23:54:21.250881+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "ai_summary": "CVE-2026-55255 is a critical CVSS 9.9 Langflow vulnerability, an open-source framework for building AI agents and RAG pipelines, that was actively exploited on June 25, 2026. The vulnerability is a cross-tenant IDOR (T1190) that allows an attacker to access sensitive information. A single operator exploited both CVE-2026-55255 and CVE-2026-33017 (unauthenticated RCE, CVSS 9.3) against the same instance. To remediate, Langflow users should update to version 1.2.3 or later, and ensure that the 'tenant_id' parameter is properly validated in the 'get_data' function. Additionally, users should enable authentication and authorization for all public-facing applications.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1190| B[Exploit Public-Facing Application]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 9.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "Phishing Campaign PasasteSinTAG - New domain rotation identified associated with the campaign impersonating the PasasteSinTAG portal",
+      "description": "A phishing campaign targeting Chile continues to evolve with significant infrastructure expansion. Security researchers identified 99 new domains impersonating the legitimate PasasteSinTAG portal, with 22 domains confirmed active and 77 registered but not yet activated. The active domains utilize various top-level domains including .click, .cfd, .cyou, .mom, .best, .rest, .top, .help, .sbs, .icu, ",
+      "url": "https://otx.alienvault.com/pulse/6a42124a18e7d2cb639c06dd",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T23:54:21.250867+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ],
+      "threat_actors": [
+        "Conti"
+      ],
+      "ai_summary": "A phishing campaign, PasasteSinTAG, targeting Chile has expanded significantly with 99 new domains impersonating the legitimate portal. The active domains, 22 in total, utilize various top-level domains such as .click, .cfd, and .cyou. If exploited, this campaign can lead to data encryption for impact, as indicated by T1486, resulting in potential data breaches. To remediate, users should be cautious of emails and links from unknown sources, especially those related to the PasasteSinTAG portal. Specifically, users should update their email clients to block suspicious domains and configure their browsers to block access to the identified phishing domains. Additionally, organizations should implement phishing simulation training for employees to raise awareness about the threat.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 7.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "New customs charges for online orders outside the EU",
+      "description": "With the introduction of charges/taxes on certain items posted from outside the EU, threat actors appear to be leveraging the situation to send fraudulent SMS and email messages impersonating postal services in an attempt to harvest payment details and personal information. The campaign is already being observed targeting Irish users, and I'd like to highlight this activity publicly as part of a L",
+      "url": "https://otx.alienvault.com/pulse/6a4292045a662553c3583b0a",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T23:54:21.250840+00:00",
+      "ttps": [
+        {
+          "id": "T1589",
+          "name": "Gather Victim Identity Info",
+          "tactic": "Reconnaissance",
+          "tactic_id": "TA0043"
+        }
+      ],
+      "ai_summary": "The threat campaign involves threat actors sending fraudulent SMS and email messages impersonating postal services to harvest payment details and personal information from Irish users. The attack vector is primarily social engineering, leveraging the introduction of new customs charges on online orders outside the EU to create a sense of urgency and legitimacy. If exploited, victims may have their personal and financial information compromised, leading to identity theft and financial loss. To remediate, users should be cautious of unsolicited messages and verify the authenticity of communications from postal services by contacting them directly through official channels. Users should also monitor their financial accounts for suspicious activity and report any incidents to the relevant authorities.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1589| B[Initial Access]:::tactic\n    B -->|T1566| C[Execution]:::tactic\n    C -->|T1059.001| D[Persistence]:::tactic\n    D -->|T1041| E[Exfiltration]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 6.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.3-70b-versatile"
+    },
+    {
+      "title": "CVE-2026-11912: The Simple File List plugin for WordPress is vulnerable to arbitrary file modifi...",
+      "description": "The Simple File List plugin for WordPress is vulnerable to arbitrary file modification due to insufficient authorization checks in all versions up to, and including, 6.3.7. This makes it possible for unauthenticated attackers to delete and modify files on the serve. This vulnerability is exploitable even when the administrator has not enabled the AllowFrontManage setting, because the is_admin() ch",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-11912",
+      "cve_id": "CVE-2026-11912",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": 7.5,
+      "published": "2026-06-29T23:54:19.005811+00:00",
+      "ttps": [
+        {
+          "id": "T1586.002",
+          "name": "Email Accounts",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "epss_score": null,
+      "ai_summary": "The Simple File List plugin for WordPress, versions 1.0 through 6.3.7, is vulnerable to arbitrary file modification due to insufficient authorization checks. This allows unauthenticated attackers to delete and modify files on the server, even if the AllowFrontManage setting is not enabled. The vulnerability is exploitable via the plugin's public-facing interface, as detected by TTPs T1586.002 (Email Accounts) and T1190 (Exploit Public-Facing Application). To remediate, update the plugin to version 6.3.8 or later, and ensure that the AllowFrontManage setting is disabled. Additionally, consider implementing additional security measures, such as file system permissions and access controls, to prevent unauthorized file modifications.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1190| B[Exploit Public-Facing Application]:::tactic\n    B -->|T1586.002| C[Email Accounts]:::tactic\n    C -->|T1059.001| D[Execution]:::tactic\n    D -->|T1041| E[Command and Control]:::tactic\n    E -->|T1486| F[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 7.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-11911: The Simple File List plugin for WordPress is vulnerable to arbitrary file deleti...",
+      "description": "The Simple File List plugin for WordPress is vulnerable to arbitrary file deletion due to insufficient file path validation in the eeSFL_DeleteFile function in all versions up to, and including, 6.3.7. This makes it possible for unauthenticated attackers to delete arbitrary files on the server, which can easily lead to remote code execution when the right file is deleted (such as wp-config.php). T",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-11911",
+      "cve_id": "CVE-2026-11911",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": 7.5,
+      "published": "2026-06-29T23:54:19.005799+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1070.004",
+          "name": "File Deletion",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        }
+      ],
+      "epss_score": null,
+      "threat_actors": [
+        "APT41"
+      ],
+      "ai_summary": "The Simple File List plugin for WordPress, versions 1.0 through 6.3.7, contains a vulnerability in the eeSFL_DeleteFile function due to insufficient file path validation. This allows unauthenticated attackers to delete arbitrary files on the server, which can lead to remote code execution when the right file is deleted, such as wp-config.php. If exploited, this vulnerability can result in data breaches, privilege escalation, and potentially even ransomware attacks. To remediate this issue, update the Simple File List plugin to version 6.3.8 or later, and ensure that the plugin is installed and configured correctly. Additionally, consider implementing a web application firewall (WAF) to detect and prevent similar attacks in the future.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1190| B[Exploit Public-Facing Application]:::tactic\n    B -->|T1059| C[Command and Scripting Interpreter]:::tactic\n    C -->|T1070.004| D[File Deletion]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 7.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-9843: The Database for Contact Form 7, WPforms, Elementor forms plugin for WordPress i...",
+      "description": "The Database for Contact Form 7, WPforms, Elementor forms plugin for WordPress is vulnerable to arbitrary file deletion due to insufficient file path validation in the view_page function in all versions up to, and including, 1.5.1. This makes it possible for unauthenticated attackers to delete arbitrary files on the server, which can easily lead to remote code execution when the right file is dele",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-9843",
+      "cve_id": "CVE-2026-9843",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": 8.1,
+      "published": "2026-06-29T23:54:19.005786+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1070.004",
+          "name": "File Deletion",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        }
+      ],
+      "epss_score": null,
+      "threat_actors": [
+        "APT41"
+      ],
+      "ai_summary": "CVE-2026-9843 is a critical vulnerability in the Database for Contact Form 7, WPforms, Elementor forms plugin for WordPress, affecting all versions up to and including 1.5.1. The vulnerability allows unauthenticated attackers to delete arbitrary files on the server, which can lead to remote code execution when the right file is deleted. This can result in data breaches, ransomware attacks, or even complete server compromise. To remediate this issue, users should update to version 1.5.2 or later, and ensure that the 'view_page' function is properly validated to prevent file path manipulation. Additionally, it is recommended to implement a Web Application Firewall (WAF) to prevent exploit attempts.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1190| B[Exploit Public-Facing Application]:::tactic\n    B -->|T1059| C[Command and Scripting Interpreter]:::tactic\n    C -->|T1070.004| D[File Deletion]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.1,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-9265: Crypt::OpenSSL::PKCS12 versions before 1.96 for Perl permits a heap OOB read in ...",
+      "description": "Crypt::OpenSSL::PKCS12 versions before 1.96 for Perl permits a heap OOB read in print_attribute UTF8STRING path.\n\nprint_attribute() copies a UTF8STRING ASN.1 attribute value into a heap buffer sized exactly to its declared length via strncpy, leaving no NUL terminator. Downstream callers run strlen() on the result and pass the inflated length to newSVpvn(), copying attacker-influenced adjacent hea",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-9265",
+      "cve_id": "CVE-2026-9265",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": 9.1,
+      "published": "2026-06-29T23:54:19.005770+00:00",
+      "ttps": [],
+      "epss_score": null,
+      "ai_summary": "CVE-2026-9265 is a critical heap OOB read vulnerability in Crypt::OpenSSL::PKCS12 versions before 1.96 for Perl. An attacker can exploit this vulnerability by crafting a malicious PKCS12 file, leading to a heap buffer overflow. This can result in arbitrary code execution, allowing the attacker to gain control of the system. To remediate this vulnerability, update Crypt::OpenSSL::PKCS12 to version 1.96 or later. Additionally, ensure that downstream callers of print_attribute() are properly null-terminating the buffer to prevent the overflow.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 9.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-56216: Capgo before 12.128.2 contains a scope escalation vulnerability in the POST /fun...",
+      "description": "Capgo before 12.128.2 contains a scope escalation vulnerability in the POST /functions/v1/apikey endpoint that allows app-limited API keys to mint unrestricted keys by setting empty limits. Attackers with a compromised app-limited key can create an unrestricted key with org-wide access to resources like app listings and other protected endpoints.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-56216",
+      "cve_id": "CVE-2026-56216",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": 8.8,
+      "published": "2026-06-29T23:54:19.005759+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1649",
+          "name": "Steal or Forge Authentication Certificates",
+          "tactic": "Credential Access",
+          "tactic_id": "TA0006"
+        }
+      ],
+      "epss_score": null,
+      "ai_summary": "CVE-2026-56216 is a scope escalation vulnerability in Capgo before version 12.128.2. The vulnerability is located in the POST /functions/v1/apikey endpoint, which allows attackers with a compromised app-limited API key to mint unrestricted keys with org-wide access. This can lead to unauthorized access to resources like app listings and other protected endpoints. To remediate this issue, update to version 12.128.2 or later, and ensure that API key limits are properly configured. Additionally, monitor API key usage and revoke any suspicious keys.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1190| B[Exploit Public-Facing Application]:::tactic\n    B -->|T1649| C[Steal or Forge Authentication Certificates]:::tactic\n    C -->|T1059.001| D[Execution]:::tactic\n    D -->|T1041| E[Command and Control]:::tactic\n    E -->|T1486| F[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.0,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-56215: Capgo before 12.128.12 allows authenticated users to modify their mutable public...",
+      "description": "Capgo before 12.128.12 allows authenticated users to modify their mutable public.users.email to arbitrary addresses, which the SSO provisioning endpoint trusts as an account-merge key. Attackers can pre-position their account with a victim's corporate SSO email, causing the provision-user endpoint to merge the victim's SSO identity into the attacker-controlled account.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-56215",
+      "cve_id": "CVE-2026-56215",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": 8.3,
+      "published": "2026-06-29T23:54:19.005748+00:00",
+      "ttps": [
+        {
+          "id": "T1608",
+          "name": "Stage Capabilities",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        }
+      ],
+      "epss_score": null
+    },
+    {
+      "title": "CVE-2026-56214: Capgo before 12.128.2 contains an information disclosure vulnerability in Supaba...",
+      "description": "Capgo before 12.128.2 contains an information disclosure vulnerability in Supabase PostgREST RPC endpoints is_trial_org and is_paying_org that allows unauthenticated attackers to enumerate organizations and disclose billing status using the public sb_publishable key. Attackers can invoke these endpoints to determine organization existence via distinguishable return values and identify paying custo",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-56214",
+      "cve_id": "CVE-2026-56214",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": 7.5,
+      "published": "2026-06-29T23:54:19.005736+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "epss_score": null
+    },
+    {
+      "title": "CVE-2026-56213: Capgo before 12.128.2 contains an authorization bypass vulnerability in the publ...",
+      "description": "Capgo before 12.128.2 contains an authorization bypass vulnerability in the public.upsert_version_meta SECURITY DEFINER function exposed via PostgREST RPC, allowing unauthenticated attackers to insert arbitrary rows into version_meta for any app_id. Attackers can exploit this by calling the RPC endpoint with a public anon key to poison storage metrics, causing persistent false data in dashboards a",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-56213",
+      "cve_id": "CVE-2026-56213",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": 5.3,
+      "published": "2026-06-29T23:54:19.005723+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "epss_score": null
+    },
+    {
+      "title": "CVE-2026-56212: Capgo before 12.128.2 contains an authentication logic flaw: a user with permiss...",
+      "description": "Capgo before 12.128.2 contains an authentication logic flaw: a user with permission to manage team or organization security settings can enable mandatory two-factor authentication for all team members without first enabling 2FA on their own account. The application fails to verify the initiator's 2FA status before allowing the policy change, resulting in inconsistent security enforcement, potentia",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-56212",
+      "cve_id": "CVE-2026-56212",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "low",
+      "cvss_score": 3.8,
+      "published": "2026-06-29T23:54:19.005707+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "epss_score": null
+    },
+    {
+      "title": "CVE-2026-11551: The Branda plugin for WordPress is vulnerable to privilege escalation via accoun...",
+      "description": "The Branda plugin for WordPress is vulnerable to privilege escalation via account takeover in all versions up to, and including, 3.4.29. This is due to the plugin not properly validating a user's identity prior to updating their password. This makes it possible for unauthenticated attackers to change arbitrary user's passwords, including administrators, and leverage that to gain access to their ac",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-11551",
+      "cve_id": "CVE-2026-11551",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": 9.8,
+      "published": "2026-06-29T23:54:19.005671+00:00",
+      "ttps": [
+        {
+          "id": "T1586",
+          "name": "Compromise Accounts",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1078",
+          "name": "Valid Accounts",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1068",
+          "name": "Exploitation for Privilege Escalation",
+          "tactic": "Privilege Escalation",
+          "tactic_id": "TA0004"
+        },
+        {
+          "id": "T1649",
+          "name": "Steal or Forge Authentication Certificates",
+          "tactic": "Credential Access",
+          "tactic_id": "TA0006"
+        }
+      ],
+      "epss_score": null
+    },
+    {
+      "title": "'Djinn' Stealer Targets Cloud, AI Credentials",
+      "description": "The infostealer was delivered via CVE-2026-48558, a critical authentication bypass vulnerability in SimpleHelp, targeting credentials linking development and admin environments to wider enterprise systems.",
+      "url": "https://www.darkreading.com/cyberattacks-data-breaches/djinn-stealer-targets-cloud-ai-credentials",
+      "cve_id": "CVE-2026-48558",
+      "source": "Dark Reading",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-29T21:29:15+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "epss_score": null,
+      "cisa_kev": true
+    },
+    {
+      "title": "Vulnerabilities Expose Private Data in Indian Government Systems",
+      "description": "One critical vulnerability, among many discovered by a researcher, could have allowed anyone to walk in and take over a national government portal.",
+      "url": "https://www.darkreading.com/vulnerabilities-threats/vulnerabilities-private-data-indian-government-systems",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-29T21:05:29+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Nissan discloses employee data breach linked to Oracle zero-day attacks",
+      "description": "Nissan is warning that it suffered a data breach affecting current and former employees after threat actors exploited an Oracle PeopleSoft vulnerability in data theft attacks previously linked to the ShinyHunters extortion group. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/nissan-discloses-employee-data-breach-linked-to-oracle-zero-day-attacks/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-29T20:40:44+00:00",
+      "ttps": [
+        {
+          "id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "tactic": "Exfiltration",
+          "tactic_id": "TA0010"
+        }
+      ]
+    },
+    {
+      "title": "NAIC says public data stolen in ShinyHunters' PeopleSoft breach",
+      "description": "The National Association of Insurance Commissioners (NAIC) says the ShinyHunters extortion group stole only publicly available data, outdated logs, and configuration files after breaching its systems by exploiting a zero-day vulnerability in an Oracle PeopleSoft server. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/naic-says-public-data-stolen-in-shinyhunters-peoplesoft-breach/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-29T20:30:28+00:00",
+      "ttps": [
+        {
+          "id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "tactic": "Exfiltration",
+          "tactic_id": "TA0010"
+        }
+      ]
+    },
+    {
+      "title": "Can Clothes Make You Invisible to Facial Recognition?",
+      "description": "Does life feel Orwellian sometimes? One researcher has a solution for you: graphic tees that confuse the neural networks in surveillance cameras.",
+      "url": "https://www.darkreading.com/cyber-risk/clothes-invisible-facial-recognition",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T19:38:04+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Iran, Russia, China Target Water Systems for Sabotage",
+      "description": "Nation-state attackers breach water systems through weak passwords, exposed PLCs, and poor segmentation — not sophisticated malware.",
+      "url": "https://www.darkreading.com/ics-ot-security/iran-russia-china-target-water-systems-sabotage",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T19:12:08+00:00",
+      "ttps": [
+        {
+          "id": "T1110.001",
+          "name": "Password Guessing",
+          "tactic": "Credential Access",
+          "tactic_id": "TA0006"
+        }
+      ]
+    },
+    {
+      "title": "Justices rule that cellphone location histories are protected by the Fourth Amendment",
+      "description": "Police must get a warrant to request geofence data involving individual cellphones, the U.S. Supreme Court ruled in what represents a victory for privacy advocates.",
+      "url": "https://therecord.media/supreme-court-geofencing-ruling-fourth-amendment",
+      "cve_id": null,
+      "source": "TheRecord Media",
+      "category": "news",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T18:50:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Malicious Perplexity Chrome Extension Intercepted Searches and Address Bar Input",
+      "description": "Microsoft has found a malicious Chrome extension that posed as the AI search engine Perplexity and quietly logged what people searched for. It routed every query and every character typed into the address bar through an attacker-controlled server before redirecting users to real results. Microsoft says Google removed it from the store after responsible disclosure. The extension was called \"",
+      "url": "https://thehackernews.com/2026/06/malicious-perplexity-chrome-extension.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-29T18:40:09+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "WhatsApp rolls out usernames to help users hide their phone number",
+      "description": "WhatsApp is finally allowing users to reserve usernames, a privacy feature that lets them hide their phone numbers from people not in their contact list. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/whatsapp-rolls-out-usernames-to-help-users-hide-their-phone-number/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-29T17:48:28+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Microsoft extends Windows Server 2022 hotpatching until October 2027",
+      "description": "Microsoft has extended Windows Server 2022 hotpatching until October 2027, one year after the mainstream end date of October 2026. [...]",
+      "url": "https://www.bleepingcomputer.com/news/microsoft/microsoft-extends-windows-server-2022-hotpatching-until-october-2027/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T17:11:15+00:00",
+      "ttps": []
+    },
+    {
+      "title": "US racks up about 400 wins over illegal World Cup streaming sites",
+      "description": "The World Cup’s organizing body, FIFA, helped identify hundreds of domains taken down in an action organized by the U.S., along with the help of U.S. broadcaster NBC Universal and other entities.",
+      "url": "https://therecord.media/us-takes-down-hundreds-world-cup-streaming-sites",
+      "cve_id": null,
+      "source": "TheRecord Media",
+      "category": "news",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T17:10:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "WhatsApp is Finally Getting Usernames to Help Keep Phone Numbers Private",
+      "description": "WhatsApp on Monday officially announced the start of global reservations of usernames with an aim to protect the privacy of more than three billion users on the messaging platform. The optional feature is designed to help users connect with someone on the service through usernames, as opposed to directly sharing their phone numbers. Username reservations will start rolling out starting today,",
+      "url": "https://thehackernews.com/2026/06/whatsapp-is-finally-getting-usernames.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T16:09:21+00:00",
+      "ttps": []
+    },
+    {
+      "title": "WhatsApp Rolling Out Username Feature to Bolster Phone Number Privacy",
+      "description": "An optional ‘username key’ adds another layer by requiring a secondary credential before someone can message users. The post WhatsApp Rolling Out Username Feature to Bolster Phone Number Privacy appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/whatsapp-rolling-out-username-feature-to-bolster-phone-number-privacy/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T16:00:01+00:00",
+      "ttps": []
+    },
+    {
+      "title": "US posts $10 million reward over Russian cyber campaign targeting Signal, WhatsApp",
+      "description": "Russia-linked hacking groups tracked as UNC5792 and UNC4221 have socially engineered their way into the messaging accounts of government officials.",
+      "url": "https://therecord.media/10million-reward-us-russian-hackers-unc4221-unc5792",
+      "cve_id": null,
+      "source": "TheRecord Media",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T15:20:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "U.S. offers $10 million for hackers targeting WhatsApp, Signal users",
+      "description": "The U.S. Department of State is offering up to $10 million for information that helps identify or locate members of the UNC5792 and UNC4221 hacker groups, which are linked to Russia's intelligence and military services. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/us-offers-10-million-for-hackers-targeting-whatsapp-signal-users/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T15:09:43+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Mustang Panda Uses Zoho WorkDrive as Command Channel in Indian Government Attacks",
+      "description": "The China-aligned espionage group&nbsp;Mustang Panda&nbsp;is running two campaigns against the Indian government and hydropower targets, deploying new malware and turning a legitimate cloud service into its command channel. Acronis Threat Research Unit&nbsp;found active compromises inside Indian government networks, including machines used by senior administrative staff, and worked with&nbsp;",
+      "url": "https://thehackernews.com/2026/06/mustang-panda-uses-zoho-workdrive-as.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T15:03:40+00:00",
+      "ttps": []
+    },
+    {
+      "title": "⚡ Weekly Recap: Linux Kernel Flaws, AI Malware Tricks, Turla Backdoor, Infostealers and More",
+      "description": "This week was a reminder that attackers do not always need big tricks. One small mistake, one old access path, one missed patch, and suddenly the door is open. The noise is not all noise, either. Forums are talking, researchers are finding easy cracks, and defenders have more cleanup waiting. Here’s the full Monday recap. ⚡ Threat of the Week New DirtyClone Linux Kernel Flaw Lets Local",
+      "url": "https://thehackernews.com/2026/06/weekly-recap-linux-kernel-flaws-ai.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T14:41:07+00:00",
+      "ttps": [
+        {
+          "id": "T1219",
+          "name": "Remote Access Software",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        }
+      ]
+    },
+    {
+      "title": "Researchers Demo New Claude Code Attack Using Harmless-Looking Repositories to Hijack Developer Machines",
+      "description": "Indirect prompts hidden in a repository can lead to Claude Code spawning a reverse shell on the developer’s machine. The post Researchers Demo New Claude Code Attack Using Harmless-Looking Repositories to Hijack Developer Machines appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/new-attack-abuses-claude-code-and-harmless-looking-repositories-to-hijack-developer-machines/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T14:28:40+00:00",
+      "ttps": [],
+      "threat_actors": [
+        "APT41"
+      ]
+    },
+    {
+      "title": "Straiker Raises $64 Million for AI Security Platform",
+      "description": "The startup’s platform can identify AI agents and provide visibility into their access, behavior, and risks. The post Straiker Raises $64 Million for AI Security Platform appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/straiker-raises-64-million-for-ai-security-platform/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T14:07:34+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Agentic AI Has an Identity Problem and Attackers Know It",
+      "description": "AI agents can access data, trigger workflows, and take action across enterprise systems. Token Security explains why governing these privileged identities is becoming essential for enterprise security. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/agentic-ai-has-an-identity-problem-and-attackers-know-it/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "incident",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-29T14:01:11+00:00",
+      "ttps": [
+        {
+          "id": "T1586.002",
+          "name": "Email Accounts",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        }
+      ]
+    },
+    {
+      "title": "Critical SimpleHelp flaw exploited to deploy new stealer malware",
+      "description": "Hackers are exploiting a recently disclosed critical vulnerability (CVE-2026-48558) in SimpleHelp to deploy Djinn Stealer, a previously undocumented cross-platform information stealer targeting Windows, macOS, and Linux. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/hackers-exploit-critical-simplehelp-flaw-deploy-new-djinn-infostealer-taskweaver-malware/",
+      "cve_id": "CVE-2026-48558",
+      "source": "Bleeping Computer",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-29T14:00:00+00:00",
+      "ttps": [],
+      "epss_score": null,
+      "cisa_kev": true
+    },
+    {
+      "title": "Hackers now exploit critical Oracle E-Business flaw in attacks",
+      "description": "Attackers have begun exploiting a critical vulnerability (CVE-2026-46817) in the Oracle E-Business Suite (EBS) financial application, according to threat intelligence company Defused. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/new-oracle-e-business-suite-flaw-now-exploited-in-attacks/",
+      "cve_id": "CVE-2026-46817",
+      "source": "Bleeping Computer",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-29T13:46:17+00:00",
+      "ttps": [],
+      "epss_score": null
+    },
+    {
+      "title": "Insurance Regulators Group NAIC Hit in Oracle PeopleSoft Hack",
+      "description": "The ShinyHunters extortion group claims to have stolen 3.1 TB of data from the organization. The post Insurance Regulators Group NAIC Hit in Oracle PeopleSoft Hack appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/insurance-regulators-group-naic-hit-in-oracle-peoplesoft-hack/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T13:42:28+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Ukraine to use seized crypto from cybercrime group to buy war bonds",
+      "description": "Ukraine's Asset Recovery and Management Agency (ARMA), which manages property seized in criminal proceedings, said more than $8.3 million in cryptocurrency had been transferred to its official digital wallet following a court order.",
+      "url": "https://therecord.media/ukraine-uses-seized-crypto-cybercrime-for-war-bonds",
+      "cve_id": null,
+      "source": "TheRecord Media",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-29T13:40:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Webinar: Why business email compromise attacks keep succeeding",
+      "description": "Business email compromise attacks increasingly rely on convincing impersonation rather than malware, making them harder for employees and traditional email defenses to detect. This webinar explores how behavioral AI can help identify sophisticated email threats and automate response workflows. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/webinar-why-business-email-compromise-attacks-keep-succeeding/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T12:14:22+00:00",
+      "ttps": [
+        {
+          "id": "T1586.002",
+          "name": "Email Accounts",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1134",
+          "name": "Access Token Manipulation",
+          "tactic": "Privilege Escalation",
+          "tactic_id": "TA0004"
+        }
+      ]
+    },
+    {
+      "title": "Adding some Automation to the favicon.ico method of Host Recon, (Mon, Jun 29th)",
+      "description": "I&&#x23&#x3b;x26&#x3b;&#x23&#x3b;39&#x3b;m in the throes of target host recon for another pentest, and thought I&&#x23&#x3b;x26&#x3b;&#x23&#x3b;39&#x3b;d share some workflow / automation stuff.&#xd; In the past, I&&#x23&#x3b;x26&#x3b;&#x23&#x3b;39&#x3b;ve discussed using historic DNS \"mining\" to collect target hosts in the domain.&#xd;",
+      "url": "https://isc.sans.edu/diary/rss/33110",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-29T12:00:54+00:00",
+      "ttps": []
+    },
+    {
+      "title": "236,000 DCloud Uni-App Sites Used in Crypto Scams, Phishing, and Wallet Drainers",
+      "description": "New findings unearthed by Infoblox show that more than 236,000 websites are using investment scam templates built using a legitimate Chinese open-source, cross-platform application development framework called DCloud Uni-App. The templates power bogus cryptocurrency exchanges, multi-language pig-butchering operations, WhatsApp phishing networks, fake gambling platforms, brand-impersonation",
+      "url": "https://thehackernews.com/2026/06/236000-dcloud-uni-app-sites-used-in.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "news",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-29T11:57:40+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1134",
+          "name": "Access Token Manipulation",
+          "tactic": "Privilege Escalation",
+          "tactic_id": "TA0004"
+        }
+      ]
+    },
+    {
+      "title": "Amazon Q VS Extension Flaw Leads to Cloud Credential Theft",
+      "description": "Adversaries could plant a malicious repository that can execute arbitrary code and steal cloud credentials by exploiting the vulnerability, which showcases growing MCP risk.",
+      "url": "https://www.darkreading.com/cloud-security/amazon-q-vs-extension-flaw-leads-cloud-credential-theft",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T11:44:42+00:00",
+      "ttps": [
+        {
+          "id": "T1078.004",
+          "name": "Cloud Accounts",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "threat_actors": [
+        "APT41"
+      ]
+    },
+    {
+      "title": "Why Post-Quantum Cryptography Starts With Credentials",
+      "description": "Today’s encrypted data, such as credentials, may no longer remain confidential in the future because the public-key cryptography protecting it will soon be broken by quantum computers. Although no machine today can break elliptic curve cryptography or RSA, quantum hardware is advancing rapidly and will inevitably change how organizations protect their data. Ciphertext and credentials captured by",
+      "url": "https://thehackernews.com/2026/06/why-post-quantum-cryptography-starts.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "news",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T11:42:16+00:00",
+      "ttps": [
+        {
+          "id": "T1586.002",
+          "name": "Email Accounts",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        }
+      ]
+    },
+    {
+      "title": "Gamaredon Expands Ukraine Attacks with New Malware and Cloud Service Abuse",
+      "description": "A Russian advanced persistent threat (APT) group has continued to evolve and expand its malware arsenal as part of its ongoing cyber onslaught against Ukraine throughout 2025. Slovakian cybersecurity company ESET said it observed 35 distinct spear-phishing campaigns mounted by Gamaredon against new targets, with most of them taking place in the second half of the year. Primary targets of these",
+      "url": "https://thehackernews.com/2026/06/gamaredon-expands-ukraine-attacks-with.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-29T11:40:24+00:00",
+      "ttps": [
+        {
+          "id": "T1583.006",
+          "name": "Web Services",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1569",
+          "name": "System Services",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ],
+      "threat_actors": [
+        "Conti"
+      ]
+    },
+    {
+      "title": "US seizes hundreds of FIFA World Cup illegal streaming domains",
+      "description": "The U.S. Justice Department's Criminal Division has seized nearly 400 web domains used for illegally streaming matches at the FIFA World Cup. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/us-seizes-hundreds-of-fifa-world-cup-illegal-streaming-domains/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T11:21:03+00:00",
+      "ttps": []
+    },
+    {
+      "title": "‘DirtyClone’ Linux Kernel Vulnerability Leads to Root Access",
+      "description": "A variant of DirtyFrag, the flaw allows unprivileged local users to manipulate the Linux page cache and gain root privileges. The post &#8216;DirtyClone&#8217; Linux Kernel Vulnerability Leads to Root Access appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/dirtyclone-linux-kernel-vulnerability-leads-to-root-access/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "cve",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-29T11:20:13+00:00",
+      "ttps": [
+        {
+          "id": "T1068",
+          "name": "Exploitation for Privilege Escalation",
+          "tactic": "Privilege Escalation",
+          "tactic_id": "TA0004"
+        }
+      ],
+      "threat_actors": [
+        "APT41"
+      ]
+    },
+    {
+      "title": "OpenAI and Anthropic Limit New AI Models to Trump-Approved Customers During Cybersecurity Review",
+      "description": "ChatGPT maker OpenAI said Friday it is restricting the release of its new artificial intelligence model at the request of President Donald Trump’s administration. The post OpenAI and Anthropic Limit New AI Models to Trump-Approved Customers During Cybersecurity Review appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/openai-and-anthropic-limit-new-ai-models-to-trump-approved-customers-during-cybersecurity-review/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T10:14:01+00:00",
+      "ttps": []
+    },
+    {
+      "title": "US Offers $10 Million Bounty for Russian State Hackers as Messaging App Attacks Evolve",
+      "description": "UNC5792 and UNC4221 have been targeting US government officials, military leaders, and allied personnel. The post US Offers $10 Million Bounty for Russian State Hackers as Messaging App Attacks Evolve appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/us-offers-10-million-bounty-for-russian-state-hackers-as-messaging-app-attacks-evolve/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T09:29:34+00:00",
+      "ttps": [],
+      "threat_actors": [
+        "APT41"
+      ]
+    },
+    {
+      "title": "Microsoft Removes 119 Edge Extensions That Hid Malware in Images and Fonts",
+      "description": "Microsoft has shut down a long-running malicious extension operation on the Edge Add-ons store that hid its payloads inside ordinary image and font files, then woke up days after install to steal credentials and run ad fraud. The company calls it&nbsp;StegoAd, a mash-up of steganography and adware, and ties 119 extensions to a single threat actor it says has been active since at least 2021.",
+      "url": "https://thehackernews.com/2026/06/microsoft-removes-119-edge-extensions.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T08:32:31+00:00",
+      "ttps": [
+        {
+          "id": "T1176",
+          "name": "Browser Extensions",
+          "tactic": "Persistence",
+          "tactic_id": "TA0003"
+        },
+        {
+          "id": "T1027",
+          "name": "Obfuscated Files or Information",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        }
+      ]
+    },
+    {
+      "title": "OpenAI Unveils GPT-5.6 Sol as Its Most Advanced Cybersecurity AI",
+      "description": "The company says Sol matches competing systems like Mythos Preview while using only a third of the output tokens. The post OpenAI Unveils GPT-5.6 Sol as Its Most Advanced Cybersecurity AI appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/openai-unveils-gpt-5-6-sol-as-its-most-advanced-cybersecurity-ai/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T07:45:57+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Public PoC Released for Critical libssh2 CVE-2026-55200 Client-Side SSH Flaw",
+      "description": "A public proof-of-concept is now out for CVE-2026-55200, a critical flaw in libssh2 that lets a malicious or compromised SSH server trigger memory corruption on a connecting client, with possible code execution. No credentials, no user interaction. The bug affects every release up to and including 1.11.1 and carries a CVSS 4.0 score of 9.2. libssh2 is a client-side SSH library, not a server.",
+      "url": "https://thehackernews.com/2026/06/public-poc-released-for-critical.html",
+      "cve_id": "CVE-2026-55200",
+      "source": "The Hacker News",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-29T07:06:34+00:00",
+      "ttps": [
+        {
+          "id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1203",
+          "name": "Exploitation for Client Execution",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        }
+      ],
+      "epss_score": null
+    },
+    {
+      "title": "Hijacked npm and Go Packages Use VS Code Tasks to Deploy Python Infostealer",
+      "description": "Cybersecurity researchers have uncovered two hijacked npm packages and a cluster of Go packages that are designed to deploy a Python-based information stealer on compromised Windows, Linux, and macOS hosts. \"This attack avoids the most common npm execution paths through lifecycle scripts, perhaps in an attempt to remain 'compatible' with npm v12's security hardenings,\" JFrog said in a",
+      "url": "https://thehackernews.com/2026/06/hijacked-npm-and-go-packages-use-vs.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-29T05:36:06+00:00",
+      "ttps": []
+    },
+    {
+      "title": "ISC Stormcast For Monday, June 29th, 2026 https://isc.sans.edu/podcastdetail/9986, (Mon, Jun 29th)",
+      "description": "(c) SANS Internet Storm Center. https://isc.sans.edu Creative Commons Attribution-Noncommercial 3.0 United States License.",
+      "url": "https://isc.sans.edu/diary/rss/33108",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-29T02:00:02+00:00",
+      "ttps": []
+    },
+    {
+      "title": "YARA-X 1.18.0 and 1.19.0 Release, (Sun, Jun 28th)",
+      "description": "YARA-X&&#x23&#x3b;x26&#x3b;&#x23&#x3b;39&#x3b;s 1.18.0 release brings 3 improvements and 2 bugfixes.&#xd;",
+      "url": "https://isc.sans.edu/diary/rss/33106",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-28T07:56:44+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Chinese Framework Powers 200,000 Scam Sites",
+      "description": "Threat actors are selling investment scam templates created using the legitimate DCloud Uni-App toolkit. The post Chinese Framework Powers 200,000 Scam Sites appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/chinese-framework-powers-200000-scam-sites/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-27T12:13:51+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Third-Party Breaches Teach Education Sector a Costly Lesson in Vendor Risk",
+      "description": "Rising threats from third-party actors are forcing institutions to play defense to protect student data from ransomware and other attacks.",
+      "url": "https://www.darkreading.com/cyber-risk/third-party-breaches-teaches-education-lesson-vendor-risk",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-27T11:48:05+00:00",
+      "ttps": [
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "AI Decline? Confidence in Autonomous Penetration Testing Falls",
+      "description": "Companies are still experimenting with automated AI systems to find security weaknesses, but fewer are relying on the technology.",
+      "url": "https://www.darkreading.com/cybersecurity-operations/ai-decline-confidence-autonomous-penetration-testing",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-26T19:11:02+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Cisco Adds NHI to Security Stack With Astrix, WideField Acquisitions",
+      "description": "Cisco joins a growing list of security platform providers that are betting that securing the agentic workforce means turning identity into the primary control plane.",
+      "url": "https://www.darkreading.com/identity-access-management-security/cisco-adds-nhi-security-stack-with-astrix-widefield",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "news",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-26T17:31:04+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "New Initiative Tackles Security for End-of-Life Open Source Software",
+      "description": "The Open Source Sustainability Initiative's goal is to help enterprises manage and secure aging open source projects while maintaining regulatory compliance.",
+      "url": "https://www.darkreading.com/application-security/initiative-tackles-security-end-of-life-open-source",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "news",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-26T16:32:30+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "AI Won't Wipe-Out Entry-Level Cybersecurity Jobs",
+      "description": "Instead of eliminating jobs for early-career cyber pros, AI is creating new opportunities for candidates with strong human decision-making skills.",
+      "url": "https://www.darkreading.com/cybersecurity-operations/ai-wont-wipe-out-entry-level-cybersecurity-jobs",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-26T16:00:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Amazon Q Flaw Enabled Cloud Credential Theft via Malicious Repositories",
+      "description": "AWS has patched the vulnerability and published its own advisory to inform customers about the potential impact. The post Amazon Q Flaw Enabled Cloud Credential Theft via Malicious Repositories appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/amazon-q-flaw-enabled-cloud-credential-theft-via-malicious-repositories/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "cve",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-26T15:23:46+00:00",
+      "ttps": [
+        {
+          "id": "T1078.004",
+          "name": "Cloud Accounts",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "Russia accuses Apple of ‘political censorship’ after VK apps removed from App Store",
+      "description": "Apple removed VK's flagship social network VKontakte, often described as Russia's equivalent of Facebook, along with VK Music, VK Messenger, VK Video, Odnoklassniki and Mail.ru services, including its email application.",
+      "url": "https://therecord.media/russia-accuses-apple-of-political-censorship-after-vk-removal",
+      "cve_id": null,
+      "source": "TheRecord Media",
+      "category": "news",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-06-26T13:42:00+00:00",
+      "ttps": [
+        {
+          "id": "T1649",
+          "name": "Steal or Forge Authentication Certificates",
+          "tactic": "Credential Access",
+          "tactic_id": "TA0006"
+        }
+      ]
+    },
+    {
+      "title": "What do Ports Hear When Nobody's Listening&#x3f; An Assessment of Automated Cybercrime &#x5b;Guest Diary&#x5d;, (Wed, Jun 24th)",
+      "description": "&#x5b;This is a Guest Diary by Nicole Phillips, an ISC intern as part of the SANS.edu BACS program&#x5d;&#xd;",
+      "url": "https://isc.sans.edu/diary/rss/33104",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-25T10:01:19+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Linux Process Name Masquerading, (Wed, Jun 24th)",
+      "description": "In a previous diary, I talked about stack strings&&#x23&#x3b;x26&#x3b;&#x23&#x3b;x5b&#x3b;1&&#x23&#x3b;x26&#x3b;&#x23&#x3b;x5d&#x3b; with a practical example of them. Since my SEC670 class, I&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xe2&#x3b;&&#x23&#x3b;x26&#x3b;&#x23&#x3b;x80&#x3b;&&#x23&#x3b;x26&#x3b;&#x23&#x3b;x99&#x3b;m even more interested&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xc2&#x3b;&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xa0&#x3b;in malware obfuscation techniques. I had&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xc2&#x3b;&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xa0&#x3b;a look at process names. When you list running processes on a computer, can you trust what you see&&#x23&#x3b;x26&#x3b;&#x23&#x3b;x3f&#x3b; If you&&#x23&#x3b;x26&#x3b;&#x23&#x3b;39&#x3b;re facing a rootkit, malicious processes can be simply hidden (the API calls or commands to list processed have been tampered). But a malicious process&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xc2&#x3b;&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xa0&#x3b;can also mimic a non-suspicious name by",
+      "url": "https://isc.sans.edu/diary/rss/33102",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-24T06:29:03+00:00",
+      "ttps": [
+        {
+          "id": "T1014",
+          "name": "Rootkit",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1027",
+          "name": "Obfuscated Files or Information",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1036",
+          "name": "Masquerading",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1071",
+          "name": "Application Layer Protocol",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        }
+      ]
+    },
+    {
+      "title": "ISC Stormcast For Wednesday, June 24th, 2026 https://isc.sans.edu/podcastdetail/9984, (Wed, Jun 24th)",
+      "description": "(c) SANS Internet Storm Center. https://isc.sans.edu Creative Commons Attribution-Noncommercial 3.0 United States License.",
+      "url": "https://isc.sans.edu/diary/rss/33100",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-24T02:00:03+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Scattered Spider Hackers Plead Guilty on Day 1 of Trial",
+      "description": "Two men pleaded guilty in the United Kingdom this week to criminal charges stemming from an August 2024 cyberattack that crippled Transport for London, the entity responsible for the public transport network in the Greater London area. The duo were key members of a prolific cybercrime group known as Scattered Spider, and their guilty pleas came on the first day of what was expected to be a six-week trial.",
+      "url": "https://krebsonsecurity.com/2026/06/scattered-spider-hackers-plead-guilty-on-day-1-of-trial/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-23T16:12:49+00:00",
+      "ttps": [],
+      "threat_actors": [
+        "APT41"
+      ]
+    },
+    {
+      "title": "CVE-2024-40766: The Patch Fixed the Bug. Nobody Fixed the Configuration., (Tue, Jun 23rd)",
+      "description": "The vulnerability&#xd;",
+      "url": "https://isc.sans.edu/diary/rss/33094",
+      "cve_id": "CVE-2024-40766",
+      "source": "SANS ISC",
+      "category": "cve",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-23T03:02:34+00:00",
+      "ttps": [],
+      "epss_score": null,
+      "cisa_kev": true
+    },
+    {
+      "title": "ISC Stormcast For Tuesday, June 23rd, 2026 https://isc.sans.edu/podcastdetail/9982, (Tue, Jun 23rd)",
+      "description": "(c) SANS Internet Storm Center. https://isc.sans.edu Creative Commons Attribution-Noncommercial 3.0 United States License.",
+      "url": "https://isc.sans.edu/diary/rss/33098",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-23T02:00:03+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Webshells Remain Popular, (Mon, Jun 22nd)",
+      "description": "Webshells have been popular for a long time. We already covered this topic across multiple diaries&#x5b;1&#x5d;&#x5b;2&#x5d;. I spent some time to track them&#x5b;3&#x5d; and slighly paid less attention to them but today I found another one. It seems to be a new player (pushed on Github two months ago). &#xd;",
+      "url": "https://isc.sans.edu/diary/rss/33096",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-22T14:10:27+00:00",
+      "ttps": [
+        {
+          "id": "T1505.003",
+          "name": "Web Shell",
+          "tactic": "Persistence",
+          "tactic_id": "TA0003"
+        }
+      ]
+    },
+    {
+      "title": "ISC Stormcast For Monday, June 22nd, 2026 https://isc.sans.edu/podcastdetail/9980, (Mon, Jun 22nd)",
+      "description": "(c) SANS Internet Storm Center. https://isc.sans.edu Creative Commons Attribution-Noncommercial 3.0 United States License.",
+      "url": "https://isc.sans.edu/diary/rss/33092",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-22T02:00:02+00:00",
+      "ttps": []
+    },
+    {
+      "title": "‘Popa’ Botnet Linked to Publicly-Traded Israeli Firm",
+      "description": "For the past four years, a sprawling Android-based botnet called Popa has forced millions of consumer TV boxes to relay Internet traffic linked to advertising fraud, account takeovers, and mass data-scraping efforts. This week, researchers from multiple security firms concluded that the Popa botnet is linked to NetNut, a \"residential proxy\" provider operated by the publicly-traded Israeli firm Alarum Technologies Ltd [NASDAQ: ALAR].",
+      "url": "https://krebsonsecurity.com/2026/06/popa-botnet-linked-to-publicly-traded-israeli-firm/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "news",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-18T17:37:58+00:00",
+      "ttps": [
+        {
+          "id": "T1583.005",
+          "name": "Botnet",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1586",
+          "name": "Compromise Accounts",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1078",
+          "name": "Valid Accounts",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "Who Runs the Ransomware Group ‘The Gentlemen?’",
+      "description": "A cybercrime group known as The Gentlemen has emerged as the second most active ransomware gang by victim count, rapidly attracting a talented pool of hackers through an aggressive recruitment strategy that promises affiliates 90 percent of any ransom paid by victims. This post examines clues pointing to a real life identity for the administrator of The Gentlemen ransomware group.",
+      "url": "https://krebsonsecurity.com/2026/06/who-runs-the-ransomware-group-the-gentlemen/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-10T14:03:44+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "A Record-Breaking Patch Tuesday for June 2026",
+      "description": "Microsoft today released software updates to plug nearly 200 security holes across its Windows operating systems and supported software, a record number of fixes for the company's monthly Patch Tuesday cycle. Nearly three dozen of those bugs earned Microsoft's most dire \"critical\" rating, and exploit code for at least three of the weaknesses is now publicly available.",
+      "url": "https://krebsonsecurity.com/2026/06/a-record-breaking-patch-tuesday-for-june-2026/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-09T22:07:28+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Hackers Used Meta’s AI Support Bot to Seize Instagram Accounts",
+      "description": "The Instagram accounts for the Obama White House and the Chief Master Sergeant of the U.S. Space Force were briefly defaced with pro-Iranian images and messages over the weekend, after instructions began circulating on Telegram showing how to trick Meta's \"AI support assistant\" bot into resetting account passwords.",
+      "url": "https://krebsonsecurity.com/2026/06/hackers-used-metas-ai-support-bot-to-seize-instagram-accounts/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-01T17:32:50+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "Netherlands Seizes 800 Servers, Arrests 2 for Aiding Cyberattacks",
+      "description": "Authorities in the Netherlands have arrested the co-owners of two related Internet hosting companies for operating IT infrastructure used by Russia to carry out cyberattacks, influence operations and disinformation campaigns inside the European Union. The two men were the focus of a 2025 KrebsOnSecurity story about how their hosting companies had assumed control over the technical infrastructure of Stark Industries Solutions, an Internet service provider sanctioned last year by the EU as a frequent staging ground for cyber mischief from Russia's intelligence agencies.",
+      "url": "https://krebsonsecurity.com/2026/05/netherlands-seizes-800-servers-arrests-2-for-aiding-cyberattacks/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-05-25T13:21:49+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Lawmakers Demand Answers as CISA Tries to Contain Data Leak",
+      "description": "Lawmakers in both houses of Congress are demanding answers from the U.S. Cybersecurity &#038; Infrastructure Security Agency (CISA) after KrebsOnSecurity reported this week that a CISA contractor intentionally published AWS GovCloud keys and a vast trove of other agency secrets on a public GitHub account. The inquiry comes as CISA is still struggling to contain the breach and invalidate the leaked credentials.",
+      "url": "https://krebsonsecurity.com/2026/05/lawmakers-demand-answers-as-cisa-tries-to-contain-data-leak/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-05-22T16:34:24+00:00",
+      "ttps": [
+        {
+          "id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "tactic": "Exfiltration",
+          "tactic_id": "TA0010"
+        }
+      ]
+    },
+    {
+      "title": "Alleged Kimwolf Botmaster ‘Dort’ Arrested, Charged in U.S. and Canada",
+      "description": "Canadian authorities on Wednesday arrested a 23-year-old Ottawa man on suspicion of building and operating Kimwolf, a fast spreading Internet-of-Things botnet that enslaved millions of devices for use in a series of massive distributed denial-of-service (DDoS) attacks over the past six months. KrebsOnSecurity publicly named the suspect in February 2026 after the accused launched a volley of DDoS, doxing and swatting campaigns against this author and a security researcher. He now faces criminal hacking charges in both Canada and the United States.",
+      "url": "https://krebsonsecurity.com/2026/05/alleged-kimwolf-botmaster-dort-arrested-charged-in-u-s-and-canada/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-05-21T21:50:25+00:00",
+      "ttps": [
+        {
+          "id": "T1583.005",
+          "name": "Botnet",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1498",
+          "name": "Network Denial of Service",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "CISA Admin Leaked AWS GovCloud Keys on Github",
+      "description": "Until this past weekend, a contractor for the Cybersecurity &#038; Infrastructure Security Agency (CISA) maintained a public GitHub repository that exposed credentials to several highly privileged AWS GovCloud accounts and a large number of internal CISA systems. Security experts said the public archive included files detailing how CISA builds, tests and deploys software internally, and that it represents one of the most egregious government data leaks in recent history.",
+      "url": "https://krebsonsecurity.com/2026/05/cisa-admin-leaked-aws-govcloud-keys-on-github/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-05-18T20:48:21+00:00",
+      "ttps": [
+        {
+          "id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "tactic": "Exfiltration",
+          "tactic_id": "TA0010"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "Patch Tuesday, May 2026 Edition",
+      "description": "Artificial intelligence platforms may be just as susceptible to social engineering as human beings, but they are proving remarkably good at finding security vulnerabilities in human-made computer code. That reality is on full display this month with some of the more widely-used software makers -- including Apple, Google, Microsoft, Mozilla and Oracle -- fixing near record volumes of security bugs, and/or quickening the tempo of their patch releases.",
+      "url": "https://krebsonsecurity.com/2026/05/patch-tuesday-may-2026-edition/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-05-12T21:46:45+00:00",
+      "ttps": [
+        {
+          "id": "T1204",
+          "name": "User Execution",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        }
+      ]
+    },
+    {
+      "title": "Student Loan Breach Exposes 2.5M Records",
+      "description": "2.5 million people were affected, in a breach that could spell more trouble down the line.",
+      "url": "https://threatpost.com/student-loan-breach-exposes-2-5m-records/180492/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2022-08-31T12:57:48+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Watering Hole Attacks Push ScanBox Keylogger",
+      "description": "Researchers uncover a watering hole attack likely carried out by APT TA423, which attempts to plant the ScanBox JavaScript-based reconnaissance tool.",
+      "url": "https://threatpost.com/watering-hole-attacks-push-scanbox-keylogger/180490/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2022-08-30T16:00:43+00:00",
+      "ttps": [
+        {
+          "id": "T1189",
+          "name": "Drive-by Compromise",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1056",
+          "name": "Input Capture",
+          "tactic": "Credential Access",
+          "tactic_id": "TA0006"
+        }
+      ]
+    },
+    {
+      "title": "Tentacles of ‘0ktapus’ Threat Group Victimize 130 Firms",
+      "description": "Over 130 companies tangled in sprawling phishing campaign that spoofed a multi-factor authentication system.",
+      "url": "https://threatpost.com/0ktapus-victimize-130-firms/180487/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2022-08-29T14:56:19+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "Ransomware Attacks are on the Rise",
+      "description": "Lockbit is by far this summer’s most prolific ransomware group, trailed by two offshoots of the Conti group.",
+      "url": "https://threatpost.com/ransomware-attacks-are-on-the-rise/180481/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2022-08-26T16:44:27+00:00",
+      "ttps": [
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ],
+      "threat_actors": [
+        "LockBit",
+        "Conti"
+      ]
+    },
+    {
+      "title": "Cybercriminals Are Selling Access to Chinese Surveillance Cameras",
+      "description": "Tens of thousands of cameras have failed to patch a critical, 11-month-old CVE, leaving thousands of organizations exposed.",
+      "url": "https://threatpost.com/cybercriminals-are-selling-access-to-chinese-surveillance-cameras/180478/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2022-08-25T18:47:15+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Twitter Whistleblower Complaint: The TL;DR Version",
+      "description": "Twitter is blasted for security and privacy lapses by the company’s former head of security who alleges the social media giant’s actions amount to a national security risk.",
+      "url": "https://threatpost.com/twitter-whistleblower-tldr-version/180472/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2022-08-24T14:17:04+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Firewall Bug Under Active Attack Triggers CISA Warning",
+      "description": "CISA is warning that Palo Alto Networks’ PAN-OS is under active attack and needs to be patched ASAP.",
+      "url": "https://threatpost.com/firewall-bug-under-active-attack-cisa-warning/180467/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2022-08-23T13:19:58+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Fake Reservation Links Prey on Weary Travelers",
+      "description": "Fake travel reservations are exacting more pain from the travel weary, already dealing with the misery of canceled flights and overbooked hotels.",
+      "url": "https://threatpost.com/reservation-links-prey-on-travelers/180462/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2022-08-22T13:59:06+00:00",
+      "ttps": []
+    },
+    {
+      "title": "iPhone Users Urged to Update to Patch 2 Zero-Days",
+      "description": "Separate fixes to macOS and iOS patch respective flaws in the kernel and WebKit that can allow threat actors to take over devices and are under attack.",
+      "url": "https://threatpost.com/iphone-users-urged-to-update-to-patch-2-zero-days-under-attack/180448/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2022-08-19T15:25:56+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Google Patches Chrome’s Fifth Zero-Day of the Year",
+      "description": "An insufficient validation input flaw, one of 11 patched in an update this week, could allow for arbitrary code execution and is under active attack.",
+      "url": "https://threatpost.com/google-patches-chromes-fifth-zero-day-of-the-year/180432/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2022-08-18T14:31:38+00:00",
+      "ttps": [
+        {
+          "id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        }
+      ]
+    }
+  ]
+}

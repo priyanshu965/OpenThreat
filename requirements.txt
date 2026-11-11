@@ -1,0 +1,21 @@
+# OpenThreat runtime dependencies (pinned for reproducible CI runs).
+# Bump via Dependabot PRs (.github/dependabot.yml).
+requests==2.34.2
+feedparser==6.0.14
+
+# Gemini. `google-genai` is the current SDK; `google-generativeai` is the
+# deprecated package this project shipped with. fetch_intel imports the new one
+# first and falls back to the old one, so both work during migration.
+#
+# A major bump here is the one upgrade CI cannot vouch for: the Gemini call
+# degrades SILENTLY - _call_gemini_json catches Exception, returns None, and
+# the run quietly falls through to Groq or to rule-based defaults. So after
+# changing this line, read the next pipeline log for a successful Gemini call
+# rather than trusting a green test run that never exercises it.
+google-genai==3.0.0
+
+# YAML, for the Atomic Red Team corpus (scripts/atomics.py). Atomic tests carry
+# multi-line shell/PowerShell block scalars that a tolerant regex parser would
+# mangle, and a mangled command is one a reader might paste into a real
+# terminal — so this is parsed properly or not at all.
+PyYAML==6.0.3

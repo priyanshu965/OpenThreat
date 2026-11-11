@@ -1,0 +1,599 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# OPENTHREAT DASHBOARD — .github/workflows/update.yml
+#
+# Runs every hour. Fetches fresh threat intel, enriches the top AI_ENRICH_LIMIT
+# items in batches via Gemini (primary) with Groq as failover, then:
+#   - PUBLISHES intel.json + exports + the static API as a Pages deployment
+#   - COMMITS only durable state (daily archive, health summary, dedup memory)
+#
+# The derived data is deliberately not committed. It changes every hour and
+# nothing reads the history back, so committing it added ~106 MB/year.
+# Pages must be set to build_type=workflow for the deploy step to publish.
+#
+# Required Secrets (Settings → Secrets and variables → Actions):
+#   GEMINI_API_KEY    ← Gemini (primary AI)  https://aistudio.google.com
+#   GROQ_API_KEY      ← Groq (failover AI)    https://console.groq.com
+#   VULNCHECK_API_KEY ← VulnCheck KEV superset (optional, free)
+#   OTX_API_KEY       ← AlienVault OTX (optional)
+#
+# NOTE: CISA Vulnrichment (SSVC) and the EPSS bulk corpus need no key at all.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: Hourly Intel Update
+
+on:
+  schedule:
+    # FOUR attempts an hour, and deliberately NOT at minute 0.
+    #
+    # `schedule` is best-effort on a shared queue, and minute 0 is the single
+    # most congested minute on the platform because it is every repository's
+    # default. Measured over 44 scheduled runs of this workflow with
+    # `cron: '0 */1 * * *'`: not one started on time. Earliest 11 minutes late,
+    # median 31, worst 51 -- and when the delay exceeds the interval GitHub
+    # does not merely postpone the event, it DROPS it. The cadence held at
+    # ~1.0h while platform load was normal and then decayed to 2.7h, 5h, 11h,
+    # 10h, 8.9h. Two attempts an hour at off-peak minutes helped; it still
+    # left hours with nothing.
+    #
+    # So the number of attempts and the number of updates are now separate
+    # things. The scheduler is asked four times an hour, and the `gate` job
+    # below lets an attempt through only when the published feed is older
+    # than UPDATE_MIN_INTERVAL_MINUTES. In a good hour one attempt runs the
+    # pipeline and three exit in seconds; in a bad hour, whichever attempt
+    # survives is the one that runs. Three dropped events in a row are needed
+    # to miss an hour, instead of one.
+    #
+    # This makes hourly LIKELY. It cannot make it guaranteed, and nothing in
+    # this repo should claim otherwise; the dashboard shows the real age of
+    # the data instead.
+    - cron: '7,22,37,52 * * * *'
+
+  # Also driven from OUTSIDE GitHub, which is the only way to get a cadence
+  # that does not depend on GitHub's shared scheduler at all. An external
+  # cron service calls:
+  #
+  #   POST https://api.github.com/repos/priyanshu965/OpenThreat/actions/
+  #        workflows/update.yml/dispatches
+  #   Authorization: Bearer <fine-grained PAT>
+  #   Accept: application/vnd.github+json
+  #   Body:   {"ref":"main"}
+  #
+  # workflow_dispatch is used rather than repository_dispatch ON PURPOSE, and
+  # the reason is the token. A fine-grained PAT for workflow_dispatch needs
+  # only `Actions: Read and write`; repository_dispatch needs
+  # `Contents: Read and write`, which is permission to PUSH CODE. That token
+  # has to be stored at a third-party cron provider, so the one that cannot
+  # rewrite this repository is the correct choice.
+  #
+  # Extra triggers are safe: the `pages-deploy` concurrency group below has
+  # cancel-in-progress: false, so overlapping runs queue rather than race, and
+  # every expensive corpus is TTL-cached so a redundant run mostly
+  # re-publishes.
+  workflow_dispatch:          # Manual trigger from the Actions tab, and the
+                              # entry point for the external scheduler above.
+
+jobs:
+  # Decides whether this attempt should do anything. See the note on `schedule`
+  # above: the scheduler is asked more often than the site needs updating, and
+  # this is what turns the surplus into cheap no-ops rather than deployments.
+  gate:
+    name: Is an update due?
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      due: ${{ steps.age.outputs.due }}
+    steps:
+      - name: Check the age of the published feed
+        id: age
+        env:
+          EVENT: ${{ github.event_name }}
+          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+          MIN_INTERVAL: ${{ vars.UPDATE_MIN_INTERVAL_MINUTES }}
+        run: |
+          # A person or an external scheduler asked for this run: do it.
+          if [ "${EVENT}" != "schedule" ]; then
+            echo "Triggered by ${EVENT} - running."
+            echo "due=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          URL="${DASHBOARD_URL:-https://openthreat.in/}"
+          LIMIT="${MIN_INTERVAL:-50}"
+          # Anything that goes wrong here - site down, feed missing, a date
+          # that will not parse - answers "unknown", and unknown means RUN.
+          # The failure this guards against is a stale site, so it must never
+          # be the reason an update is skipped.
+          AGE=$(curl -fsSL --max-time 30 "${URL%/}/data/intel.json" 2>/dev/null | python3 -c '
+          import json, sys
+          from datetime import datetime, timezone
+          stamp = json.load(sys.stdin)["last_updated"]
+          then = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+          print(int((datetime.now(timezone.utc) - then).total_seconds() // 60))
+          ' 2>/dev/null || echo unknown)
+          case "${AGE}" in
+            ''|*[!0-9]*)
+              echo "Could not read the feed age (${AGE:-empty}) - running."
+              echo "due=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              if [ "${AGE}" -ge "${LIMIT}" ]; then
+                echo "Feed is ${AGE} min old (limit ${LIMIT}) - running."
+                echo "due=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "Feed is ${AGE} min old (limit ${LIMIT}) - nothing to do."
+                echo "due=false" >> "$GITHUB_OUTPUT"
+              fi ;;
+          esac
+
+  fetch-and-update:
+    name: Fetch Threat Intelligence
+    needs: gate
+    if: needs.gate.outputs.due == 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read      # nothing is committed back - see "Persist state" below
+      actions:  write     # monthly keep-alive re-enables the scheduled workflows
+      issues:   write     # file a pipeline-failure issue (uses GITHUB_TOKEN)
+      pages: write        # publish the dashboard + data as a Pages deployment
+      id-token: write     # OIDC token actions/deploy-pages exchanges
+
+    # Never let two deployments race. A manual dispatch overlapping the cron
+    # used to be a push conflict; with Pages it would be a deployment conflict.
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1          # history is never read here; a full clone grew ~20 MB/day
+
+      # GitHub disables every `schedule` trigger in a public repository after
+      # 60 days without a commit, and this pipeline commits nothing back - so
+      # a quiet repo silently stops updating the site. That happened once:
+      # the dashboard froze for weeks with no failure to alert on.
+      #
+      # Re-enabling a workflow through the API resets that inactivity timer
+      # without a commit. Once a month is well inside the 60-day window; it
+      # runs on every run of the 1st so a dropped schedule event cannot skip
+      # the month. Never fails the pipeline - the worst case is the old
+      # behaviour.
+      - name: Keep scheduled workflows alive (monthly)
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$(date -u +%d)" != "01" ]; then
+            echo "Not the 1st - nothing to do."
+            exit 0
+          fi
+          for wf in update.yml daily-digest.yml source-health.yml; do
+            if gh api -X PUT "repos/${{ github.repository }}/actions/workflows/${wf}/enable"; then
+              echo "kept alive: ${wf}"
+            else
+              echo "::warning::could not re-enable ${wf}"
+            fi
+          done
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Cache pip packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-openthreat-v2
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # Without this the runner starts every hour with an empty data/.cache,
+      # so every TTL in fetch_intel.py (EPSS bulk 24h, CISA KEV 24h, VulnCheck
+      # 12h, PoC-in-GitHub 6h, Vulnrichment 14d) missed on all 24 daily runs.
+      # Vulnrichment alone is one raw.githubusercontent request PER CVE — ~70 a
+      # run, ~1,700 a day against a rate-limited host. .feed_meta.json is the
+      # ETag/Last-Modified store, so restoring it is what makes the conditional
+      # GETs in fetch_rss() actually conditional. ai_enrich.json inside
+      # data/.cache is what stops the same items being re-sent to Gemini 24x.
+      #
+      # The key rotates per run so the cache is always re-saved with whatever
+      # this run refreshed; restore-keys fall back to the newest earlier copy.
+      # Entries past their TTL are simply re-fetched.
+      - name: Restore intel fetch cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            data/.cache
+            data/.feed_meta.json
+            data/archive
+            data/source_health_summary.json
+            data/.alert_state.json
+            data/.digest_state.json
+          key: openthreat-state-${{ github.run_id }}
+          restore-keys: |
+            openthreat-state-
+
+      # The cache is the fast path and, being read every hour, is never evicted
+      # in practice. This is the fallback for when it is: the previous run
+      # published the same state as a tarball next to the dashboard. Failing
+      # both, the copy committed in the repo acts as a seed - stale, but enough
+      # for trends and the "new since last run" diff to rebuild themselves.
+      - name: Restore state from the last deployment (cache miss only)
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          if [ -d data/archive ] && [ -n "$(ls -A data/archive 2>/dev/null)" ] \
+             && [ -f data/source_health_summary.json ]; then
+            echo "State present from cache or repo seed - nothing to restore."
+            exit 0
+          fi
+          URL="${DASHBOARD_URL:-https://openthreat.in/}"
+          echo "Cache missed; pulling state from ${URL}data/state.tar.gz"
+          if curl -fsSL --max-time 120 -o /tmp/state.tar.gz "${URL}data/state.tar.gz"; then
+            mkdir -p data && tar -xzf /tmp/state.tar.gz -C data
+            echo "Restored $(ls data/archive 2>/dev/null | wc -l) archive snapshot(s)."
+          else
+            echo "No published state to restore; continuing with whatever the repo carries."
+          fi
+        env:
+          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Sigma -> SIEM query compilation. BEST EFFORT, and the `|| true` is the
+      # whole design: pySigma and its backends are a fast-moving family with
+      # tight inter-version constraints, and this job runs unattended 24 times
+      # a day. A resolver conflict here must cost the hunt packs their compiled
+      # queries, never the feed. hunt_packs probes each backend independently
+      # at import and publishes the packs regardless.
+      - name: Install optional Sigma query backends
+        continue-on-error: true
+        run: |
+          pip install -r requirements-hunt.txt || \
+            echo "::warning::Sigma query backends unavailable - hunt packs will carry raw rules only"
+
+      # On a PUBLIC repository this log and the run summary are readable by
+      # anyone, so naming your own domains, watch terms or findings in them
+      # publishes them. The pipeline therefore names nothing unless told the
+      # run is private, and this step is what tells it. Anything short of a
+      # definite "private" from the API counts as public.
+      - name: Decide whether this run's output is private
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Booleans only: the values themselves must not reach this log.
+          DOMAINS_AS_VARIABLE: ${{ vars.MY_DOMAINS != '' }}
+          WATCH_AS_VARIABLE:   ${{ vars.DARKWEB_WATCH != '' }}
+        run: |
+          PRIVATE=$(gh api "repos/${{ github.repository }}" --jq .private 2>/dev/null || echo unknown)
+          if [ "${PRIVATE}" = "true" ]; then
+            echo "OWN_ESTATE_IN_LOGS=1" >> "$GITHUB_ENV"
+            echo "Private repository: own-estate findings may appear in this log and the summary."
+            exit 0
+          fi
+          echo "Public repository (or visibility unknown): own-estate names and findings are withheld from this log and the summary, and delivered by webhook only."
+          if [ "${DOMAINS_AS_VARIABLE}" = "true" ] || [ "${WATCH_AS_VARIABLE}" = "true" ]; then
+            echo "::warning::MY_DOMAINS / DARKWEB_WATCH are set as repository VARIABLES. Variables are printed in public logs; move them to repository SECRETS, which are masked."
+          fi
+
+      - name: Fetch threat intelligence
+        env:
+          GROQ_API_KEY:   ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OTX_API_KEY:    ${{ secrets.OTX_API_KEY }}
+          ABUSEIPDB_API_KEY: ${{ secrets.ABUSEIPDB_API_KEY }}
+          PHISHTANK_API_KEY: ${{ secrets.PHISHTANK_API_KEY }}
+          NVD_API_KEY:       ${{ secrets.NVD_API_KEY }}
+          THREATFOX_API_KEY: ${{ secrets.THREATFOX_API_KEY }}
+          VULNCHECK_API_KEY: ${{ secrets.VULNCHECK_API_KEY }}
+          MB_API_KEY:        ${{ secrets.MB_API_KEY }}
+          # One free abuse.ch key for URLhaus, MalwareBazaar and ThreatFox.
+          ABUSECH_AUTH_KEY:  ${{ secrets.ABUSECH_AUTH_KEY }}
+          # Alerting (optional — leave WEBHOOK_URL unset to disable):
+          WEBHOOK_URL:  ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_TYPE: ${{ vars.WEBHOOK_TYPE }}
+          ALERT_SEVERITIES: ${{ vars.ALERT_SEVERITIES }}
+          ALERT_MIN_PRIORITY: ${{ vars.ALERT_MIN_PRIORITY }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+          # CASM: your own estate. Without these the exposure and attack-surface
+          # checks have nothing to look at and silently do nothing.
+          #
+          # Secrets take precedence over variables. A variable's value is
+          # printed in this log's environment block, which on a public
+          # repository tells the world which organisations you watch; a secret
+          # is masked. Variables still work, for private repositories.
+          MY_DOMAINS:    ${{ secrets.MY_DOMAINS || vars.MY_DOMAINS }}
+          DARKWEB_WATCH: ${{ secrets.DARKWEB_WATCH || vars.DARKWEB_WATCH }}
+          # Own-estate findings stay off the public site unless this is set.
+          PUBLISH_OWN_ESTATE: ${{ vars.PUBLISH_OWN_ESTATE }}
+        run: |
+          python scripts/fetch_intel.py
+
+      # ── Persist state WITHOUT committing ─────────────────────────────
+      # This job used to commit on every run, which added ~24 commits a day to
+      # main forever. Nothing read that history back: the next run only needs
+      # the newest state, which the cache above already carries between runs.
+      # The tarball published below is the durable copy, so the commit was pure
+      # cost. main now only moves when a person changes something.
+      - name: Summarise state (not committed)
+        run: |
+          echo "Archive snapshots : $(ls data/archive 2>/dev/null | wc -l)"
+          echo "Health summary    : $(du -h data/source_health_summary.json 2>/dev/null | cut -f1)"
+          echo "State is carried by the actions cache and republished below;"
+          echo "no commit is made to ${GITHUB_REF_NAME}."
+
+      # ── Publish the dashboard + fresh data as a Pages deployment ──────
+      # The site is assembled here rather than served from the branch, so the
+      # data never enters git history. Paths are unchanged: index.html still
+      # sits at the root and still fetches ./data/intel.json, so nothing in the
+      # frontend or the documented static API URLs moves.
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp index.html app.js style.css service-worker.js manifest.json robots.txt _site/
+          # CNAME is what tells GitHub Pages the custom domain. It must be in
+          # the PUBLISHED artifact, not just the repo — this job builds _site/
+          # from an explicit file list, so without this line the deployment
+          # would contain no CNAME and GitHub would clear the custom domain
+          # setting on every hourly run. The site would silently fall back to
+          # priyanshu965.github.io/OpenThreat/ an hour after it was set.
+          cp CNAME _site/
+
+          # RFC 9116 security.txt, generated each run so its mandatory Expires
+          # date is never stale. Served from /.well-known/ or nothing reads it.
+          mkdir -p _site/.well-known
+          cp data/wellknown/security.txt _site/.well-known/ 2>/dev/null || true
+          # The v4 frontend is app.js PLUS three sibling modules. Forgetting
+          # this line ships a page whose every view button throws a
+          # ReferenceError, and nothing in the pipeline would notice.
+          mkdir -p _site/js
+          cp js/*.js _site/js/
+          mkdir -p _site/data
+          # Everything the browser and the documented API actually fetch.
+          cp data/intel.json                _site/data/
+          cp data/trends.json               _site/data/ 2>/dev/null || true
+          cp data/source_health_summary.json _site/data/ 2>/dev/null || true
+          cp -r data/exports                _site/data/ 2>/dev/null || true
+          # data/api includes api/day/*.json — the reduced per-day snapshots the
+          # time machine and the diff view read. ~90 files, ~7 MB total, each
+          # fetched only when someone actually opens that day.
+          cp -r data/api                    _site/data/ 2>/dev/null || true
+          # data/archive/ is not published as loose files - no page requests
+          # them - but it IS published as one tarball, which is what lets a run
+          # rebuild its own state after a cache miss without any git history.
+          #
+          # Named files only, never `data/.cache` wholesale. That directory also
+          # holds exposure_*.json and ct_*.json — YOUR estate's credential
+          # exposure and subdomain inventory — and this tarball is published at
+          # a public URL. Adding the cache directory here would undo
+          # CONFIG.publish_own_estate in a single line.
+          #
+          # The derived corpora below are public reference data and are
+          # expensive to rebuild — ATT&CK is a 48 MB download, ORKL is ~35 MB
+          # of report text reduced to citations, and sigma_queries.json is
+          # several thousand rule compilations — so carrying them makes a
+          # cache miss cheap instead of punishing. All are DERIVED and small;
+          # none of them is own-estate data.
+          #
+          # sigma_seen_rules.json is the detection-diff baseline. Losing it
+          # is not fatal but it costs one cycle: the next run re-baselines
+          # and reports no changes rather than inventing 3,000 of them.
+          STATE_PATHS=""
+          for candidate in \
+              archive \
+              source_health_summary.json \
+              .alert_state.json \
+              .digest_state.json \
+              .cache/attack_kb_v2.json \
+              .cache/malpedia_families.json \
+              .cache/sigma_index.json \
+              .cache/sigma_queries.json \
+              .cache/sigma_seen_rules.json \
+              .cache/cve_published.json \
+              .cache/misp_galaxy.json \
+              .cache/orkl_reports.json \
+              .cache/d3fend_map.json \
+              .cache/control_mappings.json \
+              .cache/atomic_red_team.json \
+              .cache/leak_sites.json; do
+            [ -e "data/${candidate}" ] && STATE_PATHS="${STATE_PATHS} ${candidate}"
+          done
+          # shellcheck disable=SC2086
+          tar -czf _site/data/state.tar.gz -C data ${STATE_PATHS}
+          echo "state.tar.gz: $(du -h _site/data/state.tar.gz | cut -f1)"
+          # An own-estate file reaching the public tarball is a leak, not
+          # something to notice later. Check the artifact itself rather than
+          # trusting the list above to stay correct.
+          if tar -tzf _site/data/state.tar.gz | grep -qE 'exposure_|ct_|attack_surface'; then
+            echo "::error::own-estate data found in the public state tarball"
+            exit 1
+          fi
+          # Fail loudly rather than deploying a broken page. A missing js/
+          # module is invisible until a visitor clicks a view; a missing
+          # intel.json is invisible until the feed fails to load.
+          # CNAME is in this list deliberately. Losing it does not break the
+          # page — it silently un-sets the custom domain, so the site keeps
+          # working at the github.io URL and openthreat.in starts 404ing an
+          # hour later. That is exactly the kind of failure nobody notices.
+          for required in \
+              index.html app.js style.css CNAME \
+              js/query.js js/research.js js/timetravel.js \
+              js/library.js js/hunt.js js/leaks.js \
+              data/intel.json; do
+            if [ ! -s "_site/${required}" ]; then
+              echo "::error::_site/${required} is missing or empty — refusing to deploy"
+              exit 1
+            fi
+          done
+          # Every ?v= reference in index.html must resolve to a file we shipped.
+          for asset in $(grep -oE '(app\.js|style\.css|js/[a-z]+\.js)\?v=' index.html | sed 's/?v=//' | sort -u); do
+            [ -s "_site/${asset}" ] || { echo "::error::index.html references ${asset}, not deployed"; exit 1; }
+          done
+          # The Library is an index PLUS thousands of shards. An index without
+          # shards is a search box where every result 404s -- worse than no
+          # Library at all, and invisible until somebody clicks a result.
+          if [ -s "_site/data/api/entity_index.json" ]; then
+            SHARDS=$(ls _site/data/api/entity 2>/dev/null | wc -l)
+            if [ "${SHARDS}" -lt 100 ]; then
+              echo "::error::entity_index.json shipped with only ${SHARDS} shards"
+              exit 1
+            fi
+            echo "  library: ${SHARDS} entity shards"
+          else
+            echo "::warning::no entity_index.json - the Library will be empty"
+          fi
+          # Same shape, same failure mode: an index of packs whose shards are
+          # missing is a list where every row 404s on click.
+          if [ -s "_site/data/api/hunt_packs.json" ]; then
+            PACKS=$(ls _site/data/api/hunt 2>/dev/null | wc -l)
+            if [ "${PACKS}" -lt 10 ]; then
+              echo "::error::hunt_packs.json shipped with only ${PACKS} pack shards"
+              exit 1
+            fi
+            echo "  hunt: ${PACKS} pack shards"
+          fi
+          echo "Deploying $(du -sh _site | cut -f1):"
+          echo "  day snapshots: $(ls _site/data/api/day 2>/dev/null | wc -l)"
+          # The entity shards are thousands of files; listing them all buries
+          # every other line of the log.
+          find _site -type f -not -path '*/api/entity/*' -not -path '*/api/hunt/*' | sort | sed 's/^/  /'
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+          # From v4 the action drops dot-directories unless told otherwise,
+          # which would silently unpublish .well-known/security.txt.
+          include-hidden-files: true
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+      # A sustained outage used to open 24 identical issues a day. Only file one
+      # if there isn't already an open pipeline-failure issue.
+      - name: Check for an existing failure issue
+        if: failure()
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COUNT=$(gh issue list --repo "${{ github.repository }}" \
+                    --label pipeline-failure --state open --limit 1 --json number \
+                    --jq 'length' 2>/dev/null || echo 0)
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+      - name: Notify on failure
+        if: failure() && steps.existing.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The gh CLI, not a marketplace action. This was the only third-party
+        # action in the repository, and it ran with issues: write; replacing
+        # it means every action here is GitHub's own and the repository can
+        # refuse anything else outright.
+        run: |
+          gh label create pipeline-failure --color B60205 \
+            --description "The hourly pipeline failed" --repo "${{ github.repository }}" 2>/dev/null || true
+          gh issue create --repo "${{ github.repository }}" --label pipeline-failure \
+            --title "🚨 Pipeline failure — ${{ github.run_id }}" \
+            --body "The hourly intel pipeline **failed** on ${{ github.repository }}.
+
+          - **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          - **Branch:** ${{ github.ref_name }}
+          - **Commit:** ${{ github.sha }}
+
+          Check the run log for details."
+
+      - name: Print summary
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          p = pathlib.Path("data/intel.json")
+          if not p.exists():
+              print("## OpenThreat — no output produced"); raise SystemExit
+          d = json.loads(p.read_text(encoding="utf-8"))
+          items = d.get("items", [])
+          print("## OpenThreat Update Complete\n")
+          print(f"- **Items:** {len(items)}")
+          print(f"- **Last updated:** {d.get('last_updated','?')}")
+          print(f"- **Sources:** {d.get('sources_ok',0)} ok · "
+                f"{d.get('sources_stale',0)} stale · {d.get('sources_empty',0)} empty · "
+                f"{d.get('sources_error',0)} error (of {d.get('sources_configured','?')})")
+          print(f"- **AI enriched:** {d.get('ai_enriched_count',0)}")
+          print(f"- **New since last run:** {d.get('new_since_last',0)}")
+          print(f"- **Urgent / elevated:** "
+                f"{sum(1 for i in items if i.get('priority_label')=='urgent')} / "
+                f"{sum(1 for i in items if i.get('priority_label')=='elevated')}")
+          print(f"- **Actively exploited (KEV or SSVC):** "
+                f"{sum(1 for i in items if i.get('cisa_kev') or i.get('ssvc_exploitation')=='active')}")
+          print(f"- **Payload size:** {p.stat().st_size // 1024} KB")
+          # Own-estate findings are deliberately NOT in intel.json. The pipeline
+          # keeps them in a local file, and this summary shows them only when
+          # the repository is private - on a public one the summary is public
+          # too, and the findings go by webhook instead.
+          import os
+          own_path = pathlib.Path("data/.own_estate.json")
+          own = json.loads(own_path.read_text(encoding="utf-8")) if own_path.exists() else {}
+          if own and os.environ.get("OWN_ESTATE_IN_LOGS") != "1":
+              print("\n### Own-estate checks\n")
+              print("Findings were produced and are **withheld from this summary** because "
+                    "the repository is public. They are delivered by webhook only.")
+              own = {}
+          expo = own.get("exposure") or {}
+          if expo.get("domains"):
+              t = expo.get("totals", {})
+              print("\n### Your exposure (not published publicly)\n")
+              print(f"- **Employee machines in infostealer logs:** {t.get('employees', 0):,}")
+              print(f"- **User machines:** {t.get('users', 0):,}")
+              print(f"- **Third-party machines:** {t.get('third_parties', 0):,}\n")
+              print("| Domain | Employees | Users | Third parties | Last employee compromise |")
+              print("|---|---:|---:|---:|---|")
+              for row in expo["domains"]:
+                  print(f"| `{row['domain']}` | {row['employees']:,} | {row['users']:,} "
+                        f"| {row['third_parties']:,} | {row.get('last_employee_compromised') or '-'} |")
+
+          surf = own.get("attack_surface") or {}
+          if surf.get("domains"):
+              print(f"\n### External attack surface — {surf.get('total_hostnames', 0)} hostnames\n")
+              for row in surf["domains"]:
+                  print(f"**`{row['domain']}`** — {row['hostnames']} hostname(s)")
+                  if row.get("noteworthy"):
+                      print("\nNoteworthy (dev/staging/vpn/admin style):\n")
+                      for h in row["noteworthy"][:25]:
+                          print(f"- `{h}`")
+                  print("")
+
+          watch = own.get("darkweb_watch") or []
+          if watch:
+              print("\n### Dark-web watchlist hits\n")
+              for hit in watch:
+                  print(f"- **{hit['term']}** — {hit['count']} leak-site listing(s)")
+                  for m in (hit.get("matches") or [])[:5]:
+                      print(f"    - {m.get('v')} — claimed by {m.get('g')} on {m.get('d')}")
+
+          if d.get("brief"):
+              print(f"\n> {d['brief'].get('headline','')}")
+          stale = [n for n, h in d.get("source_health", {}).items()
+                   if h.get("status") not in ("ok", "disabled")]
+          off = [n for n, h in d.get("source_health", {}).items() if h.get("status") == "disabled"]
+          if off:
+              print(f"\n- **Switched off (no API key):** {', '.join(off)}")
+          if stale:
+              print(f"\n<details><summary>Degraded sources ({len(stale)})</summary>\n")
+              for n in stale:
+                  h = d["source_health"][n]
+                  print(f"- `{n}` — {h.get('status')} ({h.get('error') or h.get('count')} items)")
+              print("\n</details>")
+          PY

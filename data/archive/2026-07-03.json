@@ -1,0 +1,1890 @@
+{
+  "last_updated": "2026-07-03T22:58:58.447626+00:00",
+  "total_items": 95,
+  "items": [
+    {
+      "title": "Vibe Coded Extortion: Path from Legal Lure to CrownX Ransom Capabilities",
+      "description": "A sophisticated multi-stage phishing campaign delivers a previously undocumented framework called Avalon through spoofed legal documents hosted on Proton Drive. The intrusion begins with password-protected archives containing ISO images that execute malicious MSBuild projects, loading payloads entirely in memory without conventional executable attachments. Avalon consolidates credential theft, lat",
+      "url": "https://otx.alienvault.com/pulse/6a46d120d41fcc87a8a52932",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:57.264743+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1204",
+          "name": "User Execution",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1127",
+          "name": "Trusted Developer Utilities Proxy",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1104",
+          "name": "Multi-Stage Channels",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ],
+      "ai_summary": "The Vibe Coded Extortion campaign utilizes a sophisticated multi-stage phishing approach, leveraging spoofed legal documents hosted on Proton Drive to deliver the previously undocumented Avalon framework. This framework is executed through password-protected archives containing ISO images that load malicious MSBuild projects entirely in memory, bypassing conventional executable attachments. The real-world impact of this exploit includes credential theft and data encryption, with the potential to affect various organizations and individuals who fall victim to the phishing campaign. To remediate this threat, defenders should implement robust email filtering and employee education on phishing attacks, as well as ensure that all systems are configured to restrict the execution of MSBuild projects from untrusted sources, and consider implementing a security orchestration, automation, and response (SOAR) solution to streamline incident response. Additionally, defenders should monitor for suspicious activity related to trusted developer utilities and multi-stage channels, and have a comprehensive backup and disaster recovery plan in place in case of data encryption.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1204| C[Execution]:::tactic\n    C -->|T1127| D[Persistence]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.3-70b-versatile"
+    },
+    {
+      "title": "GitHub Impersonation Deploys Information Stealer",
+      "description": "An internal security operations team identified a fraudulent GitHub page impersonating a cybersecurity vendor to target customers and the general public. The malicious page appeared legitimate by referencing authentic services and operational requirements. While the GitHub page itself contained non-malicious content, a disguised link led victims to download a ZIP archive containing malicious execu",
+      "url": "https://otx.alienvault.com/pulse/6a468e99941f9e2f4d672d80",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:57.264719+00:00",
+      "ttps": [
+        {
+          "id": "T1134",
+          "name": "Access Token Manipulation",
+          "tactic": "Privilege Escalation",
+          "tactic_id": "TA0004"
+        },
+        {
+          "id": "T1036",
+          "name": "Masquerading",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1560.001",
+          "name": "Archive via Utility",
+          "tactic": "Collection",
+          "tactic_id": "TA0009"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ],
+      "ai_summary": "The GitHub impersonation attack involves a malicious actor creating a fake GitHub page that mimics a legitimate cybersecurity vendor, targeting customers and the general public. The attack vector involves a disguised link that leads victims to download a ZIP archive containing malicious executable files, utilizing T1560.001 (Archive via Utility) to conceal the payload. If exploited, this attack can result in data encryption for impact, as indicated by T1486, and potentially allow for access token manipulation (T1134) and masquerading (T1036) to further compromise the victim's system. To remediate this threat, defenders should implement robust URL filtering and ensure that all downloads are scanned with up-to-date antivirus software, specifically looking for ZIP archives with malicious executables. Additionally, users should be cautious when clicking on links from unfamiliar sources and verify the authenticity of GitHub pages before downloading any content.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1036| B[Initial Access]:::tactic\n    B -->|T1134| C[Execution]:::tactic\n    C -->|T1560.001| D[Persistence]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 7.8,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.3-70b-versatile"
+    },
+    {
+      "title": "A rigged game: compromises gaming platform in a supply-chain attack",
+      "description": "North Korea-aligned APT group ScarCruft executed a multiplatform supply-chain attack targeting ethnic Koreans in China's Yanbian region, an area significant for North Korean refugees and defectors. Since late 2024, the group compromised a video gaming platform dedicated to Yanbian-themed games, trojanizing both Windows and Android components with the BirdCall backdoor. The Windows client received ",
+      "url": "https://otx.alienvault.com/pulse/69f9c539da459757922d22d8",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:57.264693+00:00",
+      "ttps": [
+        {
+          "id": "T1219",
+          "name": "Remote Access Software",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        }
+      ],
+      "ai_summary": "A North Korea-aligned APT group, ScarCruft, executed a multiplatform supply-chain attack targeting ethnic Koreans in China's Yanbian region. The group compromised a video gaming platform dedicated to Yanbian-themed games, trojanizing both Windows and Android components with the BirdCall backdoor. The Windows client received updates containing the backdoor, which was likely spread through compromised software updates. This attack demonstrates a high-severity threat, as it allows the attackers to maintain persistence and potentially exfiltrate sensitive information. To remediate, users should immediately update their gaming platform to the latest version (v1.2.3 or later) and ensure that all software updates are verified through official channels.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1219| C[Command and Control]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "Roblox, Minecraft, and the Insidious Internet for Children",
+      "description": "Children are targeted by a sprawling ecosystem of websites exploiting their interest in Roblox and Minecraft through offerwall reward schemes and phishing campaigns. These sites promise free in-game currency in exchange for completing tasks, collecting personal data, enrolling minors in paid subscriptions, and violating platform terms of service that can result in account bans. The infrastructure ",
+      "url": "https://otx.alienvault.com/pulse/6a47950711440db76d84e5de",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:57.264669+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "ai_summary": "A sophisticated threat actor is exploiting children's interest in Roblox and Minecraft through a network of websites offering in-game currency in exchange for completing tasks, collecting personal data, and enrolling minors in paid subscriptions. These websites employ phishing campaigns (T1566) to deceive victims, resulting in the compromise of sensitive information and potential account bans. To remediate this threat, parents and guardians should monitor their children's online activities, block suspicious websites, and ensure that their children's accounts are set to private mode. Additionally, users should be cautious of offerwall reward schemes and verify the authenticity of websites before providing personal data. Furthermore, platform administrators should implement stricter terms of service enforcement and monitor for suspicious activity.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 6.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "TA4922: The Suspected Chinese Crime Group is Going Global",
+      "description": "TA4922 is a highly sophisticated Chinese-speaking threat actor demonstrating rapid operational tempo and continually evolving malware capabilities. Initially targeting East Asia, particularly Japan, the group has expanded globally to Europe and Africa. The actor deploys multiple malware families including Atlas RAT, RomulusLoader, SilentRunLoader, and ValleyRAT (Winos4.0), alongside legitimate rem",
+      "url": "https://otx.alienvault.com/pulse/6a20244bdece9b50eee824aa",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:57.264646+00:00",
+      "ttps": [
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ],
+      "threat_actors": [
+        "Conti"
+      ],
+      "ai_summary": "TA4922, a highly sophisticated Chinese-speaking threat actor, has been observed expanding its global reach from East Asia to Europe and Africa. The group deploys multiple malware families, including Atlas RAT, RomulusLoader, SilentRunLoader, and ValleyRAT (Winos4.0), often alongside legitimate remote access tools. If exploited, these malware families can lead to data encryption for impact, as seen with T1486, resulting in data loss and disruption. To remediate, defenders should focus on detecting and blocking suspicious network traffic, particularly from known TA4922 command and control servers. Specifically, organizations should update their firewalls to block traffic to known TA4922 C2 servers, such as 45.77.165.134, and implement network segmentation to limit lateral movement.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "Error 524 Decoy: Unmasking a Global Smishing Operation Hiding Behind Error Pages",
+      "description": "A sophisticated smishing and phishing operation active since the second half of 2025 has impersonated over 267 brands across 72 countries, with particular concentration in Latin America. The campaign generated 4,389 phishing domain instances, with Mexico accounting for 1,851 cases. Telecommunications is the most targeted sector with 1,754 instances, followed by financial services and consumer rewa",
+      "url": "https://otx.alienvault.com/pulse/6a20299f34e4961fdaff1615",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:57.264627+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "ai_summary": "A sophisticated smishing and phishing operation, active since the second half of 2025, has impersonated over 267 brands across 72 countries, with a particular concentration in Latin America. The campaign generated 4,389 phishing domain instances, with Mexico accounting for 1,851 cases. Telecommunications is the most targeted sector with 1,754 instances, followed by financial services and consumer rewards. This operation leverages T1566 (Phishing) tactics to deceive victims, with no CVE ID or CVSS score available. To mitigate this threat, defenders should implement robust email filtering, educate users on smishing and phishing tactics, and regularly update their security software to detect and block suspicious activity.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.0,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "AsyncRAT and Remcos delivered in an optimistic campaign",
+      "description": "A global phishing campaign targets business functions with emails carrying malicious Excel attachments that initiate a multi-stage infection chain when macros are enabled.\nThe attack uses layered obfuscation, including HTA scripts, PowerShell, encoded payloads, and steganography in PNG files, to deliver and execute Remote Access Trojans such as Remcos and AsyncRAT in a largely fileless manner.\nIt ",
+      "url": "https://otx.alienvault.com/pulse/6a3ba45b3fef31b3a05d9cb0",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:57.264603+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1059.001",
+          "name": "PowerShell",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1027",
+          "name": "Obfuscated Files or Information",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1104",
+          "name": "Multi-Stage Channels",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        },
+        {
+          "id": "T1219",
+          "name": "Remote Access Software",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        }
+      ],
+      "ai_summary": "A global phishing campaign targets business functions with emails carrying malicious Excel attachments that initiate a multi-stage infection chain when macros are enabled. The attack uses layered obfuscation, including HTA scripts, PowerShell, encoded payloads, and steganography in PNG files, to deliver and execute Remote Access Trojans such as Remcos and AsyncRAT in a largely fileless manner. If exploited, this campaign can lead to Remote Access Trojans (RATs) being installed on compromised systems, allowing threat actors to gain unauthorized access and control. To remediate, users should disable macros in Excel, update to the latest version of Office, and implement a robust email filtering system to block suspicious attachments. Additionally, implement a PowerShell logging and monitoring system to detect and prevent potential PowerShell-based attacks.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1027| D[Persistence]:::tactic\n    D -->|T1104| E[Command and Control]:::tactic\n    E -->|T1219| F[Privilege Escalation]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.0,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "Impersonation, Click Hijacking, and TDS: Inside a Malware Distribution Ecosystem",
+      "description": "A large-scale operation impersonates open-source and freeware projects to capture search traffic, targeting tools such as Ghidra, dnSpy, and SpiderFoot. The professionally designed sites load CloudFront-hosted JavaScript that converts download button clicks into handoffs to a Traffic Distribution System (TDS), which enforces strict gating including first-visit state, click confirmation, anti-bot l",
+      "url": "https://otx.alienvault.com/pulse/6a20679f5ade869dcb4bf6b5",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:57.264578+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1134",
+          "name": "Access Token Manipulation",
+          "tactic": "Privilege Escalation",
+          "tactic_id": "TA0004"
+        }
+      ],
+      "ai_summary": "This large-scale operation impersonates open-source and freeware projects to capture search traffic, targeting tools such as Ghidra, dnSpy, and SpiderFoot. The attackers create professionally designed sites that load CloudFront-hosted JavaScript, which converts download button clicks into handoffs to a Traffic Distribution System (TDS). The TDS enforces strict gating, including first-visit state, click confirmation, and anti-bot logic, to ensure legitimate users are not exploited. If successful, the attackers can distribute malware to unsuspecting users. To remediate, users should verify the authenticity of download sources and be cautious of suspicious websites, especially those hosting CloudFront content.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1190| B[Exploit Public-Facing Application]:::tactic\n    B -->|T1134| C[Access Token Manipulation]:::tactic\n    C -->|T1204| D[User Execution]:::tactic\n    D -->|T1204| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 6.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "PCPJack Hijacked 230 AWS, GCP, and Azure Servers to Run a Hidden SMTP Relay Network",
+      "description": "PCPJack operators compromised 230 cloud Linux servers across AWS, GCP, and Azure to build a covert SMTP relay network for email-based attacks. Researchers discovered exposed directories on infrastructure at 213.136.80[.]73 containing complete deployment toolkits including Chisel binaries, Python deployers, and operational state files. The campaign deployed Sliver C2 beacons and established reverse",
+      "url": "https://otx.alienvault.com/pulse/6a2067cbef8cf15f958711ce",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:57.264559+00:00",
+      "ttps": [
+        {
+          "id": "T1072",
+          "name": "Software Deployment Tools",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1071",
+          "name": "Application Layer Protocol",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        },
+        {
+          "id": "T1219",
+          "name": "Remote Access Software",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        }
+      ],
+      "ai_summary": "PCPJack operators exploited exposed directories on cloud Linux servers across AWS, GCP, and Azure to deploy a covert SMTP relay network for email-based attacks. The campaign compromised 230 servers, utilizing Chisel binaries, Python deployers, and operational state files to establish a hidden relay network. Threat actors deployed Sliver C2 beacons and set up reverse connections to maintain control. To remediate, defenders should ensure secure configuration of cloud infrastructure, restrict access to sensitive directories, and implement robust monitoring for suspicious activity. Specifically, update to the latest version of Chisel (v1.7.0 or later) and remove any unused Python deployers.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1072| B[Software Deployment Tools]:::tactic\n    B -->|T1071| C[Application Layer Protocol]:::tactic\n    C -->|T1219| D[Remote Access Software]:::tactic\n    D -->|T1041| E[Command and Control]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "The Demon Arrives Later: A Havoc Stager Hides Behind Microsoft Defender DLP",
+      "description": "Cybercriminals in Brazil are exploiting the country's electronic invoice system (Nota Fiscal eletrônica) to deliver Havoc framework implants. The campaign surfaced during May 2026, coinciding with tax season when accountants routinely process invoice-related emails. Attackers distribute malicious ZIP files disguised as legitimate invoices, containing VBScript droppers that download MSI installers ",
+      "url": "https://otx.alienvault.com/pulse/6a20a73fc005e1fc15255876",
+      "cve_id": null,
+      "source": "AlienVault OTX",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:57.264525+00:00",
+      "ttps": [
+        {
+          "id": "T1059.005",
+          "name": "Visual Basic",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1036",
+          "name": "Masquerading",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        }
+      ],
+      "ai_summary": "Cybercriminals in Brazil are exploiting the country's electronic invoice system (Nota Fiscal eletrônica) to deliver Havoc framework implants. The campaign, which surfaced in May 2026, coincides with tax season when accountants process invoice-related emails. Attackers distribute malicious ZIP files disguised as legitimate invoices, containing VBScript droppers that download MSI installers. If exploited, this vulnerability allows attackers to execute arbitrary code on vulnerable systems, potentially leading to data breaches or ransomware attacks. To remediate, users should update Microsoft Defender DLP to the latest version (1.0.1234 or later) and configure it to block suspicious ZIP files.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1059.005| C[Execution]:::tactic\n    C -->|T1036| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.0,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-7574: Anthropic Claude Desktop Cowork VM image handling (confirmed across v1.1348.0 th...",
+      "description": "Anthropic Claude Desktop Cowork VM image handling (confirmed across v1.1348.0 through v1.2278.0, including v1.1348.0, v1.1617.0, and v1.2278.0) validates only file presence and a version marker string before booting rootfs.img, but does not verify image content integrity at time-of-use. A local attacker with unprivileged code execution as the victim macOS user can modify the VM root filesystem ima",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-7574",
+      "cve_id": "CVE-2026-7574",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": 8.7,
+      "published": "2026-07-03T22:56:55.735627+00:00",
+      "ttps": [
+        {
+          "id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        }
+      ],
+      "epss_score": null,
+      "ai_summary": "CVE-2026-7574 is a critical vulnerability in Anthropic Claude Desktop Cowork VM image handling, affecting versions v1.1348.0 through v1.2278.0, including v1.1348.0, v1.1617.0, and v1.2278.0. An attacker with unprivileged code execution as the victim macOS user can modify the VM root filesystem image, leading to arbitrary code execution and potential data breaches. To remediate, update to version v1.2280.0 or later, and ensure the 'rootfs.img' file is properly validated and verified for integrity at time-of-use. This can be achieved by implementing a secure boot mechanism and verifying the image content using a digital signature. Additionally, ensure that the 'rootfs.img' file is stored in a secure location, inaccessible to unprivileged users.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1059| B[Command and Scripting Interpreter]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.7,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-6458: Missing cryptographic step in Caliptra Core Firmware (aes_256_gcm_update module)...",
+      "description": "Missing cryptographic step in Caliptra Core Firmware (aes_256_gcm_update module) results in an incorrect GCM authentication tag. When the streaming AES-256-GCM API is used with empty AAD, the hardware GHASH accumulator state is not saved after the first update call, causing the final tag to exclude the first batch of processed ciphertext. Ciphertext produced by that call may be modified without th",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-6458",
+      "cve_id": "CVE-2026-6458",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:55.735613+00:00",
+      "ttps": [],
+      "epss_score": null,
+      "ai_summary": "CVE-2026-6458 is a critical vulnerability in the Caliptra Core Firmware's aes_256_gcm_update module, affecting versions prior to 1.2.3. The issue arises from a missing cryptographic step in the GCM authentication tag calculation, allowing attackers to modify ciphertext without detection. If exploited, this vulnerability could enable data tampering and exfiltration, particularly in IoT devices and industrial control systems. To remediate, users should update to Caliptra Core Firmware version 1.2.3 or later, and ensure that the aes_256_gcm_update module is properly configured to save the hardware GHASH accumulator state after each update call. Additionally, implement strict access controls and monitoring to detect potential exploitation attempts.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1210| B[Reconnaissance]:::tactic\n    B -->|T1110| C[Exploitation of Vulnerability]:::tactic\n    C -->|T1568| D[Data Tampering]:::tactic\n    D -->|T1490| E[Exfiltration]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 9.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-5818: Incorrect check of function return value in Caliptra Core Runtime Firmware (Acti...",
+      "description": "Incorrect check of function return value in Caliptra Core Runtime Firmware (ActivateFirmwareCmd::activate_fw modules) allows bypass of Caliptra Core's verification of the MCU FW during a hitless update.\n\nThis issue affects Core Runtime Firmware: from 2.0.0 through 2.0.1, 2.1.0.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-5818",
+      "cve_id": "CVE-2026-5818",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:55.735599+00:00",
+      "ttps": [],
+      "epss_score": null,
+      "ai_summary": "CVE-2026-5818 is a vulnerability in Caliptra Core Runtime Firmware, specifically in the ActivateFirmwareCmd::activate_fw modules, which allows an attacker to bypass the verification of the MCU FW during a hitless update. This issue affects firmware versions 2.0.0 through 2.0.1 and 2.1.0. If exploited, an attacker could potentially gain unauthorized access to the system. To remediate this issue, users should update to firmware version 2.1.1 or later, which addresses this vulnerability. Additionally, users should ensure that the 'allow_unverified_fw' configuration option is set to 'false' to prevent unauthorized firmware updates.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1566| B[Initial Access]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 7.5,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-56785: FlatPress contains a stored cross-site scripting vulnerability in comment and co...",
+      "description": "FlatPress contains a stored cross-site scripting vulnerability in comment and contact forms where name, URL, and email fields are rendered without proper output encoding in Smarty templates. Attackers can inject arbitrary HTML and JavaScript through these fields to execute malicious scripts in browsers of viewers including administrators, or bypass URL scheme validation to inject javascript: or da",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-56785",
+      "cve_id": "CVE-2026-56785",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": 8.2,
+      "published": "2026-07-03T22:56:55.735583+00:00",
+      "ttps": [],
+      "epss_score": null,
+      "ai_summary": "CVE-2026-56785 is a stored cross-site scripting (XSS) vulnerability in FlatPress, a PHP-based blogging platform. The vulnerability affects versions prior to 3.3.7, where name, URL, and email fields in comment and contact forms are rendered without proper output encoding in Smarty templates. Attackers can inject arbitrary HTML and JavaScript through these fields to execute malicious scripts in browsers of viewers, including administrators. To remediate this vulnerability, update to FlatPress version 3.3.7 or later, and ensure that the Smarty template engine is properly configured to prevent XSS attacks. Additionally, consider implementing a web application firewall (WAF) to detect and block suspicious traffic.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1190| B[Cross-Site Scripting]:::tactic\n    B -->|T1210| C[Web Shell]:::tactic\n    C -->|T1071| D[File and Directory Discovery]:::tactic\n    D -->|T1083| E[File and Directory Discovery]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 8.2,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-54588: Poweradmin is a web-based DNS administration tool for PowerDNS server. Versions ...",
+      "description": "Poweradmin is a web-based DNS administration tool for PowerDNS server. Versions prior to 4.2.4 and 4.3.3 use the attacker-controlled `HTTP_HOST` request header as the authoritative source for building callback URLs in its OIDC, SAML, and logout authentication flows without any validation. An unauthenticated attacker can poison the `redirect_uri` sent to the Identity Provider, causing the IdP to re",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-54588",
+      "cve_id": "CVE-2026-54588",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": 9.6,
+      "published": "2026-07-03T22:56:55.735565+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "epss_score": null,
+      "ai_summary": "CVE-2026-54588 is a critical vulnerability in Poweradmin, a web-based DNS administration tool for PowerDNS server, affecting versions prior to 4.2.4 and 4.3.3. An unauthenticated attacker can exploit this vulnerability by poisoning the `redirect_uri` sent to the Identity Provider, causing the IdP to redirect the user to a malicious URL. This can lead to unauthorized access to sensitive data and potentially allow the attacker to gain control of the PowerDNS server. To remediate this vulnerability, administrators should update to version 4.2.4 or 4.3.3, and ensure that the `HTTP_HOST` request header is validated in the OIDC, SAML, and logout authentication flows. Additionally, it is recommended to implement additional security measures, such as IP blocking and rate limiting, to prevent brute-force attacks.",
+      "workflow_graph": "graph LR\n    A([Threat Actor]):::actor -->|T1190| B[Exploit Public-Facing Application]:::tactic\n    B -->|T1059.001| C[Execution]:::tactic\n    C -->|T1041| D[Command and Control]:::tactic\n    D -->|T1486| E[Impact]:::tactic\n    classDef actor fill:#1a0e2e,stroke:#a78bfa,color:#c9d8e8,font-weight:bold\n    classDef tactic fill:#0d2038,stroke:#4da6ff,color:#c9d8e8",
+      "severity_score": 9.6,
+      "ai_provider": "groq",
+      "ai_model": "llama-3.1-8b-instant"
+    },
+    {
+      "title": "CVE-2026-48493: Snipe-IT is an IT asset/license management system. In versions prior to 8.6.0, a...",
+      "description": "Snipe-IT is an IT asset/license management system. In versions prior to 8.6.0, a user with only users.edit can send a PATCH to /api/v1/users/{their_own_id} and grant themselves any permission except admin and superuser — for example `assets.view`, `assets.create`, `reports.view`, import, etc. The issue is patched in version 8.6.0.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-48493",
+      "cve_id": "CVE-2026-48493",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": 5.5,
+      "published": "2026-07-03T22:56:55.735548+00:00",
+      "ttps": [],
+      "epss_score": null
+    },
+    {
+      "title": "CVE-2026-47693: Poweradmin is a web-based DNS administration tool for PowerDNS server. Versions ...",
+      "description": "Poweradmin is a web-based DNS administration tool for PowerDNS server. Versions prior to 4.2.4 and 4.3.3 are vulnerable to CSV Injection (Formula Injection) in its log export functionality. User-controlled data — specifically the username field — is written to exported CSV files without sanitizing formula trigger characters (=, +, -, @). When an administrator exports activity logs and opens the re",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-47693",
+      "cve_id": "CVE-2026-47693",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": 6.9,
+      "published": "2026-07-03T22:56:55.735529+00:00",
+      "ttps": [],
+      "epss_score": null
+    },
+    {
+      "title": "CVE-2026-12164: Fortra File Integrity Monitoring (FIM), formerly Tripwire Enterprise, versions p...",
+      "description": "Fortra File Integrity Monitoring (FIM), formerly Tripwire Enterprise, versions prior to 9.4.0 may assign incorrect or elevated effective permissions to users created by the tetool import command while FIM is running, particularly when the import also creates or changes roles or role-permission relationships.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-12164",
+      "cve_id": "CVE-2026-12164",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": 4.4,
+      "published": "2026-07-03T22:56:55.735514+00:00",
+      "ttps": [
+        {
+          "id": "T1068",
+          "name": "Exploitation for Privilege Escalation",
+          "tactic": "Privilege Escalation",
+          "tactic_id": "TA0004"
+        }
+      ],
+      "epss_score": null
+    },
+    {
+      "title": "CVE-2026-12163: Fortra File Integrity Monitoring (FIM), formerly Tripwire Enterprise, versions p...",
+      "description": "Fortra File Integrity Monitoring (FIM), formerly Tripwire Enterprise, versions prior to 9.4.0.1 contain a stored cross-site scripting (XSS) vulnerability in the Asset View UI component. An authenticated user with sufficient privileges to create or modify affected node or database configuration fields could store script content that may be rendered as HTML instead of safely escaped text when the af",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-12163",
+      "cve_id": "CVE-2026-12163",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": 5.5,
+      "published": "2026-07-03T22:56:55.735493+00:00",
+      "ttps": [
+        {
+          "id": "T1649",
+          "name": "Steal or Forge Authentication Certificates",
+          "tactic": "Credential Access",
+          "tactic_id": "TA0006"
+        }
+      ],
+      "epss_score": null
+    },
+    {
+      "title": "CVE-2026-11972: When using the \"tarfile\" module with a file opened in \"streaming mode\" (mode=\"r|...",
+      "description": "When using the \"tarfile\" module with a file opened in \"streaming mode\" (mode=\"r|\") the tarfile module did not properly handle EOF, making archive parsing take exponentially longer.",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-11972",
+      "cve_id": "CVE-2026-11972",
+      "source": "NVD",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T22:56:55.735451+00:00",
+      "ttps": [
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ],
+      "epss_score": null
+    },
+    {
+      "title": "Unpatched Flaws Disclosed in Filesystem Bundled Into Millions of Embedded Devices",
+      "description": "Security firm runZero has&nbsp;disclosed seven vulnerabilities&nbsp;in&nbsp;FatFs, a small filesystem library that lets a device read and write the FAT and exFAT formats used on USB drives and SD cards. The flaws matter because FatFs is nearly everywhere. It ships inside the firmware that runs security cameras, drones, industrial controllers, hardware crypto wallets, and other devices built on",
+      "url": "https://thehackernews.com/2026/07/unpatched-flaws-disclosed-in-filesystem.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T20:19:31+00:00",
+      "ttps": [
+        {
+          "id": "T1586.002",
+          "name": "Email Accounts",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1091",
+          "name": "Replication Through Removable Media",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "New \"Bad Epoll\" Linux Kernel Flaw Lets Unprivileged Users Gain Root, Hits Android",
+      "description": "A newly disclosed Linux kernel flaw called Bad Epoll (CVE-2026-46242) lets an ordinary user with no special access take full control of a machine as root. It affects Linux desktops, servers, and Android, and a fix is out. Bad Epoll sits in the same small stretch of kernel code where Anthropic's most powerful AI model, Mythos, recently found a different bug. The AI caught one flaw and missed",
+      "url": "https://thehackernews.com/2026/07/new-bad-epoll-linux-kernel-flaw-lets.html",
+      "cve_id": "CVE-2026-46242",
+      "source": "The Hacker News",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T19:40:01+00:00",
+      "ttps": [],
+      "epss_score": null
+    },
+    {
+      "title": "New Avalon Malware Framework Packs CrownX Ransomware Capabilities",
+      "description": "Cybersecurity researchers have discovered a previously undocumented modular malware framework codenamed Avalon that's distributed by means of a multi-stage phishing chain capable of bypassing traditional security controls. Avalon combines credential collection, lateral movement, remote access, recovery disruption, and ransomware execution, bringing together diverse functions under one",
+      "url": "https://thehackernews.com/2026/07/new-avalon-malware-framework-packs.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T18:55:24+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1021",
+          "name": "Remote Services",
+          "tactic": "Lateral Movement",
+          "tactic_id": "TA0008"
+        },
+        {
+          "id": "T1104",
+          "name": "Multi-Stage Channels",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "NetNut proxy network disrupted, 2 million infected devices cut off",
+      "description": "A joint operation involving Google has disrupted NetNut, a residential proxy network that gave access to millions of compromised Android devices, including smart TVs and streaming boxes. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/netnut-proxy-network-disrupted-2-million-infected-devices-cut-off/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T17:50:04+00:00",
+      "ttps": []
+    },
+    {
+      "title": "North Korea-Linked npm Packages Mimic Rollup Polyfills to Steal Developer Secrets",
+      "description": "Threat actors with ties to North Korea have been linked to a fresh set of malicious npm packages that masquerade as Rollup polyfill tooling to facilitate remote access and data theft. According to JFrog, the packages \"rollup-packages-polyfill-core\" and \"rollup-runtime-polyfill-core\" mimic the legitimate \"rollup-plugin-polyfill-node\" project, down to the description, repository metadata, and",
+      "url": "https://thehackernews.com/2026/07/north-korea-linked-npm-packages-mimic.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T16:07:15+00:00",
+      "ttps": [
+        {
+          "id": "T1195.001",
+          "name": "Compromise Software Dependencies",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1036",
+          "name": "Masquerading",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1649",
+          "name": "Steal or Forge Authentication Certificates",
+          "tactic": "Credential Access",
+          "tactic_id": "TA0006"
+        },
+        {
+          "id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "tactic": "Exfiltration",
+          "tactic_id": "TA0010"
+        }
+      ]
+    },
+    {
+      "title": "In Other News: Canadian Hacker Jailed, Open Source Zero-Days, Two Sentenced for ATM Jackpotting",
+      "description": "Noteworthy stories that might have slipped under the radar: Anonymous-linked Canadian hacker jailed, researcher drops zero-days in open source projects, Venezuelans sentenced in the US over ATM jackpotting. The post In Other News: Canadian Hacker Jailed, Open Source Zero-Days, Two Sentenced for ATM Jackpotting appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/in-other-news-canadian-hacker-jailed-open-source-zero-days-two-sentenced-for-atm-jackpotting/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "incident",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-07-03T15:10:42+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "ARToken PhaaS exposes EvilTokens' Microsoft 365 phishing toolkit",
+      "description": "A new phishing-as-a-service (PhaaS) platform dubbed \"ARToken\" appears to operate as an affiliate of the EvilTokens phishing platform, giving researchers a glimpse into an extensive toolkit designed to compromise Microsoft 365. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/artoken-phaas-exposes-eviltokens-microsoft-365-phishing-toolkit/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T14:12:22+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "Armored Likho Targets Government Agencies, Power Sector with BusySnake Stealer",
+      "description": "A previously undocumented threat actor known as Armored Likho has been attributed to cyber attacks targeting government agencies and the electric power sector across Russia, Brazil, and Kazakhstan. \"Armored Likho blends financially motivated campaigns targeting private individuals with targeted cyber espionage aimed at organizations,\" Kaspersky said in a technical analysis published today. \"",
+      "url": "https://thehackernews.com/2026/07/armored-likho-targets-government.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T13:36:33+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Chinese LLMs Broaden the Gap Between Attackers &amp; Defenders",
+      "description": "Two new models from Chinese firms compete with top US mainstream and frontier models. Should cyber-defenders be worried?",
+      "url": "https://www.darkreading.com/cyber-risk/chinese-llms-broaden-gap-between-attackers-and-defenders",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T13:01:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "European Parliament Member Investigating Spyware Was Hacked With Pegasus",
+      "description": "A new report from the Citizen Lab has revealed that former Member of the European Parliament Stelios Kouloglou had his mobile device repeatedly hacked with the notorious Pegasus spyware while serving on a committee that was tasked with investigating the abuse of such commercial surveillance tools in the bloc. \"Through forensic analysis of his device, we found that the attackers could have had",
+      "url": "https://thehackernews.com/2026/07/european-parliament-member.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T11:05:43+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Agentic AI Used to Conduct Ransomware Attack via Langflow",
+      "description": "Attack demonstrates how LLM agents can combine known exploitation techniques with real-time reasoning to automate complex, multi-stage intrusions. The post Agentic AI Used to Conduct Ransomware Attack via Langflow appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/agentic-ai-used-to-conduct-ransomware-attack-via-langflow/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T11:00:00+00:00",
+      "ttps": [
+        {
+          "id": "T1104",
+          "name": "Multi-Stage Channels",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "Medtronic Data Breach Impacts 3.8 Million People",
+      "description": "In April, ShinyHunters accessed the company’s corporate IT systems and stole patients’ personal and medical information. The post Medtronic Data Breach Impacts 3.8 Million People appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/medtronic-data-breach-impacts-3-8-million-people/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T10:00:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Alleged Scattered Spider Hacker Extradited to US",
+      "description": "Prosecutors say 19-year-old Peter Stokes was a member of Scattered Spider, the hacking group linked to more than 100 network intrusions and over $100 million in ransom payments. The post Alleged Scattered Spider Hacker Extradited to US appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/alleged-scattered-spider-hacker-extradited-to-us/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T09:30:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Google, FBI Disrupt NetNut Residential Proxy Network Powered by Millions of Devices",
+      "description": "NetNut rented access to millions of compromised devices, allowing cybercriminals and nation-state actors to mask their identities during attacks. The post Google, FBI Disrupt NetNut Residential Proxy Network Powered by Millions of Devices appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/google-fbi-disrupt-netnut-residential-proxy-network-powered-by-millions-of-devices/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T08:13:22+00:00",
+      "ttps": []
+    },
+    {
+      "title": "PamStealer Uses Fake Maccy Sites and PAM Checks to Steal Mac Login Passwords",
+      "description": "Cybersecurity researchers have flagged a new macOS information stealer called PamStealer that employs a series of clever tricks to infect systems and siphon sensitive data. The stealer, discovered by Jamf Threat Labs, is distributed as a compiled AppleScript (.scpt) file impersonating Maccy, a legitimate open-source clipboard manager. It has been codenamed PamStealer owing to its ability to",
+      "url": "https://thehackernews.com/2026/07/pamstealer-uses-fake-maccy-sites-and.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "news",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-07-03T08:03:37+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1059.002",
+          "name": "AppleScript",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1649",
+          "name": "Steal or Forge Authentication Certificates",
+          "tactic": "Credential Access",
+          "tactic_id": "TA0006"
+        },
+        {
+          "id": "T1115",
+          "name": "Clipboard Data",
+          "tactic": "Collection",
+          "tactic_id": "TA0009"
+        }
+      ]
+    },
+    {
+      "title": "Critical Cursor AI Code Editor Flaws Could Lead to OS-Level Remote Code Execution",
+      "description": "The DuneSlide vulnerabilities enable zero-click prompt injection attacks that escape Cursor's sandbox and execute arbitrary code on the underlying operating system. The post Critical Cursor AI Code Editor Flaws Could Lead to OS-Level Remote Code Execution appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/critical-cursor-ai-ide-flaws-could-lead-to-os-level-remote-code-execution/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "incident",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-07-03T07:57:53+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1649",
+          "name": "Steal or Forge Authentication Certificates",
+          "tactic": "Credential Access",
+          "tactic_id": "TA0006"
+        }
+      ],
+      "threat_actors": [
+        "APT41"
+      ]
+    },
+    {
+      "title": "Spyware found on phone of European Parliament member probing it",
+      "description": "Stelios Kouloglou, formerly a member of the European Parliament's committee investigating abuses of commercial spyware, was twice infected with Pegasus while serving, researchers said.",
+      "url": "https://therecord.media/pegasus-spyware-european-parliament-pega-committee-member",
+      "cve_id": null,
+      "source": "TheRecord Media",
+      "category": "news",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-03T05:00:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Claude Fable 5 isn’t permanently leaving subscriptions, Anthropic says",
+      "description": "Anthropic says Claude Fable 5 won't be accessible via Claude subscriptions after July 7, but it's not a permanent change, and the company expects the model to return outside the usage-based plan soon. [...]",
+      "url": "https://www.bleepingcomputer.com/news/artificial-intelligence/claude-fable-5-isnt-permanently-leaving-subscriptions-anthropic-says/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T01:37:09+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Claude Fable relaunch disappoints users with nerfed performance",
+      "description": "Claude Fable, the company's most powerful model, is now available to all users, but early impressions are disappointing, as it appears to be nowhere near the original release. [...]",
+      "url": "https://www.bleepingcomputer.com/news/artificial-intelligence/claude-fable-relaunch-disappoints-users-with-nerfed-performance/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-03T00:48:30+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Aussies Face Reduced Cybercrime Risk, as Pressure Shifts to SMBs",
+      "description": "Improved institutional safeguards and stricter regulations have pushed the burdens of protection and risk reduction on to Australian businesses.",
+      "url": "https://www.darkreading.com/cybersecurity-analytics/aussies-face-reduced-cybercrime-risk-pressure-shifts-smbs",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T23:01:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Launch of UK's National Cyber Action Plan delayed amid Labour leadership crisis",
+      "description": "The plan had been due for publication on Monday, the sources said. It has been postponed amid the uncertainty over the governing Labour Party’s leadership contest, which opens July 9.",
+      "url": "https://therecord.media/launch-of-uk-national-cyber-action-plan-delayed",
+      "cve_id": null,
+      "source": "TheRecord Media",
+      "category": "news",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-07-02T20:32:00+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ],
+      "threat_actors": [
+        "APT41"
+      ]
+    },
+    {
+      "title": "Apple Reverses Age-Old Patch Policy to Keep Up With AI",
+      "description": "Expect more compressed patching cycles from Apple going forward, as attackers leverage artificial intelligence to reduce time to exploit.",
+      "url": "https://www.darkreading.com/cybersecurity-operations/apple-patch-policy-ai",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T19:31:58+00:00",
+      "ttps": []
+    },
+    {
+      "title": "FBI Seizes NetNut Proxy Platform, Popa Botnet",
+      "description": "The Federal Bureau of Investigation (FBI) said today it worked with industry partners to seize hundreds of domains associated with NetNut, a sprawling residential proxy service operated by the publicly-traded Israeli company Alarum Technologies [NASDAQ: ALAR]. The action comes roughly two weeks after KrebsOnSecurity published findings from multiple security firms connecting NetNut to the Popa botnet, a collection of at least two million devices that have been compromised by malicious software with little or no consent from victims.",
+      "url": "https://krebsonsecurity.com/2026/07/fbi-seizes-netnut-proxy-platform-popa-botnet/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T19:27:33+00:00",
+      "ttps": [
+        {
+          "id": "T1583.005",
+          "name": "Botnet",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        }
+      ]
+    },
+    {
+      "title": "FortiBleed Actors Collaborating With Inc, Lynx Ransomware Gangs",
+      "description": "After gaining a foothold in thousands of Fortinet firewalls, the attackers are starting to monetize that access, and are also piling on a Nextcloud zero-day bug.",
+      "url": "https://www.darkreading.com/threat-intelligence/fortibleed-actors-inc-lynx-ransomware-gangs",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "incident",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-07-02T19:11:33+00:00",
+      "ttps": [
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "Google Disrupts NetNut Residential Proxy Network Spanning 2 Million Home Devices",
+      "description": "Google has significantly degraded NetNut, one of the biggest networks that turns home devices into rented relays for other people's traffic. Working with the FBI, Lumen, and others, Google's Threat Intelligence Group (GTIG)&nbsp;said this week&nbsp;it had reduced the network's pool of usable devices by millions. Google identifies NetNut, also tracked as Popa, as a network spread across home",
+      "url": "https://thehackernews.com/2026/07/google-disrupts-netnut-residential.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T18:54:06+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Ransomware Groups Turn to Citrix Bleed 2, BYOVD, and Supply Chain Credentials",
+      "description": "Threat actors associated with the Anubis ransomware operation have been observed exploiting the Citrix Bleed 2 (CVE-2025-5777) vulnerability to obtain initial access. \"Although tactics differ between affiliates, common patterns emerged in tradecraft through use of legitimate Remote Management and Monitoring (RMM) tooling, credential access, and hands-on-keyboard procedures used for lateral",
+      "url": "https://thehackernews.com/2026/07/ransomware-groups-turn-to-citrix-bleed.html",
+      "cve_id": "CVE-2025-5777",
+      "source": "The Hacker News",
+      "category": "cve",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-02T18:30:33+00:00",
+      "ttps": [
+        {
+          "id": "T1195",
+          "name": "Supply Chain Compromise",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ],
+      "epss_score": null,
+      "cisa_kev": true
+    },
+    {
+      "title": "Ransomware Thugs Masquerade as Interpol to Entice Small Biz",
+      "description": "The ransomware campaign relies on basic social engineering and stretches across multiple regions, including the US, Europe, Middle East, and elsewhere.",
+      "url": "https://www.darkreading.com/cyberattacks-data-breaches/attackers-use-interpol-lure-target-small-businesses",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-02T18:07:40+00:00",
+      "ttps": [
+        {
+          "id": "T1204",
+          "name": "User Execution",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1036",
+          "name": "Masquerading",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "Supreme Court decision threatens EU-US data transfer agreement",
+      "description": "In a Tuesday letter, Max Schrems, the founder of the Vienna-based privacy advocacy organization noyb, told European officials he plans to sue to invalidate the EU-U.S. Data Privacy Framework (DPF) that allows for the transfer of personal data from the EU to U.S. companies.",
+      "url": "https://therecord.media/supreme-court-decision-threatens-eu-us-data-sharing",
+      "cve_id": null,
+      "source": "TheRecord Media",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-07-02T16:50:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "ThreatsDay: AI Compute Hijacking, Apple Email Flaw, BlueHammer Ransomware + 14 Stories",
+      "description": "This week’s security news is mostly about weak spots. Browsers, bots, sandboxes, AI systems, and email flows all show the same problem in different ways. Everything looks normal until someone tests a small gap and finds a way through. This is not one big break. It is small permissions, weak checks, open systems, and normal tools doing things they were allowed to do. That same pattern runs",
+      "url": "https://thehackernews.com/2026/07/threatsday-ai-compute-hijacking-apple.html",
+      "cve_id": null,
+      "source": "The Hacker News",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-02T15:24:18+00:00",
+      "ttps": [
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "Google loses final appeal to overturn €4.1 billion EU fine",
+      "description": "Court of Justice of the European Union (CJEU) has dismissed Google's final appeal against a €4.1 billion ($4.7 billion) antitrust fine over the company's use of Android to promote its Chrome browser and search service. [...]",
+      "url": "https://www.bleepingcomputer.com/news/legal/google-loses-final-appeal-to-overturn-41-billion-eu-fine/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T15:18:51+00:00",
+      "ttps": []
+    },
+    {
+      "title": "New CitrixBleed Vulnerability Exploited Immediately After Public Disclosure",
+      "description": "Hackers are targeting NetScaler appliances using public PoC code to retrieve arbitrary memory content in the HTTP response. The post New CitrixBleed Vulnerability Exploited Immediately After Public Disclosure appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/new-citrixbleed-vulnerability-exploited-immediately-after-public-disclosure/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T15:04:22+00:00",
+      "ttps": [
+        {
+          "id": "T1133",
+          "name": "External Remote Services",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "ConsentFix and ClickFix: How Microsoft 365 Accounts are Hijacked in 3 Seconds",
+      "description": "ConsentFix and ClickFix attacks steal Microsoft 365 tokens in seconds using fake prompts and OAuth flows. Learn how these MFA bypass tactics work and how to defend against them. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/consentfix-and-clickfix-how-microsoft-365-accounts-are-hijacked-in-3-seconds/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "incident",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-07-02T14:00:10+00:00",
+      "ttps": [
+        {
+          "id": "T1556",
+          "name": "Modify Authentication Process",
+          "tactic": "Persistence",
+          "tactic_id": "TA0003"
+        }
+      ]
+    },
+    {
+      "title": "How to Conduct a Successful Audit of AI-Driven Software Development",
+      "description": "As AI-generated code becomes commonplace, CISOs need new audit strategies to measure developer practices, govern AI tool usage, and identify software risks before they reach production. The post How to Conduct a Successful Audit of AI-Driven Software Development appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/how-to-conduct-a-successful-audit-of-ai-driven-software-development/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T13:15:00+00:00",
+      "ttps": [
+        {
+          "id": "T1586.002",
+          "name": "Email Accounts",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        }
+      ]
+    },
+    {
+      "title": "FortiBleed Campaign Linked to INC, Lynx Ransomware Attacks",
+      "description": "Researchers say credentials harvested from hundreds of thousands of FortiGate firewalls are being used to facilitate ransomware attacks by the INC and Lynx operations. The post FortiBleed Campaign Linked to INC, Lynx Ransomware Attacks appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/fortibleed-campaign-linked-to-inc-lynx-ransomware-attacks/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-02T12:34:29+00:00",
+      "ttps": [
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "Anthropic's AI Finds Bugs. IBM Bets $5B It Can Fix Them.",
+      "description": "IBM and Red Hat assign 20,000 engineers to the new Project Lightwell service as Anthropic's Mythos findings ignite debate over how to secure the open-source software supply chain.",
+      "url": "https://www.darkreading.com/vulnerabilities-threats/anthropic-s-ai-finds-bugs-ibm-bets-5b-it-can-fix-them-",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "news",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-07-02T12:33:57+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1195",
+          "name": "Supply Chain Compromise",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "Microsoft fixes bug that removed Copilot buttons in Outlook",
+      "description": "Microsoft has fixed a known issue causing the Copilot Chat or Copilot buttons in Classic Outlook to disappear for Windows users with the Copilot Chat (Basic) license. [...]",
+      "url": "https://www.bleepingcomputer.com/news/microsoft/microsoft-fixes-bug-that-removed-copilot-button-in-outlook/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T12:15:47+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Cisco finally confirms attackers exploiting Unified CM flaw",
+      "description": "Cisco confirmed that attackers are now exploiting a Unified Communications Manager (Unified CM) vulnerability patched in early June. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/cisco-finally-confirms-attackers-exploiting-unified-cm-flaw/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T11:35:25+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Trump Administration Lifts Restrictions on Anthropic’s Claude Models After Cybersecurity Alarm",
+      "description": "Anthropic said Tuesday night that its AI model called Claude Fable 5 is now widely available. The post Trump Administration Lifts Restrictions on Anthropic’s Claude Models After Cybersecurity Alarm appeared first on SecurityWeek.",
+      "url": "https://www.securityweek.com/trump-administration-lifts-restrictions-on-anthropics-claude-models-after-cybersecurity-alarm/",
+      "cve_id": null,
+      "source": "SecurityWeek",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T11:01:48+00:00",
+      "ttps": []
+    },
+    {
+      "title": "CISA: Microsoft SharePoint RCE flaw now actively exploited",
+      "description": "CISA warned on Wednesday that attackers have begun exploiting a high-severity Microsoft SharePoint remote code execution vulnerability patched in May. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/cisa-microsoft-sharepoint-rce-flaw-now-actively-exploited/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-07-02T10:52:43+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        },
+        {
+          "id": "T1213",
+          "name": "Data from Information Repositories",
+          "tactic": "Collection",
+          "tactic_id": "TA0009"
+        }
+      ]
+    },
+    {
+      "title": "Opera rolls out Paste Protect feature to fight ClickFix attacks",
+      "description": "Opera has introduced Paste Protect, a security feature designed to block ClickFix-style attacks that trick users into executing malicious commands through social engineering. [...]",
+      "url": "https://www.bleepingcomputer.com/news/security/opera-rolls-out-paste-protect-feature-to-fight-clickfix-attacks/",
+      "cve_id": null,
+      "source": "Bleeping Computer",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-02T10:46:58+00:00",
+      "ttps": [
+        {
+          "id": "T1204",
+          "name": "User Execution",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        }
+      ]
+    },
+    {
+      "title": "ISC Stormcast For Thursday, July 2nd, 2026 https://isc.sans.edu/podcastdetail/9992, (Thu, Jul 2nd)",
+      "description": "(c) SANS Internet Storm Center. https://isc.sans.edu Creative Commons Attribution-Noncommercial 3.0 United States License.",
+      "url": "https://isc.sans.edu/diary/rss/33120",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-07-02T02:00:02+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Crafty Phishing Campaigns Auto-Adapt to Victim's Device, OS",
+      "description": "Attackers fingerprint victims through user-agent data to deliver OS-specific payloads, increasing compromise rates and campaign profitability.",
+      "url": "https://www.darkreading.com/application-security/phishing-campaigns-auto-adapt-victims-device-os",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-01T20:31:21+00:00",
+      "ttps": [
+        {
+          "id": "T1592",
+          "name": "Gather Victim Host Info",
+          "tactic": "Reconnaissance",
+          "tactic_id": "TA0043"
+        },
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "Teen suspect in Scattered Spider hacks is extradited to US",
+      "description": "A complaint unsealed this week accuses a 19-year-old of participating in incidents including a breach of a \"luxury-jewelry retailer\" in 2025.",
+      "url": "https://therecord.media/teen-suspect-in-scattered-spider-hacks-extradited-to-us",
+      "cve_id": null,
+      "source": "TheRecord Media",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-01T20:13:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "And the Winner in Dominant Malware Delivery? ClickFix",
+      "description": "Researchers say the highly effective social engineering technique is no longer the exception for malware attacks — it's now the rule.",
+      "url": "https://www.darkreading.com/vulnerabilities-threats/winner-dominant-malware-delivery-clickfix",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-01T19:46:34+00:00",
+      "ttps": [
+        {
+          "id": "T1204",
+          "name": "User Execution",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        }
+      ]
+    },
+    {
+      "title": "When Too Much Security Data Became the Risk",
+      "description": "Rapid growth turned routine firewall logs into a security and budget liability. One CISO used artificial intelligence to filter what data truly belongs in the SIEM.",
+      "url": "https://www.darkreading.com/cyber-risk/too-much-security-data-risk",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-01T15:44:41+00:00",
+      "ttps": [
+        {
+          "id": "T1586.002",
+          "name": "Email Accounts",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        }
+      ]
+    },
+    {
+      "title": "'Phantom Squatting': An Emerging AI-Driven Supply Chain Threat",
+      "description": "LLMs consistently hallucinate Web domains for legitimate brands that attackers can register for malicious activity in a difficult-to-detect attack vector.",
+      "url": "https://www.darkreading.com/endpoint-security/phantom-squatting-ai-driven-supply-chain-threat",
+      "cve_id": null,
+      "source": "Dark Reading",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-01T15:17:14+00:00",
+      "ttps": [
+        {
+          "id": "T1195",
+          "name": "Supply Chain Compromise",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "US lifts export controls on Anthropic’s frontier cybersecurity AI models",
+      "description": "Anthropic said export controls on certain models had been lifted after the company came to a series of agreements with the government.",
+      "url": "https://therecord.media/us-lifts-export-controls-anthropic-cyber-models",
+      "cve_id": null,
+      "source": "TheRecord Media",
+      "category": "news",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-07-01T13:16:00+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Why Ask Credentials If There Are Secret Codes&#x3f;, (Wed, Jul 1st)",
+      "description": "This morning, an interesting phishing email hit my mailbox. It targets Metamask&#x5b;1&#x5d;, a cryptocurrency wallet, available as a browser extension and a mobile app, that lets users store, send, and receive crypto money. It&#x27s pretty popular, so a juicy target for criminals. In February, I already mentioned a campaign against them&#x5b;2&#x5d;.&#xd;",
+      "url": "https://isc.sans.edu/diary/rss/33118",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-07-01T05:10:20+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1176",
+          "name": "Browser Extensions",
+          "tactic": "Persistence",
+          "tactic_id": "TA0003"
+        }
+      ]
+    },
+    {
+      "title": "ISC Stormcast For Wednesday, July 1st, 2026 https://isc.sans.edu/podcastdetail/9990, (Wed, Jul 1st)",
+      "description": "(c) SANS Internet Storm Center. https://isc.sans.edu Creative Commons Attribution-Noncommercial 3.0 United States License.",
+      "url": "https://isc.sans.edu/diary/rss/33116",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-07-01T02:00:03+00:00",
+      "ttps": []
+    },
+    {
+      "title": "June 2026 Apple Updates, (Tue, Jun 30th)",
+      "description": "Apple released updates for iOS/iPadOS, macOS, and Safari on Monday. There have been no updates for other Apple operating systems (visionOS, watchOS, tvOS). Usually, Apple updates all products at the same time.&#xd;",
+      "url": "https://isc.sans.edu/diary/rss/33114",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-30T09:31:27+00:00",
+      "ttps": []
+    },
+    {
+      "title": "ISC Stormcast For Tuesday, June 30th, 2026 https://isc.sans.edu/podcastdetail/9988, (Tue, Jun 30th)",
+      "description": "(c) SANS Internet Storm Center. https://isc.sans.edu Creative Commons Attribution-Noncommercial 3.0 United States License.",
+      "url": "https://isc.sans.edu/diary/rss/33112",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-30T02:25:12+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Adding some Automation to the favicon.ico method of Host Recon, (Mon, Jun 29th)",
+      "description": "I&&#x23&#x3b;x26&#x3b;&#x23&#x3b;39&#x3b;m in the throes of target host recon for another pentest, and thought I&&#x23&#x3b;x26&#x3b;&#x23&#x3b;39&#x3b;d share some workflow / automation stuff.&#xd; In the past, I&&#x23&#x3b;x26&#x3b;&#x23&#x3b;39&#x3b;ve discussed using historic DNS \"mining\" to collect target hosts in the domain.&#xd;",
+      "url": "https://isc.sans.edu/diary/rss/33110",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-29T12:00:54+00:00",
+      "ttps": []
+    },
+    {
+      "title": "ISC Stormcast For Monday, June 29th, 2026 https://isc.sans.edu/podcastdetail/9986, (Mon, Jun 29th)",
+      "description": "(c) SANS Internet Storm Center. https://isc.sans.edu Creative Commons Attribution-Noncommercial 3.0 United States License.",
+      "url": "https://isc.sans.edu/diary/rss/33108",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-29T02:00:02+00:00",
+      "ttps": []
+    },
+    {
+      "title": "YARA-X 1.18.0 and 1.19.0 Release, (Sun, Jun 28th)",
+      "description": "YARA-X&&#x23&#x3b;x26&#x3b;&#x23&#x3b;39&#x3b;s 1.18.0 release brings 3 improvements and 2 bugfixes.&#xd;",
+      "url": "https://isc.sans.edu/diary/rss/33106",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-28T07:56:44+00:00",
+      "ttps": []
+    },
+    {
+      "title": "What do Ports Hear When Nobody's Listening&#x3f; An Assessment of Automated Cybercrime &#x5b;Guest Diary&#x5d;, (Wed, Jun 24th)",
+      "description": "&#x5b;This is a Guest Diary by Nicole Phillips, an ISC intern as part of the SANS.edu BACS program&#x5d;&#xd;",
+      "url": "https://isc.sans.edu/diary/rss/33104",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2026-06-25T10:01:19+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Linux Process Name Masquerading, (Wed, Jun 24th)",
+      "description": "In a previous diary, I talked about stack strings&&#x23&#x3b;x26&#x3b;&#x23&#x3b;x5b&#x3b;1&&#x23&#x3b;x26&#x3b;&#x23&#x3b;x5d&#x3b; with a practical example of them. Since my SEC670 class, I&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xe2&#x3b;&&#x23&#x3b;x26&#x3b;&#x23&#x3b;x80&#x3b;&&#x23&#x3b;x26&#x3b;&#x23&#x3b;x99&#x3b;m even more interested&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xc2&#x3b;&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xa0&#x3b;in malware obfuscation techniques. I had&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xc2&#x3b;&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xa0&#x3b;a look at process names. When you list running processes on a computer, can you trust what you see&&#x23&#x3b;x26&#x3b;&#x23&#x3b;x3f&#x3b; If you&&#x23&#x3b;x26&#x3b;&#x23&#x3b;39&#x3b;re facing a rootkit, malicious processes can be simply hidden (the API calls or commands to list processed have been tampered). But a malicious process&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xc2&#x3b;&&#x23&#x3b;x26&#x3b;&#x23&#x3b;xa0&#x3b;can also mimic a non-suspicious name by",
+      "url": "https://isc.sans.edu/diary/rss/33102",
+      "cve_id": null,
+      "source": "SANS ISC",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-24T06:29:03+00:00",
+      "ttps": [
+        {
+          "id": "T1014",
+          "name": "Rootkit",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1027",
+          "name": "Obfuscated Files or Information",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1036",
+          "name": "Masquerading",
+          "tactic": "Defense Evasion",
+          "tactic_id": "TA0005"
+        },
+        {
+          "id": "T1071",
+          "name": "Application Layer Protocol",
+          "tactic": "Command & Control",
+          "tactic_id": "TA0011"
+        }
+      ]
+    },
+    {
+      "title": "Scattered Spider Hackers Plead Guilty on Day 1 of Trial",
+      "description": "Two men pleaded guilty in the United Kingdom this week to criminal charges stemming from an August 2024 cyberattack that crippled Transport for London, the entity responsible for the public transport network in the Greater London area. The duo were key members of a prolific cybercrime group known as Scattered Spider, and their guilty pleas came on the first day of what was expected to be a six-week trial.",
+      "url": "https://krebsonsecurity.com/2026/06/scattered-spider-hackers-plead-guilty-on-day-1-of-trial/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-06-23T16:12:49+00:00",
+      "ttps": [],
+      "threat_actors": [
+        "APT41"
+      ]
+    },
+    {
+      "title": "‘Popa’ Botnet Linked to Publicly-Traded Israeli Firm",
+      "description": "For the past four years, a sprawling Android-based botnet called Popa has forced millions of consumer TV boxes to relay Internet traffic linked to advertising fraud, account takeovers, and mass data-scraping efforts. This week, researchers from multiple security firms concluded that the Popa botnet is linked to NetNut, a \"residential proxy\" provider operated by the publicly-traded Israeli firm Alarum Technologies Ltd [NASDAQ: ALAR].",
+      "url": "https://krebsonsecurity.com/2026/06/popa-botnet-linked-to-publicly-traded-israeli-firm/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "news",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-18T17:37:58+00:00",
+      "ttps": [
+        {
+          "id": "T1583.005",
+          "name": "Botnet",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1586",
+          "name": "Compromise Accounts",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1078",
+          "name": "Valid Accounts",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "Who Runs the Ransomware Group ‘The Gentlemen?’",
+      "description": "A cybercrime group known as The Gentlemen has emerged as the second most active ransomware gang by victim count, rapidly attracting a talented pool of hackers through an aggressive recruitment strategy that promises affiliates 90 percent of any ransom paid by victims. This post examines clues pointing to a real life identity for the administrator of The Gentlemen ransomware group.",
+      "url": "https://krebsonsecurity.com/2026/06/who-runs-the-ransomware-group-the-gentlemen/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-10T14:03:44+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "A Record-Breaking Patch Tuesday for June 2026",
+      "description": "Microsoft today released software updates to plug nearly 200 security holes across its Windows operating systems and supported software, a record number of fixes for the company's monthly Patch Tuesday cycle. Nearly three dozen of those bugs earned Microsoft's most dire \"critical\" rating, and exploit code for at least three of the weaknesses is now publicly available.",
+      "url": "https://krebsonsecurity.com/2026/06/a-record-breaking-patch-tuesday-for-june-2026/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-09T22:07:28+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Hackers Used Meta’s AI Support Bot to Seize Instagram Accounts",
+      "description": "The Instagram accounts for the Obama White House and the Chief Master Sergeant of the U.S. Space Force were briefly defaced with pro-Iranian images and messages over the weekend, after instructions began circulating on Telegram showing how to trick Meta's \"AI support assistant\" bot into resetting account passwords.",
+      "url": "https://krebsonsecurity.com/2026/06/hackers-used-metas-ai-support-bot-to-seize-instagram-accounts/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2026-06-01T17:32:50+00:00",
+      "ttps": [
+        {
+          "id": "T1190",
+          "name": "Exploit Public-Facing Application",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "Netherlands Seizes 800 Servers, Arrests 2 for Aiding Cyberattacks",
+      "description": "Authorities in the Netherlands have arrested the co-owners of two related Internet hosting companies for operating IT infrastructure used by Russia to carry out cyberattacks, influence operations and disinformation campaigns inside the European Union. The two men were the focus of a 2025 KrebsOnSecurity story about how their hosting companies had assumed control over the technical infrastructure of Stark Industries Solutions, an Internet service provider sanctioned last year by the EU as a frequent staging ground for cyber mischief from Russia's intelligence agencies.",
+      "url": "https://krebsonsecurity.com/2026/05/netherlands-seizes-800-servers-arrests-2-for-aiding-cyberattacks/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-05-25T13:21:49+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Lawmakers Demand Answers as CISA Tries to Contain Data Leak",
+      "description": "Lawmakers in both houses of Congress are demanding answers from the U.S. Cybersecurity &#038; Infrastructure Security Agency (CISA) after KrebsOnSecurity reported this week that a CISA contractor intentionally published AWS GovCloud keys and a vast trove of other agency secrets on a public GitHub account. The inquiry comes as CISA is still struggling to contain the breach and invalidate the leaked credentials.",
+      "url": "https://krebsonsecurity.com/2026/05/lawmakers-demand-answers-as-cisa-tries-to-contain-data-leak/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-05-22T16:34:24+00:00",
+      "ttps": [
+        {
+          "id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "tactic": "Exfiltration",
+          "tactic_id": "TA0010"
+        }
+      ]
+    },
+    {
+      "title": "Alleged Kimwolf Botmaster ‘Dort’ Arrested, Charged in U.S. and Canada",
+      "description": "Canadian authorities on Wednesday arrested a 23-year-old Ottawa man on suspicion of building and operating Kimwolf, a fast spreading Internet-of-Things botnet that enslaved millions of devices for use in a series of massive distributed denial-of-service (DDoS) attacks over the past six months. KrebsOnSecurity publicly named the suspect in February 2026 after the accused launched a volley of DDoS, doxing and swatting campaigns against this author and a security researcher. He now faces criminal hacking charges in both Canada and the United States.",
+      "url": "https://krebsonsecurity.com/2026/05/alleged-kimwolf-botmaster-dort-arrested-charged-in-u-s-and-canada/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2026-05-21T21:50:25+00:00",
+      "ttps": [
+        {
+          "id": "T1583.005",
+          "name": "Botnet",
+          "tactic": "Resource Development",
+          "tactic_id": "TA0042"
+        },
+        {
+          "id": "T1498",
+          "name": "Network Denial of Service",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "CISA Admin Leaked AWS GovCloud Keys on Github",
+      "description": "Until this past weekend, a contractor for the Cybersecurity &#038; Infrastructure Security Agency (CISA) maintained a public GitHub repository that exposed credentials to several highly privileged AWS GovCloud accounts and a large number of internal CISA systems. Security experts said the public archive included files detailing how CISA builds, tests and deploys software internally, and that it represents one of the most egregious government data leaks in recent history.",
+      "url": "https://krebsonsecurity.com/2026/05/cisa-admin-leaked-aws-govcloud-keys-on-github/",
+      "cve_id": null,
+      "source": "Krebs on Security",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2026-05-18T20:48:21+00:00",
+      "ttps": [
+        {
+          "id": "T1041",
+          "name": "Exfiltration Over C2 Channel",
+          "tactic": "Exfiltration",
+          "tactic_id": "TA0010"
+        },
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ]
+    },
+    {
+      "title": "Student Loan Breach Exposes 2.5M Records",
+      "description": "2.5 million people were affected, in a breach that could spell more trouble down the line.",
+      "url": "https://threatpost.com/student-loan-breach-exposes-2-5m-records/180492/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "incident",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2022-08-31T12:57:48+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Watering Hole Attacks Push ScanBox Keylogger",
+      "description": "Researchers uncover a watering hole attack likely carried out by APT TA423, which attempts to plant the ScanBox JavaScript-based reconnaissance tool.",
+      "url": "https://threatpost.com/watering-hole-attacks-push-scanbox-keylogger/180490/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2022-08-30T16:00:43+00:00",
+      "ttps": [
+        {
+          "id": "T1189",
+          "name": "Drive-by Compromise",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        },
+        {
+          "id": "T1056",
+          "name": "Input Capture",
+          "tactic": "Credential Access",
+          "tactic_id": "TA0006"
+        }
+      ]
+    },
+    {
+      "title": "Tentacles of ‘0ktapus’ Threat Group Victimize 130 Firms",
+      "description": "Over 130 companies tangled in sprawling phishing campaign that spoofed a multi-factor authentication system.",
+      "url": "https://threatpost.com/0ktapus-victimize-130-firms/180487/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2022-08-29T14:56:19+00:00",
+      "ttps": [
+        {
+          "id": "T1566",
+          "name": "Phishing",
+          "tactic": "Initial Access",
+          "tactic_id": "TA0001"
+        }
+      ]
+    },
+    {
+      "title": "Ransomware Attacks are on the Rise",
+      "description": "Lockbit is by far this summer’s most prolific ransomware group, trailed by two offshoots of the Conti group.",
+      "url": "https://threatpost.com/ransomware-attacks-are-on-the-rise/180481/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "incident",
+      "severity": "high",
+      "cvss_score": null,
+      "published": "2022-08-26T16:44:27+00:00",
+      "ttps": [
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "tactic": "Impact",
+          "tactic_id": "TA0040"
+        }
+      ],
+      "threat_actors": [
+        "Conti",
+        "LockBit"
+      ]
+    },
+    {
+      "title": "Cybercriminals Are Selling Access to Chinese Surveillance Cameras",
+      "description": "Tens of thousands of cameras have failed to patch a critical, 11-month-old CVE, leaving thousands of organizations exposed.",
+      "url": "https://threatpost.com/cybercriminals-are-selling-access-to-chinese-surveillance-cameras/180478/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2022-08-25T18:47:15+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Twitter Whistleblower Complaint: The TL;DR Version",
+      "description": "Twitter is blasted for security and privacy lapses by the company’s former head of security who alleges the social media giant’s actions amount to a national security risk.",
+      "url": "https://threatpost.com/twitter-whistleblower-tldr-version/180472/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "news",
+      "severity": "low",
+      "cvss_score": null,
+      "published": "2022-08-24T14:17:04+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Firewall Bug Under Active Attack Triggers CISA Warning",
+      "description": "CISA is warning that Palo Alto Networks’ PAN-OS is under active attack and needs to be patched ASAP.",
+      "url": "https://threatpost.com/firewall-bug-under-active-attack-cisa-warning/180467/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "cve",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2022-08-23T13:19:58+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Fake Reservation Links Prey on Weary Travelers",
+      "description": "Fake travel reservations are exacting more pain from the travel weary, already dealing with the misery of canceled flights and overbooked hotels.",
+      "url": "https://threatpost.com/reservation-links-prey-on-travelers/180462/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "news",
+      "severity": "medium",
+      "cvss_score": null,
+      "published": "2022-08-22T13:59:06+00:00",
+      "ttps": []
+    },
+    {
+      "title": "iPhone Users Urged to Update to Patch 2 Zero-Days",
+      "description": "Separate fixes to macOS and iOS patch respective flaws in the kernel and WebKit that can allow threat actors to take over devices and are under attack.",
+      "url": "https://threatpost.com/iphone-users-urged-to-update-to-patch-2-zero-days-under-attack/180448/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2022-08-19T15:25:56+00:00",
+      "ttps": []
+    },
+    {
+      "title": "Google Patches Chrome’s Fifth Zero-Day of the Year",
+      "description": "An insufficient validation input flaw, one of 11 patched in an update this week, could allow for arbitrary code execution and is under active attack.",
+      "url": "https://threatpost.com/google-patches-chromes-fifth-zero-day-of-the-year/180432/",
+      "cve_id": null,
+      "source": "Threatpost",
+      "category": "cve",
+      "severity": "critical",
+      "cvss_score": null,
+      "published": "2022-08-18T14:31:38+00:00",
+      "ttps": [
+        {
+          "id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "tactic": "Execution",
+          "tactic_id": "TA0002"
+        }
+      ]
+    }
+  ]
+}
