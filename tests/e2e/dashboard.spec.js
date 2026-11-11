@@ -167,6 +167,19 @@ test('the time machine searches every archived day, not just today', async ({ pa
   };
   const problems = await open(page, '/__blank');
   let fetched = 0;
+  // Supplied here rather than read from data/api/: a clean checkout has no
+  // published timeline, and without one the panel shows only its empty state.
+  await page.route('**/data/api/timeline.json', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      days: 2, first: '2026-08-14', last: '2026-11-11',
+      archive: { days: 2, span_days: 90, contiguous: true, missing: [], missing_count: 0 },
+      timeline: [
+        { date: '2026-08-14', items: 5, urgent: 1, elevated: 0, kev: 1, scored: 2 },
+        { date: '2026-11-11', items: 17, urgent: 9, elevated: 0, kev: 9, scored: 12, live: true },
+      ],
+    }),
+  }));
   await page.route('**/data/api/search_index.json', (route) => {
     fetched += 1;
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(index) });
