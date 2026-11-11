@@ -266,7 +266,7 @@ Current corpus: **1,577 KEV entries with dates (100% coverage)**. The headline m
 Every item already carried threat actors, ATT&CK techniques and a target sector, but *independently* — nothing said the APT28 on one row and the T1031 on another were the same story. MITRE's CTI bundle ships the missing half as explicit relationship objects, so the edges cost nothing to obtain:
 
 ```
-APT28 ──uses──▶ X-Agent ──implements──▶ T1031 ──seen in──▶ 4 items this week
+APT28 ──uses──▶ X-Agent ──implements──▶ T1071 ──seen in──▶ 4 items this week
   │                                        │
   └──targets──▶ Government ◀───────────────┘
 ```
