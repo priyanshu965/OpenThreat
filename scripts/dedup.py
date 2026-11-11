@@ -47,6 +47,8 @@ _SOURCE_AUTHORITY = {
     "VMware": 80, "Fedora": 75, "Arch Linux": 75,
     "Fortinet PSIRT": 80, "Siemens ProductCERT": 80, "Synology": 80, "Splunk": 80,
     "Chrome Releases": 80, "CERT/CC": 85, "UK NCSC": 75, "HKCERT": 70, "CERT-In": 75,
+    "Ivanti": 80, "GitLab": 80, "Jenkins": 80, "Node.js": 80, "Kubernetes": 80,
+    "Drupal": 80, "WordPress": 80, "Oracle": 80, "QNAP": 80, "CERT-EU": 75, "JPCERT/CC": 75,
     "Amazon Linux": 75, "CentOS": 70, "Mitre CWE": 70,
     "PoC-in-GitHub": 65, "Ransomware.live": 60, "AlienVault OTX": 60,
     "ThreatFox": 60, "URLhaus": 60, "Feodo Tracker": 60, "Spamhaus": 60,

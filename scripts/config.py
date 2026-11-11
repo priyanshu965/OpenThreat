@@ -59,6 +59,7 @@ class Config:
     project_root = PROJECT_ROOT
     data_dir     = PROJECT_ROOT / "data"
     output_path  = PROJECT_ROOT / "data" / "intel.json"
+    feed_head_path = PROJECT_ROOT / "data" / "feed-head.json"
     archive_dir  = PROJECT_ROOT / "data" / "archive"
     export_dir   = PROJECT_ROOT / "data" / "exports"
     trends_path  = PROJECT_ROOT / "data" / "trends.json"
@@ -105,6 +106,9 @@ class Config:
     # `"cadence": "slow"` are held to this instead, and contribute only what
     # they published inside the window below - a feed's ten most recent posts
     # can reach back two years, and a 2024 write-up is not today's news.
+    # Items in data/feed-head.json, which the dashboard paints from before the
+    # full feed has arrived.
+    feed_head_items        = _int("FEED_HEAD_ITEMS", 150)
     source_slow_stale_days  = _int("SOURCE_SLOW_STALE_DAYS", 365)
     slow_source_window_days = _int("SLOW_SOURCE_WINDOW_DAYS", 120)
 
@@ -453,6 +457,12 @@ class Config:
     priority_ssvc_active_bonus = _float("PRIORITY_SSVC_ACTIVE_BONUS", 25.0)
     priority_ssvc_auto_bonus   = _float("PRIORITY_SSVC_AUTO_BONUS", 10.0)
     priority_ssvc_total_bonus  = _float("PRIORITY_SSVC_TOTAL_BONUS", 5.0)
+    # EPSS trend: compare today's score with the one FIRST published this many
+    # days ago. A rise of at least the threshold (absolute, 0-1) marks the CVE
+    # as rising and earns the bonus.
+    epss_trend_days            = _int("EPSS_TREND_DAYS", 7)
+    epss_rising_threshold      = _float("EPSS_RISING_THRESHOLD", 0.10)
+    priority_epss_rising_bonus = _float("PRIORITY_EPSS_RISING_BONUS", 5.0)
 
     http_user_agent = _str("HTTP_USER_AGENT", "OpenThreat/5.0 (+https://github.com/priyanshu965/OpenThreat)")
 

@@ -125,10 +125,9 @@ RSS_SOURCES = [
     # item age inside SOURCE_STALE_DAYS. Well-known names that are absent
     # failed one of those: no feed any more (Mandiant, SC Media, Decipher),
     # blocked (Trellix, Trend Micro, Security Boulevard), undated entries
-    # (CrowdStrike, BankInfoSecurity) or too slow a cadence (Google Threat
-    # Intelligence, Volexity, watchTowr, Project Zero, The DFIR Report).
-    # Cybernews, SecurityOnline, Exploit-DB and hnrss.org answer a desktop but
-    # refuse or time out GitHub's runners, which is where this actually runs.
+    # (BankInfoSecurity). Cybernews, SecurityOnline and Exploit-DB answer a
+    # desktop but refuse or time out GitHub's runners, which is where this
+    # actually runs; they wait in feed_candidates.txt, probed daily.
     {"name": "GBHackers",                              "url": "https://gbhackers.com/feed/",                                                              "category": "news",     "severity": "medium"},
     {"name": "Cyber Press",                            "url": "https://cyberpress.org/feed/",                                                             "category": "news",     "severity": "medium"},
     {"name": "The420",                                 "url": "https://the420.in/feed/",                                                                  "category": "news",     "severity": "medium"},
@@ -164,6 +163,47 @@ RSS_SOURCES = [
     {"name": "Splunk",                                 "url": "https://advisory.splunk.com/feed.xml",                                                     "category": "advisory", "severity": "medium"},
     {"name": "Chrome Releases",                        "url": "https://chromereleases.googleblog.com/feeds/posts/default",                                "category": "advisory", "severity": "medium"},
     {"name": "oss-security",                           "url": "https://seclists.org/rss/oss-sec.rss",                                                     "category": "advisory", "severity": "medium"},
+    # ── Slow but early ──────────────────────────────────────────────────────
+    # The teams that publish a zero-day write-up before the news cycle has a
+    # name for it post a few times a quarter, so the 30-day staleness rule
+    # kept every one of them out. `cadence: slow` holds a feed to
+    # SOURCE_SLOW_STALE_DAYS and takes only what it published inside
+    # SLOW_SOURCE_WINDOW_DAYS. All were probed from a GitHub runner first.
+    {"name": "Google Threat Intelligence",             "url": "https://feeds.feedburner.com/threatintelligence/pvexyqv7v0v",                              "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "Volexity",                               "url": "https://www.volexity.com/feed/",                                                           "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "watchTowr Labs",                         "url": "https://labs.watchtowr.com/rss/",                                                          "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "Project Zero",                           "url": "https://projectzero.google/feed.xml",                                                      "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "The DFIR Report",                        "url": "https://thedfirreport.com/feed/",                                                          "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "Proofpoint",                             "url": "https://www.proofpoint.com/us/threat-insight-blog.xml",                                    "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "GreyNoise",                              "url": "https://www.greynoise.io/blog/rss.xml",                                                    "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "PortSwigger Research",                   "url": "https://portswigger.net/research/rss",                                                     "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "FortiGuard Labs",                        "url": "https://feeds.fortinet.com/fortinet/blog/threat-research",                                 "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "Trail of Bits",                          "url": "https://blog.trailofbits.com/feed/",                                                       "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "Binarly",                                "url": "https://www.binarly.io/blog/rss.xml",                                                      "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "Bitdefender Labs",                       "url": "https://www.bitdefender.com/blog/api/rss/labs/",                                           "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "XLab",                                   "url": "https://blog.xlab.qianxin.com/rss/",                                                       "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "CERT-EU",                                "url": "https://cert.europa.eu/publications/security-advisories-rss",                              "category": "advisory", "severity": "medium", "cadence": "slow"},
+    {"name": "Zero Day",                               "url": "https://www.zetter-zeroday.com/rss/",                                                      "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "Objective-See",                          "url": "https://objective-see.org/rss.xml",                                                        "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "DoublePulsar",                           "url": "https://doublepulsar.com/feed",                                                            "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "Red Canary",                             "url": "https://redcanary.com/blog/feed/",                                                         "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "GitHub Security",                        "url": "https://github.blog/security/feed/",                                                       "category": "news",     "severity": "medium", "cadence": "slow"},
+    {"name": "JPCERT/CC",                              "url": "https://blogs.jpcert.or.jp/en/atom.xml",                                                   "category": "advisory", "severity": "medium", "cadence": "slow"},
+    {"name": "tl;dr sec",                              "url": "https://tldrsec.com/feed.xml",                                                             "category": "news",     "severity": "medium", "cadence": "slow"},
+    # Vendor PSIRTs that only speak when there is something to patch
+    {"name": "Ivanti",                                 "url": "https://www.ivanti.com/blog/topics/security-advisory/rss",                                 "category": "advisory", "severity": "high", "cadence": "slow"},
+    {"name": "GitLab",                                 "url": "https://about.gitlab.com/security-releases.xml",                                           "category": "advisory", "severity": "high", "cadence": "slow"},
+    {"name": "Jenkins",                                "url": "https://www.jenkins.io/security/advisories/rss.xml",                                       "category": "advisory", "severity": "high", "cadence": "slow"},
+    {"name": "Node.js",                                "url": "https://nodejs.org/en/feed/vulnerability.xml",                                             "category": "advisory", "severity": "high", "cadence": "slow"},
+    {"name": "Kubernetes",                             "url": "https://kubernetes.io/docs/reference/issues-security/official-cve-feed/feed.xml",          "category": "advisory", "severity": "high", "cadence": "slow"},
+    {"name": "Drupal",                                 "url": "https://www.drupal.org/security/rss.xml",                                                  "category": "advisory", "severity": "high", "cadence": "slow"},
+    {"name": "WordPress",                              "url": "https://wordpress.org/news/category/security/feed/",                                       "category": "advisory", "severity": "high", "cadence": "slow"},
+    {"name": "Oracle",                                 "url": "https://www.oracle.com/ocom/groups/public/@otn/documents/webcontent/rss-otn-sec.xml",      "category": "advisory", "severity": "high", "cadence": "slow"},
+    {"name": "QNAP",                                   "url": "https://www.qnap.com/en/security-advisory/feed",                                           "category": "advisory", "severity": "high", "cadence": "slow"},
+    # Answered the runner on the second sweep
+    {"name": "CrowdStrike",                            "url": "https://www.crowdstrike.com/en-us/blog/feed/",                                             "category": "news",     "severity": "medium"},
+    {"name": "Troy Hunt",                              "url": "https://www.troyhunt.com/rss/",                                                            "category": "news",     "severity": "medium"},
+    {"name": "Security Boulevard",                     "url": "https://securityboulevard.com/feed/",                                                      "category": "news",     "severity": "medium"},
 ]
 
 
@@ -375,7 +415,7 @@ _HN_TERMS = ("vulnerability", "exploit", "CVE", "ransomware", "malware",
 _HN_MIN_POINTS = 100
 _HN_TITLE = re.compile(
     r"vulnerab|exploit|\bCVE\b|CVE-\d|ransomware|malware|breach|zero.?day|0.?day|backdoor"
-    r"|\bhack(?:ed|ers?|ing)?\b|\bRCE\b|phishing|spyware|botnet|supply.chain|security (?:flaw|bug|hole|advisory|incident)"
+    r"|\bhack(?:ed|ing)\b|\bhackers\b|\bRCE\b|phishing|spyware|botnet|supply.chain|security (?:flaw|bug|hole|advisory|incident)"
     r"|leak(?:ed|s)?\b|stolen|compromis", re.I)
 
 

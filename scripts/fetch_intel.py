@@ -93,6 +93,10 @@ try:
 except Exception:
     build_attack_surface = None
 try:
+    from stories import cluster_stories
+except Exception:
+    cluster_stories = None
+try:
     from provenance import (annotate_provenance, PROVENANCE_LABELS,
                             PROVENANCE_NOTES, PROVENANCE_ORDER)
 except Exception:
@@ -400,6 +404,57 @@ def _fetch_epss_bulk_raw() -> tuple[str | None, str | None]:
             last = str(e)
             continue
     return None, locals().get("last", "all EPSS endpoints failed")
+
+
+def _fetch_epss_previous_raw() -> tuple[str | None, str | None]:
+    """The corpus as FIRST published it EPSS_TREND_DAYS ago, same shape."""
+    import gzip
+    day = (datetime.now(timezone.utc) - timedelta(days=CONFIG.epss_trend_days)).strftime("%Y-%m-%d")
+    last = "all EPSS endpoints failed"
+    for base in (_EPSS_BULK_URL, _EPSS_LEGACY_URL):
+        url = base.replace("-current.", f"-{day}.")
+        try:
+            resp = _SESSION.get(url, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            text = gzip.decompress(resp.content).decode("utf-8", "replace")
+            out = []
+            for line in text.splitlines():
+                if not line or line.startswith("#") or line.startswith("cve,"):
+                    continue
+                parts = line.split(",")
+                if len(parts) >= 2:
+                    out.append(f"{parts[0].strip().upper()},{parts[1].strip()}")
+            if out:
+                return "\n".join(out), None
+        except Exception as e:
+            last = str(e)
+    return None, last
+
+
+def fetch_epss_previous(cve_ids: list[str]) -> dict[str, float]:
+    """EPSS as it stood EPSS_TREND_DAYS ago, for the CVEs in this feed.
+
+    A score says how likely exploitation is; the CHANGE in it says whether
+    that is news. A CVE going from 2% to 30% in a week is being weaponised
+    somewhere, and its absolute score still looks unremarkable next to a
+    two-year-old 90%. FIRST publishes every past day's corpus at a dated URL,
+    so the comparison costs one cached download a day.
+    """
+    if not cve_ids or not CONFIG.enable_epss_bulk or CONFIG.epss_trend_days <= 0:
+        return {}
+    wanted = {c.upper() for c in cve_ids}
+    cached = _cached_fetch("epss_bulk_previous.csv", 24, _fetch_epss_previous_raw)
+    if not cached:
+        return {}
+    scores = {}
+    for line in cached.splitlines():
+        cve, _, val = line.partition(",")
+        if cve in wanted:
+            try:
+                scores[cve] = float(val)
+            except ValueError:
+                continue
+    return scores
 
 
 def _fetch_epss_api(cve_ids: list[str]) -> dict[str, float]:
@@ -742,6 +797,49 @@ def write_own_estate(private: dict) -> None:
         log.warning(f"Could not update the own-estate file: {e}")
 
 
+# ── Feed head ────────────────────────────────────────────────────────────────
+# intel.json is every item the pipeline holds - over a megabyte once the source
+# list passed a hundred - and the dashboard used to wait for all of it before
+# drawing anything. The default view shows the items that carry a verdict, in
+# priority order, forty at a time. This writes exactly those, plus the newest
+# of the rest, to a file a fraction of the size. The page renders from it and
+# loads the full feed behind it.
+
+_BAND_ORDER = {"urgent": 0, "elevated": 1, "moderate": 2, "low": 3}
+
+
+def build_feed_head(feed: dict) -> dict:
+    items = feed.get("items", []) or []
+    limit = CONFIG.feed_head_items
+    ranked = sorted(
+        (i for i in items if i.get("priority_label")),
+        key=lambda i: (_BAND_ORDER.get(i.get("priority_label"), 9),
+                       -(i.get("priority_score") or 0),
+                       # Descending by date within a tie, as the dashboard sorts.
+                       [-ord(c) for c in str(i.get("published") or "")]))
+    chosen = ranked[:limit]
+    taken = {id(i) for i in chosen}
+    for item in items:                      # already newest-first
+        if len(chosen) >= limit:
+            break
+        if id(item) not in taken:
+            chosen.append(item)
+    severities = Counter((i.get("severity") or "").lower() for i in items)
+    head = {k: v for k, v in feed.items() if k != "items"}
+    head["items"] = chosen
+    head["partial"] = True
+    # What the header shows, computed over the WHOLE feed, so the numbers do
+    # not jump when the rest arrives.
+    head["head_counts"] = {
+        "total": len(items),
+        "urgent": sum(1 for i in items if i.get("priority_label") == "urgent"),
+        "critical": severities.get("critical", 0),
+        "high": severities.get("high", 0),
+        "verdicts": len(ranked),
+    }
+    return head
+
+
 def main():
     log.info("═" * 60)
     log.info("OPENTHREAT v4.0 — Starting intel pipeline")
@@ -932,6 +1030,24 @@ def main():
             if item.get("cve_id"):
                 item["epss_score"] = epss_scores.get(item["cve_id"].upper())
         log.info("  Applied EPSS scores")
+        previous = fetch_epss_previous(cve_ids)
+        rising = 0
+        for item in all_items:
+            cve = (item.get("cve_id") or "").upper()
+            now_score = item.get("epss_score")
+            if not cve or now_score is None:
+                continue
+            # A CVE absent from the older corpus had no score yet. That is
+            # "new", which the feed already says, not "rising from zero".
+            if cve not in previous:
+                continue
+            delta = round(now_score - previous[cve], 4)
+            item["epss_delta"] = delta
+            if delta >= CONFIG.epss_rising_threshold:
+                item["epss_rising"] = True
+                rising += 1
+        if previous:
+            log.info(f"  EPSS trend over {CONFIG.epss_trend_days}d: {rising} CVE(s) rising")
 
     # ── CISA KEV (skip if no CVEs in feed this run) ────────────────────────
     cisa_kev = fetch_cisa_kev() if cve_ids else set()
@@ -1074,6 +1190,19 @@ def main():
             log.info(f"  Provenance tagged: {human}/{len(all_items)} human-authored")
         except Exception as e:
             log.warning(f"Provenance tagging failed: {e}")
+
+    # ── Stories: one incident reported by many sources (see stories.py) ────
+    # After provenance, which decides what is prose and what is a data row,
+    # and after scoring, which decides which member leads.
+    story_summary = None
+    if cluster_stories:
+        try:
+            story_summary = cluster_stories(all_items)
+            log.info(f"  Grouped {story_summary['items_folded'] + story_summary['stories']} items "
+                     f"into {story_summary['stories']} stories "
+                     f"(largest: {story_summary['largest']})")
+        except Exception as e:
+            log.warning(f"Story clustering failed: {e}")
 
     # ── Geopolitics (suspected actor origin × target; see geopolitics.py) ───
     geopolitics = None
@@ -1396,6 +1525,7 @@ def main():
         "ai_provider_configured": bool(GROQ_API_KEY) or bool(GEMINI_API_KEY),
         "ai_enriched_count": ai_enriched,
         "new_since_last": new_count,
+        "story_summary": story_summary,
         "brief": daily_brief,
         "source_breakdown": dict(source_counter.most_common()),
         "source_health": source_health,
@@ -1427,6 +1557,7 @@ def main():
             "ssvc_active": CONFIG.priority_ssvc_active_bonus,
             "ssvc_automatable": CONFIG.priority_ssvc_auto_bonus,
             "ssvc_total_impact": CONFIG.priority_ssvc_total_bonus,
+            "epss_rising": CONFIG.priority_epss_rising_bonus,
         },
         # Big derived artifacts are published as their own endpoints (see
         # exports.write_exports) and only summarised here, so intel.json does
@@ -1540,6 +1671,17 @@ def main():
         json.dump(feed_output, f, indent=2, ensure_ascii=False)
     tmp.replace(OUTPUT_PATH)   # atomic on POSIX, near-atomic on Windows
     log.info(f"✓ Wrote {len(all_items)} items to {OUTPUT_PATH}")
+
+    # ── First paint: a small head of the feed ──────────────────────────────
+    try:
+        head = build_feed_head(feed_output)
+        tmp = CONFIG.feed_head_path.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(head, ensure_ascii=False, separators=(",", ":")),
+                       encoding="utf-8")
+        tmp.replace(CONFIG.feed_head_path)
+        log.info(f"✓ Wrote the first {len(head['items'])} items to {CONFIG.feed_head_path}")
+    except Exception as e:
+        log.warning(f"Feed head not written; the dashboard falls back to the full feed: {e}")
 
     # ── Prune old archives ─────────────────────────────────────────────────
     if ARCHIVE_DIR.exists():

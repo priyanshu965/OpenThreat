@@ -108,6 +108,11 @@ def compute_priority(item: dict) -> dict | None:
     if total_impact:
         score += CONFIG.priority_ssvc_total_bonus
         _add("SSVC total technical impact", CONFIG.priority_ssvc_total_bonus)
+    if item.get("epss_rising"):
+        score += CONFIG.priority_epss_rising_bonus
+        _add("EPSS rising", CONFIG.priority_epss_rising_bonus,
+             f"up {float(item.get('epss_delta') or 0) * 100:.1f} points in "
+             f"{CONFIG.epss_trend_days} days")
     if poc:
         # Bonus only — no floor. Flooring every PoC item at 70 pushed it into
         # "Patch this week" regardless of impact, and PoC-in-GitHub indexes a
@@ -154,6 +159,8 @@ def compute_priority(item: dict) -> dict | None:
         reasons.append("SSVC: total impact")
     if poc:
         reasons.append("Public PoC on GitHub")
+    if item.get("epss_rising"):
+        reasons.append("EPSS rising")
     if epss is not None:
         reasons.append(f"EPSS {epss_val * 100:.1f}%")
     if cvss is not None:
