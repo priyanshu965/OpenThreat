@@ -578,9 +578,11 @@ Pre-rendered on every run and served with the dashboard. Paths are relative to t
 | `data/api/detection_diff.json` | Sigma rules added since the last refresh |
 | `data/api/leak_sites.json` | Leak-site claims, groups, sectors, geography, freshness |
 | `data/api/telegram.json` | Public channel watch (only when enabled) |
-| `data/exports/stix.json` | STIX 2.1 bundle |
+| `data/exports/stix.json` | STIX 2.1 bundle: indicators, a vulnerability per CVE, and the links between them |
 | `data/exports/misp_event.json` | MISP event — the other half of the ecosystem |
-| `data/exports/feed.xml` | RSS |
+| `data/exports/feed.xml` | RSS, everything |
+| `data/exports/feed-<name>.xml` | RSS narrowed to `urgent`, `exploited`, `rising`, `cve`, `incident` or `advisory` |
+| `data/api/search_index.json` | Every item seen in the archive window, for history search |
 
 The Library and the hunt packs are **sharded**, and that is not an optimisation — it is what makes them fit. The merged corpus is 8,883 entities and 17 MB; the packs are 4.7 MB across 220 files. Served as single blobs, every visitor would download all of it to read one page, which is precisely the mistake v4 fixed for the research artifacts. The index is loaded once (540 KB gzipped) and one record costs ~2 KB.
 

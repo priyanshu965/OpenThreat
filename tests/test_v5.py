@@ -980,8 +980,8 @@ class TestStickyChrome(unittest.TestCase):
         html = (root / "index.html").read_text(encoding="utf-8")
         sw = (root / "service-worker.js").read_text(encoding="utf-8")
         self.assertNotIn("?v=5.0.13\"", html)
-        self.assertIn("?v=5.0.14", html)
-        self.assertIn('CACHE = "openthreat-v20"', sw)
+        self.assertIn("?v=5.0.15", html)
+        self.assertIn('CACHE = "openthreat-v21"', sw)
 
     def test_every_asset_carries_the_same_version(self):
         """A half-bumped set ships the new app.js against the old style.css."""
@@ -1015,9 +1015,15 @@ class TestOfflinePlaceholderIsNotMistakenForData(unittest.TestCase):
         self.assertIn('offline: true', self.sw)
 
     def test_feed_loader_rejects_the_placeholder(self):
-        block = self.app.split("async function loadIntelData", 1)[1][:1600]
-        self.assertIn("data.offline", block)
-        self.assertIn("throw new Error", block)
+        # The check lives in readFeed(), and BOTH requests loadIntelData makes
+        # (the head and the full feed) have to go through it: a placeholder
+        # accepted as the head would paint an empty first screen.
+        reader = self.app.split("async function readFeed", 1)[1].split("\nasync function ", 1)[0]
+        self.assertIn("data.offline", reader)
+        self.assertIn("throw new Error", reader)
+        loader = self.app.split("async function loadIntelData", 1)[1].split("\n}\n", 1)[0]
+        self.assertEqual(loader.count("await readFeed("), 2)
+        self.assertNotIn(".json()", loader)
 
     def test_lazy_views_reject_the_placeholder(self):
         block = self.app.split("async function showLazyView", 1)[1][:1200]

@@ -362,6 +362,9 @@ jobs:
           mkdir -p _site/data
           # Everything the browser and the documented API actually fetch.
           cp data/intel.json                _site/data/
+          # The first screen is painted from this; without it the page still
+          # works, it just waits for the whole feed.
+          cp data/feed-head.json            _site/data/ 2>/dev/null || true
           cp data/trends.json               _site/data/ 2>/dev/null || true
           cp data/source_health_summary.json _site/data/ 2>/dev/null || true
           cp -r data/exports                _site/data/ 2>/dev/null || true

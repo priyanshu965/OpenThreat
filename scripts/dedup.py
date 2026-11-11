@@ -30,15 +30,33 @@ def _normalize_title(title: str) -> str:
         tokens = t.split()
     return " ".join(sorted(set(tokens)))[:120]
 
+# Query parameters that identify the visitor or the campaign, never the page.
+_TRACKING_PARAM = re.compile(
+    r"^(utm_[a-z]+|fbclid|gclid|mc_[a-z]+|ref|ref_src|source|cmpid|ftag|__twitter_impression"
+    r"|mkt_tok|_hsenc|_hsmi|oref|trk)$")
+
+
 def _canonical_url(url: str) -> str:
-    """Strip scheme, www, tracking params and trailing slash for URL dedup."""
+    """Strip scheme, www, tracking params, fragment and trailing slash.
+
+    The whole query string used to go. That is right for `?utm_source=rss` and
+    wrong for a site that addresses its pages by parameter: every CERT-In
+    advisory is `s2cMainServlet?pageid=...&VLCODE=...`, so ten advisories
+    collapsed to one URL and nine were dropped as duplicates of the first.
+    Only parameters known to be tracking are removed now; the rest are kept,
+    sorted so that parameter order cannot split one page into two.
+    """
     if not url:
         return ""
     u = url.strip().lower()
     u = re.sub(r"^https?://", "", u)
     u = re.sub(r"^www\.", "", u)
-    u = u.split("?")[0].split("#")[0].rstrip("/")
-    return u
+    u = u.split("#")[0]
+    path, _, query = u.partition("?")
+    kept = sorted(p for p in query.split("&")
+                  if p and not _TRACKING_PARAM.match(p.split("=", 1)[0]))
+    path = path.rstrip("/")
+    return f"{path}?{'&'.join(kept)}" if kept else path
 
 # Higher rank wins a dedup collision. Primary vendor/government advisories
 # beat aggregators, which beat news rewrites of the same story.

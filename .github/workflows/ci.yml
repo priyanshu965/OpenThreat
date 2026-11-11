@@ -126,6 +126,16 @@ jobs:
       - name: Run browser tests
         run: CHROMIUM_PATH="$(command -v google-chrome || command -v chromium || command -v chromium-browser)" npx playwright test
 
+  # Nothing else builds the images, so a base-image bump or a js/ module
+  # missing from a COPY line would otherwise ship unnoticed.
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build both images and smoke-test them
+        run: bash tests/docker_smoke.sh
+
   frontend:
     name: Frontend checks
     runs-on: ubuntu-latest

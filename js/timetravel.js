@@ -150,6 +150,108 @@ function stepDay(delta) {
   if (next.live) exitDay(); else enterDay(next.date);
 }
 
+// ─── History search ───────────────────────────────────────────────────────────
+// The search box above the feed only ever saw today. This searches every
+// published day at once, from one index that is fetched the first time
+// somebody types here and not before.
+
+const HISTORY_MAX_RESULTS = 60;
+let historyIndex;                       // undefined = not asked yet, null = unavailable
+
+async function loadHistoryIndex() {
+  if (historyIndex !== undefined) return historyIndex;
+  try {
+    const resp = await fetch(API.searchIndex, { cache: 'no-cache' });
+    const data = resp.ok ? await resp.json() : null;
+    historyIndex = data && Array.isArray(data.rows) ? data : null;
+  } catch (_) {
+    historyIndex = null;
+  }
+  if (historyIndex) {
+    // Lower-cased once, so each keystroke is a scan and not a re-fold.
+    historyIndex.hay = historyIndex.rows.map((r) => `${r[0]} ${r[2]} ${r[3]}`.toLowerCase());
+  }
+  return historyIndex;
+}
+
+/** Rows matching every word of the query, newest first (the index's order). */
+function searchHistory(index, text) {
+  const words = String(text || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const hits = [];
+  for (let i = 0; i < index.rows.length; i += 1) {
+    if (words.every((w) => index.hay[i].includes(w))) hits.push(index.rows[i]);
+  }
+  return hits;
+}
+
+function buildHistorySearch() {
+  const box = el('div', 'tm-search');
+  box.appendChild(el('h4', 'tm-diff-title', 'Search every day'));
+  const input = el('input', 'tm-search-input');
+  input.type = 'search';
+  input.id = 'tm-search-input';
+  input.placeholder = 'a product, a CVE, a group…';
+  input.setAttribute('aria-label', 'Search the archive');
+  input.autocomplete = 'off';
+  box.appendChild(input);
+  const status = el('div', 'tm-search-status');
+  status.id = 'tm-search-status';
+  status.setAttribute('role', 'status');
+  box.appendChild(status);
+  const list = el('ul', 'tm-search-results');
+  list.id = 'tm-search-results';
+  box.appendChild(list);
+  return box;
+}
+
+async function runHistorySearch(text) {
+  const status = $('tm-search-status');
+  const list = $('tm-search-results');
+  if (!status || !list) return;
+  list.replaceChildren();
+  const query = String(text || '').trim();
+  if (query.length < 2) { status.textContent = ''; return; }
+  if (historyIndex === undefined) status.textContent = 'Loading the archive index…';
+  const index = await loadHistoryIndex();
+  // The box may have changed while the index was downloading.
+  if ((($('tm-search-input') || {}).value || '').trim() !== query) return;
+  if (!index) {
+    status.textContent = 'No search index has been published yet.';
+    return;
+  }
+  const hits = searchHistory(index, query);
+  status.textContent = hits.length
+    ? `${hits.length} item${hits.length === 1 ? '' : 's'} between ${index.from} and ${index.to}`
+      + (hits.length > HISTORY_MAX_RESULTS ? ` · showing the newest ${HISTORY_MAX_RESULTS}` : '')
+    : `Nothing matching "${query}" between ${index.from} and ${index.to}`;
+  hits.slice(0, HISTORY_MAX_RESULTS).forEach((row) => {
+    const [title, url, source, cve, label, first, last] = row;
+    const li = el('li', 'tm-search-row');
+    const href = safeUrl(url);
+    if (href) {
+      const link = el('a', 'tm-search-title', title);
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      li.appendChild(link);
+    } else {
+      li.appendChild(el('span', 'tm-search-title', title));
+    }
+    const meta = el('div', 'tm-search-meta');
+    meta.appendChild(el('span', null, source));
+    if (cve) meta.appendChild(el('span', null, cve));
+    if (label) meta.appendChild(el('span', `prio-${label}`, label));
+    const day = el('button', 'tm-search-day', first === last ? first : `${first} → ${last}`);
+    day.type = 'button';
+    day.dataset.ttDay = last;
+    day.title = `Open the board as it stood on ${last}`;
+    meta.appendChild(day);
+    li.appendChild(meta);
+    list.appendChild(li);
+  });
+}
+
 // ─── The panel ────────────────────────────────────────────────────────────────
 async function renderTimeMachine() {                        // eslint-disable-line no-unused-vars
   const host = $('timemachine-body');
@@ -168,6 +270,8 @@ async function renderTimeMachine() {                        // eslint-disable-li
 
   const rows = timeline.timeline;
   const current = store.day || rows[rows.length - 1].date;
+
+  host.appendChild(buildHistorySearch());
 
   host.appendChild(el('p', 'tm-lead',
     `${timeline.days} day${timeline.days === 1 ? '' : 's'} available, `
@@ -498,6 +602,14 @@ document.addEventListener('click', (ev) => {
     if (act === 'diff') { closePanel('timemachine'); setView('diff'); }
     return;
   }
+  const dayBtn = ev.target.closest('[data-tt-day]');
+  if (dayBtn) {
+    const rows = (store.timeline && store.timeline.timeline) || [];
+    const row = rows.find((r) => r.date === dayBtn.dataset.ttDay);
+    // Today has no day file; it is the live feed.
+    if (row && row.live) { closePanel('timemachine'); exitDay(); } else enterDay(dayBtn.dataset.ttDay);
+    return;
+  }
   if (ev.target.closest('#tm-go')) {
     const slider = $('tm-slider');
     const row = store.timeline && (store.timeline.timeline || [])[Number(slider && slider.value)];
@@ -519,6 +631,13 @@ document.addEventListener('click', (ev) => {
   }
 });
 
+let historyTimer = null;
 document.addEventListener('input', (ev) => {
+  if (ev.target && ev.target.id === 'tm-search-input') {
+    clearTimeout(historyTimer);
+    const text = ev.target.value;
+    historyTimer = setTimeout(() => runHistorySearch(text), 150);
+    return;
+  }
   if (ev.target && ev.target.id === 'tm-slider') updateTimeMachineReadout();
 });

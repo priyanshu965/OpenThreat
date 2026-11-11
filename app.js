@@ -34,6 +34,9 @@
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DATA_URL      = 'data/intel.json';
+// The first 150 items in default order, ~10% of the feed's bytes. Painted from
+// while the full feed loads behind it.
+const HEAD_URL      = 'data/feed-head.json';
 const HEALTH_URL    = 'data/source_health_summary.json';
 const TRENDS_URL    = 'data/trends.json';
 // The pipeline publishes hourly, so a 2-minute poll spent ~30 requests an hour
@@ -48,7 +51,7 @@ const LS = {
   stack: 'ot_stack', dismissed: 'ot_dismissed', starred: 'ot_starred',
   density: 'ot_density', lastVisit: 'ot_lastVisit', darkwebWatch: 'ot_darkwebWatch', notes: 'ot_notes',
   view: 'ot_view', reviewed: 'ot_reviewed', saved: 'ot_saved', theme: 'ot_theme',
-  lastSeen: 'ot_lastSeen',
+  lastSeen: 'ot_lastSeen', groupStories: 'ot_groupStories',
 };
 
 // Endpoints published by the pipeline, fetched on demand. Every one of these is
@@ -63,6 +66,7 @@ const API = {
   reliability: 'data/api/source_reliability.json',
   lag:         'data/api/exploit_lag.json',
   timeline:    'data/api/timeline.json',
+  searchIndex: 'data/api/search_index.json',
   day:         (date) => `data/api/day/${date}.json`,
   // v5. entityIndex is the ONE file loaded up front for the Library; the full
   // record for a single entity is its own small shard.
@@ -178,6 +182,9 @@ const store = {
   filter: 'verdicts', severity: null, query: '', sort: 'priority',
   renderLimit: PAGE_SIZE, cursor: -1, density: 'compact',
   watchlist: [], watchlistOnly: false, stack: [], stackFocus: null,
+  // Fold the copies of one story behind its lead. `folded` is how many cards
+  // that removed from the current list; `stories` maps story_id to members.
+  groupStories: true, folded: 0, stories: new Map(),
   dismissed: new Set(), starred: new Set(), showDismissed: false,
   reviewed: new Set(),
   lastVisit: null, stamp: null,
@@ -294,10 +301,19 @@ function writeLS(key, value) {
 }
 
 // ─── Item helpers ─────────────────────────────────────────────────────────────
+const TRACKING_PARAM = /^(utm_[a-z]+|fbclid|gclid|mc_[a-z]+|ref|ref_src|source|cmpid|ftag|__twitter_impression|mkt_tok|_hsenc|_hsmi|oref|trk)$/;
+
+// Mirrors _canonical_url() in scripts/dedup.py: tracking parameters go, the
+// rest stay. Sites that address pages by parameter (CERT-In, Hacker News)
+// would otherwise share one key, and dismissing one item would dismiss all.
 function canonicalUrl(url) {
-  return String(url || '').toLowerCase()
-    .replace(/^https?:\/\//, '').replace(/^www\./, '')
-    .split('?')[0].split('#')[0].replace(/\/$/, '');
+  const bare = String(url || '').trim().toLowerCase()
+    .replace(/^https?:\/\//, '').replace(/^www\./, '').split('#')[0];
+  const cut = bare.indexOf('?');
+  const path = (cut < 0 ? bare : bare.slice(0, cut)).replace(/\/+$/, '');
+  const kept = (cut < 0 ? '' : bare.slice(cut + 1)).split('&')
+    .filter((p) => p && !TRACKING_PARAM.test(p.split('=')[0])).sort();
+  return kept.length ? `${path}?${kept.join('&')}` : path;
 }
 
 function itemKey(item) {
@@ -407,36 +423,91 @@ function ingest(data) {
   store.meta = data;
   store.brief = data.brief || null;
   store.health = data.source_health || {};
-  store.items.forEach((item) => { item._key = itemKey(item); });
+  store.stories = new Map();
+  store.items.forEach((item) => {
+    item._key = itemKey(item);
+    if (item.story_id) {
+      if (!store.stories.has(item.story_id)) store.stories.set(item.story_id, []);
+      store.stories.get(item.story_id).push(item);
+    }
+  });
 }
 
+/** Parse a feed response, treating the service worker's offline stub as a failure. */
+async function readFeed(resp) {
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  // When the network is unreachable and nothing is cached, the service
+  // worker answers with a SYNTHETIC 200 carrying {items: [], offline: true}
+  // rather than letting the fetch reject. Without this check the dashboard
+  // renders that as a perfectly successful load of an empty feed: no error,
+  // no banner, just "TOTAL 0" and "No results match your filters" — which
+  // reads as "quiet day" and is the single most misleading thing this page
+  // can show. It is a failure, so it has to surface as one.
+  if (data && data.offline) {
+    throw new Error('Could not reach the network, and no cached feed was available.');
+  }
+  return data;
+}
+
+/**
+ * Load the feed in two steps: a small head to paint from, then all of it.
+ *
+ * The full feed passed a megabyte once the source list passed a hundred, and
+ * nothing was drawn until it had downloaded and parsed. The default view
+ * shows items that carry a verdict, forty at a time, and the head file holds
+ * exactly those — so the first screen is complete long before the rest lands.
+ *
+ * Only the feed view does this. Every other view aggregates over all items,
+ * and drawing a matrix from 150 of 1,100 would be a wrong picture, not an
+ * early one.
+ */
 async function loadIntelData() {
+  let painted = false;
+  // `cache: 'no-cache'` revalidates instead of busting: the browser sends
+  // If-None-Match and the host can answer 304. The old `?v=${Date.now()}`
+  // made every single page load a fresh download of the whole feed.
+  // Settled into a value either way: the request is in flight while the head
+  // is awaited, and a rejection nobody is yet listening for would be reported
+  // as unhandled.
+  const full = fetch(DATA_URL, { cache: 'no-cache' })
+    .then((resp) => ({ resp }), (error) => ({ error }));
+
+  if (store.view === 'feed') {
+    try {
+      const head = await readFeed(await fetch(HEAD_URL, { cache: 'no-cache' }));
+      if (head.partial && (head.items || []).length) {
+        ingest(head);
+        applyFilters();
+        showContent();
+        renderAll();
+        painted = true;
+      }
+    } catch (_) { /* no head file: wait for the full feed, as before */ }
+  }
+
   try {
-    // `cache: 'no-cache'` revalidates instead of busting: the browser sends
-    // If-None-Match and the host can answer 304. The old `?v=${Date.now()}`
-    // made every single page load a fresh 184 KB download.
-    const resp = await fetch(DATA_URL, { cache: 'no-cache' });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const { resp, error } = await full;
+    if (error) throw error;
     store.stamp = resp.headers.get('etag') || resp.headers.get('last-modified');
-    const data = await resp.json();
-    // When the network is unreachable and nothing is cached, the service
-    // worker answers with a SYNTHETIC 200 carrying {items: [], offline: true}
-    // rather than letting the fetch reject. Without this check the dashboard
-    // renders that as a perfectly successful load of an empty feed: no error,
-    // no banner, just "TOTAL 0" and "No results match your filters" — which
-    // reads as "quiet day" and is the single most misleading thing this page
-    // can show. It is a failure, so it has to surface as one.
-    if (data && data.offline) {
-      throw new Error('Could not reach the network, and no cached feed was available.');
-    }
+    const data = await readFeed(resp);
+    // Someone who has already scrolled or moved the cursor keeps their place.
+    const limit = store.renderLimit;
     ingest(data);
     await loadHealthSummary();
     applyFilters();
+    if (painted) store.renderLimit = Math.max(limit, PAGE_SIZE);
     showContent();
     renderAll();
     return true;
   } catch (err) {
     console.error('Failed to load intel:', err);
+    if (painted) {
+      // The head is real data. Say what is missing rather than replace a
+      // working first screen with an error page.
+      showToast('Showing the top of the feed only; the rest did not load.');
+      return true;
+    }
     showError(err.message);
     return false;
   }
@@ -642,6 +713,9 @@ function applyFilters() {
     list.sort((a, b) => String(b.published || '').localeCompare(String(a.published || '')));
   }
 
+  store.folded = 0;
+  if (store.groupStories && !store.day && store.filter !== 'starred') list = foldStories(list);
+
   store.filtered = list;
   store.renderLimit = PAGE_SIZE;
   // Keep the keyboard cursor across re-renders. Resetting it here meant that
@@ -649,6 +723,57 @@ function applyFilters() {
   // item and silently did nothing — triage worked exactly once.
   store.cursor = store.cursor < 0 ? -1 : Math.min(store.cursor, list.length - 1);
   writeUrlState();
+}
+
+/**
+ * Keep one card per story: the first member in the current order, which under
+ * the default sort is the one with the strongest verdict.
+ *
+ * This runs AFTER filtering, not in the pipeline, because the right
+ * representative depends on the view. With NEWS selected the story's lead may
+ * be a CVE record that is not in the list at all, and hiding everything but
+ * the lead would make the story vanish.
+ */
+function foldStories(list) {
+  const shown = new Set();
+  const out = [];
+  list.forEach((item) => {
+    if (item.story_id && shown.has(item.story_id)) { store.folded += 1; return; }
+    if (item.story_id) shown.add(item.story_id);
+    out.push(item);
+  });
+  return out;
+}
+
+/** The other members of an item's story, most authoritative first as shipped. */
+function storyPeers(item) {
+  if (!item.story_id) return [];
+  return (store.stories.get(item.story_id) || []).filter((other) => other !== item);
+}
+
+function buildStorySection(item, peers) {
+  const box = el('div', 'card-story');
+  box.appendChild(el('span', 'story-label',
+    `ALSO REPORTED BY ${peers.length} OTHER ITEM${peers.length === 1 ? '' : 'S'}`));
+  const list = el('ul', 'story-list');
+  peers.slice(0, 12).forEach((peer) => {
+    const row = el('li', 'story-row');
+    row.appendChild(el('span', 'story-source', peer.source || 'unknown'));
+    const href = safeUrl(peer.url);
+    if (href) {
+      const link = el('a', 'story-link', peer.title || 'Untitled');
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      row.appendChild(link);
+    } else {
+      row.appendChild(el('span', 'story-link', peer.title || 'Untitled'));
+    }
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+  if (peers.length > 12) box.appendChild(el('span', 'story-more', `and ${peers.length - 12} more`));
+  return box;
 }
 
 // ─── Card rendering ───────────────────────────────────────────────────────────
@@ -823,6 +948,19 @@ function buildCard(item, index) {
     ex.title = 'CISA Vulnrichment SSVC: active exploitation observed';
     badges.appendChild(ex);
   }
+  if (item.epss_rising) {
+    const up = el('span', 'rising-badge', 'RISING');
+    up.title = `EPSS up ${(item.epss_delta * 100).toFixed(1)} points in a week: `
+      + 'exploitation is getting more likely';
+    badges.appendChild(up);
+  }
+  const peers = storyPeers(item);
+  if (peers.length) {
+    const many = el('span', 'story-badge', `${item.story_sources || peers.length + 1} SOURCES`);
+    many.title = `${peers.length + 1} items from ${item.story_sources || peers.length + 1} `
+      + 'sources cover this story. Expand the card to see them.';
+    badges.appendChild(many);
+  }
   if (item.has_poc) {
     const poc = el('span', 'poc-badge');
     const pocHref = safeUrl(item.poc_url);
@@ -935,6 +1073,15 @@ function buildCard(item, index) {
     epss.title = `${(item.epss_score * 100).toFixed(2)}% chance of exploitation within 30 days`;
     meta.appendChild(epss);
   }
+  // Shown whenever the score moved by a point or more in either direction;
+  // a fall is as much information as a rise.
+  if (item.epss_delta != null && Math.abs(item.epss_delta) >= 0.01) {
+    const up = item.epss_delta > 0;
+    const trend = el('span', `meta-tag meta-epss-trend ${up ? 'is-up' : 'is-down'}`,
+      `${up ? '▲' : '▼'} ${Math.abs(item.epss_delta * 100).toFixed(1)} pts / 7d`);
+    trend.title = 'Change in EPSS over the last seven days';
+    meta.appendChild(trend);
+  }
   if (item.ssvc_automatable === 'yes') {
     const auto = el('span', 'meta-tag meta-ssvc', 'AUTOMATABLE');
     auto.title = 'SSVC: an attacker can exploit this at scale, unattended';
@@ -960,6 +1107,7 @@ function buildCard(item, index) {
   if (confidence) detail.appendChild(confidence);
 
   if (item.iocs && Object.keys(item.iocs).length) detail.appendChild(buildIocSection(item));
+  if (peers.length) detail.appendChild(buildStorySection(item, peers));
 
   const analysis = el('div', 'analysis-section');
   const header = el('div', 'analysis-header');
@@ -1102,12 +1250,14 @@ function renderCards() {
     const hidden = store.dismissed.size;
     const scope = store.day ? `${store.day} · ` : '';
     const verdictNote = store.filter === 'verdicts'
-      ? ` · ${store.items.length - total} items with no verdict hidden` : '';
+      ? ` · ${Math.max(0, feedTotal() - (headCounts() ? headCounts().verdicts : total + store.folded))} items with no verdict hidden` : '';
+    const foldNote = store.folded
+      ? ` · ${store.folded} repeat${store.folded === 1 ? '' : 's'} of the same story folded` : '';
     count.textContent = total === 0
       ? 'No items match'
       : `${scope}Showing ${Math.min(store.renderLimit, total)} of ${total}`
         + (hidden && !store.showDismissed ? ` · ${hidden} dismissed` : '')
-        + verdictNote;
+        + verdictNote + foldNote;
   }
   const noResults = $('no-results');
   if (noResults) noResults.style.display = store.filtered.length ? 'none' : 'block';
@@ -1387,13 +1537,28 @@ function renderWatchlist() {
   }
 }
 
+/**
+ * Whole-feed counts shipped with the head file, while only the head is loaded.
+ * Null once the full feed is in, when the items themselves are the truth.
+ */
+function headCounts() {
+  return store.meta.partial && store.meta.head_counts ? store.meta.head_counts : null;
+}
+
+function feedTotal() {
+  const head = headCounts();
+  return head ? head.total : store.items.length;
+}
+
 function updateHeaderStats() {
   const counts = countBy('severity');
+  const head = headCounts();
   const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
-  set('count-critical', counts.critical || 0);
-  set('count-high', counts.high || 0);
-  set('count-urgent', store.items.filter((i) => i.priority_label === 'urgent').length);
-  set('count-total', store.items.length);
+  set('count-critical', head ? head.critical : (counts.critical || 0));
+  set('count-high', head ? head.high : (counts.high || 0));
+  set('count-urgent', head ? head.urgent
+    : store.items.filter((i) => i.priority_label === 'urgent').length);
+  set('count-total', feedTotal());
 
   const meta = store.meta;
   const updated = $('last-updated');
@@ -2243,6 +2408,7 @@ function paletteCommands() {
     { label: "Show today's verdicts", hint: 'the items the tool has an opinion about', run: () => { store.filter = 'verdicts'; update(); } },
     { label: 'Show what is new to you', hint: 'published since your last visit', run: () => { store.filter = 'fresh'; update(); } },
     { label: 'Toggle density', run: () => toggleDensity() },
+    { label: 'Toggle story grouping', hint: 'fold repeats of one story behind a single card', run: () => { store.groupStories = !store.groupStories; writeLS(LS.groupStories, store.groupStories); update(); } },
     { label: 'Cycle theme (auto / light / dark)', run: () => cycleTheme() },
     { label: 'Open filters', run: () => openPanel('filters') },
     { label: 'Reset all filters', run: () => resetFilters() },
@@ -2251,6 +2417,9 @@ function paletteCommands() {
     { label: 'Save this investigation', run: () => openPanel('saved') },
     { label: 'Copy shareable link', run: () => copyText(location.href, 'Link copied') },
     { label: 'Export current view as CSV', run: () => exportCsv() },
+    { label: 'Copy RSS link: patch now', hint: 'urgent items, for a feed reader', run: () => copyText(new URL('data/exports/feed-urgent.xml', location.href).href, 'Feed link copied') },
+    { label: 'Copy RSS link: exploited in the wild', run: () => copyText(new URL('data/exports/feed-exploited.xml', location.href).href, 'Feed link copied') },
+    { label: 'Copy STIX bundle link', hint: 'indicators and vulnerabilities, STIX 2.1', run: () => copyText(new URL('data/exports/stix.json', location.href).href, 'Bundle link copied') },
     { label: 'Export analyst notes as markdown', run: () => exportNotes() },
     { label: 'Clear review marks', run: () => { store.reviewed.clear(); writeLS(LS.reviewed, []); update(); } },
   ];
@@ -3041,6 +3210,7 @@ function restoreState() {
   // 320-item feed roughly 160 screens long; triage wants 15-20 rows visible
   // and expands only what is interesting.
   store.density = readLS(LS.density, 'compact') || 'compact';
+  store.groupStories = readLS(LS.groupStories, true) !== false;
   store.watchlist = readLS(LS.watchlist, []) || [];
   store.watchlistOnly = readLS(LS.watchlistOnly, false) === true;
   store.stack = readLS(LS.stack, []) || [];

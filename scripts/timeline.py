@@ -121,6 +121,73 @@ def verify_archive(archive_dir) -> dict:
     }
 
 
+# ── History search ───────────────────────────────────────────────────────────
+# The day files let you open one date. They do not let you ask "what did we
+# see about Ivanti this quarter" without opening ninety of them, so the search
+# box only ever reached today. This folds every published day into one row per
+# distinct item, with the first and last day it was on the board.
+#
+# Rows are arrays, not objects: at several thousand rows the repeated keys
+# would be a third of the file.
+
+SEARCH_COLUMNS = ("title", "url", "source", "cve", "label", "first", "last")
+
+
+def _search_key(item: dict) -> str:
+    cve = str(item.get("cve_id") or "").upper()
+    if cve:
+        return f"cve:{cve}|{item.get('source', '')}"
+    return f"url:{item.get('url') or item.get('title') or ''}"
+
+
+def build_search_index(day_dir, today: dict | None = None) -> dict:
+    """One row per distinct item across every published day, newest first."""
+    day_dir = Path(day_dir)
+    seen: dict[str, list] = {}
+    days = 0
+
+    def absorb(date: str, items: list[dict]) -> None:
+        for item in items or []:
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            row = seen.get(_search_key(item))
+            if row is None:
+                seen[_search_key(item)] = [
+                    title[:200], str(item.get("url") or ""), str(item.get("source") or ""),
+                    str(item.get("cve_id") or ""), str(item.get("priority_label") or ""),
+                    date, date]
+            else:
+                row[5] = min(row[5], date)
+                row[6] = max(row[6], date)
+                # The verdict an item ended on, not the one it started with.
+                if date >= row[6] and item.get("priority_label"):
+                    row[4] = str(item["priority_label"])
+
+    for path in sorted(p for p in day_dir.glob("*.json") if _DATE_RE.match(p.stem)):
+        try:
+            absorb(path.stem, json.loads(path.read_text(encoding="utf-8")).get("items", []))
+            days += 1
+        except Exception as e:  # noqa: BLE001 - one bad day must not stop the rest
+            log.warning(f"  History search: skipped {path.stem}: {e}")
+    if today:
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if not (day_dir / f"{stamp}.json").exists():
+            days += 1
+        absorb(stamp, today.get("items", []))
+
+    rows = sorted(seen.values(), key=lambda r: (r[6], r[5]), reverse=True)
+    return {
+        "generated": now_utc(),
+        "days": days,
+        "from": min((r[5] for r in rows), default=""),
+        "to": max((r[6] for r in rows), default=""),
+        "count": len(rows),
+        "columns": list(SEARCH_COLUMNS),
+        "rows": rows,
+    }
+
+
 def publish_timeline(archive_dir, api_dir, today: dict | None = None) -> dict:
     """
     Write data/api/day/<date>.json for each archived day, plus the index.
@@ -191,6 +258,14 @@ def publish_timeline(archive_dir, api_dir, today: dict | None = None) -> dict:
         if _DATE_RE.match(stale.stem) and stale.stem not in keep_dates:
             stale.unlink()
             pruned += 1
+
+    try:
+        search = build_search_index(day_dir, today)
+        (api_dir / "search_index.json").write_text(
+            json.dumps(search, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        log.info(f"  History search: {search['count']} items across {search['days']} day(s)")
+    except Exception as e:  # noqa: BLE001 - the timeline still publishes
+        log.warning(f"  History search index not written: {e}")
 
     health = verify_archive(archive_dir)
     payload = {

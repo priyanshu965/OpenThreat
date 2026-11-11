@@ -44,6 +44,7 @@ python -m unittest discover -s tests   # run the tests
 ## More
 
 - [docs/design-notes.md](docs/design-notes.md) — why each part works the way it does
+- [docs/external-scheduler.md](docs/external-scheduler.md) — make the hourly run reliable
 - [SECURITY.md](SECURITY.md) — how to report a vulnerability
 
 MIT licensed. ATT&CK data © MITRE · malware families © [Malpedia](https://malpedia.caad.fkie.fraunhofer.de) ·

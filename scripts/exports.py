@@ -7,8 +7,10 @@ dashboard can feed SIEMs, firewalls, and RSS readers — not just eyeballs.
 Produces (under data/exports/):
   iocs.csv    — flat IOC table (type,value,source,...) for spreadsheet / block lists
   iocs.json   — same data as JSON, grouped by type
-  stix.json   — STIX 2.1 bundle of Indicator objects (import into TIPs / MISP)
+  stix.json   — STIX 2.1 bundle: Indicator objects, a Vulnerability object per
+                CVE in the feed, and the relationships between them
   feed.xml    — RSS 2.0 feed of the aggregated items (subscribe in any reader)
+  feed-<name>.xml — the same feed narrowed to one question (see FILTERED_FEEDS)
 
 All IDs are deterministic (uuid5) so re-running the pipeline produces stable
 diffs instead of churning the whole file every hour.
@@ -132,7 +134,81 @@ def _write_json(rows, path: Path, generated: str) -> int:
     return total
 
 
-def _write_stix(rows, path: Path, generated: str) -> int:
+def _stix_time(value: str) -> str:
+    """A STIX 2.1 timestamp: UTC, millisecond precision, `Z` suffix.
+
+    The bundle used to carry Python's isoformat() (`...761991+00:00`). The
+    specification requires the `Z` form, and importers that validate reject
+    the whole bundle over it.
+    """
+    try:
+        stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        stamp = datetime.now(timezone.utc)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{stamp.microsecond // 1000:03d}Z"
+
+
+def _stix_vulnerabilities(items, identity_id: str, generated: str) -> dict[str, dict]:
+    """One Vulnerability object per CVE in the feed, keyed by CVE id.
+
+    Indicators alone tell a platform what to block. They do not tell it what
+    to patch, which is most of what this feed is about. A Vulnerability object
+    is the STIX type a TIP correlates against its asset inventory.
+
+    Standard properties only. The verdict travels as labels and in the
+    description rather than as custom `x_` properties, which STIX 2.1
+    deprecates and strict importers reject.
+    """
+    out: dict[str, dict] = {}
+    for item in items:
+        cve = str(item.get("cve_id") or "").upper()
+        if not cve or cve in out:
+            continue
+        labels = []
+        if item.get("priority_label"):
+            labels.append(f"priority-{item['priority_label']}")
+        if item.get("cisa_kev"):
+            labels.append("cisa-kev")
+        if item.get("cisa_kev") or item.get("ssvc_exploitation") == "active":
+            labels.append("exploited-in-the-wild")
+        if item.get("has_poc"):
+            labels.append("public-poc")
+        if item.get("epss_rising"):
+            labels.append("epss-rising")
+        facts = []
+        if item.get("priority_score") is not None:
+            facts.append(f"Priority {item['priority_score']:g}/100")
+        if item.get("action"):
+            facts.append(str(item["action"]))
+        if item.get("cvss_score") is not None:
+            facts.append(f"CVSS {float(item['cvss_score']):.1f}")
+        if item.get("epss_score") is not None:
+            facts.append(f"EPSS {float(item['epss_score']) * 100:.1f}%")
+        text = (item.get("description") or item.get("title") or "").strip()[:800]
+        refs = [{"source_name": "cve", "external_id": cve}]
+        link = str(item.get("url") or "").strip()
+        if link.lower().startswith(("http://", "https://")):
+            refs.append({"source_name": str(item.get("source") or "OpenThreat"), "url": link})
+        obj = {
+            "type": "vulnerability",
+            "spec_version": "2.1",
+            "id": f"vulnerability--{uuid.uuid5(_NS, 'vulnerability:' + cve)}",
+            "created": generated,
+            "modified": generated,
+            "created_by_ref": identity_id,
+            "name": cve,
+            "description": (" · ".join(facts) + ". " if facts else "") + text,
+            "external_references": refs,
+        }
+        if labels:
+            obj["labels"] = labels
+        out[cve] = obj
+    return out
+
+
+def _write_stix(rows, path: Path, generated: str, items=None) -> int:
     # An identity object, and every indicator attributed to it.
     #
     # The bundle previously carried bare indicators with no producer. On import
@@ -143,6 +219,7 @@ def _write_stix(rows, path: Path, generated: str) -> int:
     #
     # The uuid5 is derived from the org name only, so the identity id is stable
     # across runs and re-importing updates in place rather than duplicating.
+    generated = _stix_time(generated)
     identity_id = f"identity--{uuid.uuid5(_NS, f'identity-{CONFIG.misp_org_name}')}"
     identity = {
         "type": "identity",
@@ -156,6 +233,9 @@ def _write_stix(rows, path: Path, generated: str) -> int:
         "contact_information": str(CONFIG.contact_email or ""),
     }
     objects = [identity]
+    vulnerabilities = _stix_vulnerabilities(items or [], identity_id, generated)
+    relationships = []
+    indicators = 0
     for ioc_type, value, src, title, cve, published in rows:
         builder = _STIX_PATTERN.get(ioc_type)
         if not builder:
@@ -164,7 +244,7 @@ def _write_stix(rows, path: Path, generated: str) -> int:
         if "'" in value:
             continue
         ind_id = f"indicator--{uuid.uuid5(_NS, ioc_type + ':' + value)}"
-        stamp = published or generated
+        stamp = _stix_time(published) if published else generated
         objects.append({
             "type": "indicator",
             "spec_version": "2.1",
@@ -180,15 +260,32 @@ def _write_stix(rows, path: Path, generated: str) -> int:
             "valid_from": stamp,
             "labels": [ioc_type] + ([cve] if cve else []),
         })
+        indicators += 1
+        target = vulnerabilities.get(str(cve).upper()) if cve else None
+        if target:
+            relationships.append({
+                "type": "relationship",
+                "spec_version": "2.1",
+                "id": f"relationship--{uuid.uuid5(_NS, ind_id + ':indicates:' + target['id'])}",
+                "created": generated,
+                "modified": generated,
+                "created_by_ref": identity_id,
+                "relationship_type": "indicates",
+                "source_ref": ind_id,
+                "target_ref": target["id"],
+            })
+    objects += list(vulnerabilities.values()) + relationships
     bundle = {
         "type": "bundle",
         "id": f"bundle--{uuid.uuid5(_NS, 'openthreat-bundle')}",
         "objects": objects,
     }
     path.write_text(json.dumps(bundle, indent=2, ensure_ascii=False), encoding="utf-8")
-    # The caller reports this as an INDICATOR count, so the identity object
-    # that now leads the bundle must not be counted as one.
-    return len(objects) - 1
+    # The caller reports this as an INDICATOR count, so neither the identity
+    # that leads the bundle nor the vulnerabilities and relationships that
+    # follow may be counted as one. Counting the objects and subtracting one
+    # was only right while indicators were the only other kind in the bundle.
+    return indicators
 
 
 # MISP attribute type + category per IOC type. MISP validates both, so a wrong
@@ -309,18 +406,63 @@ def _rfc822(dt_str: str) -> str:
     except Exception:
         return format_datetime(datetime.now(timezone.utc))
 
-def _write_rss(output: dict, path: Path, limit: int = 60) -> None:
+def _is_exploited(item: dict) -> bool:
+    return bool(item.get("cisa_kev")) or item.get("ssvc_exploitation") == "active"
+
+
+# One feed per question a reader subscribes to answer. feed.xml is everything,
+# newest first, which at a hundred-odd sources is far more than anyone reads;
+# these are the cuts worth a slot in a feed reader or a SIEM's RSS input.
+# name -> (channel title, channel description, predicate)
+FILTERED_FEEDS = {
+    "urgent": ("OpenThreat: patch now",
+               "Items scored urgent: confirmed exploitation or trivially weaponisable",
+               lambda i: i.get("priority_label") == "urgent"),
+    "exploited": ("OpenThreat: exploited in the wild",
+                  "CVEs in CISA KEV or with SSVC exploitation active",
+                  _is_exploited),
+    "rising": ("OpenThreat: EPSS rising",
+               "CVEs whose exploitation probability rose sharply this week",
+               lambda i: bool(i.get("epss_rising"))),
+    "cve": ("OpenThreat: vulnerabilities", "CVE records and vulnerability advisories",
+            lambda i: i.get("category") == "cve"),
+    "incident": ("OpenThreat: incidents", "Breaches, intrusions and ransomware claims",
+                 lambda i: i.get("category") == "incident"),
+    "advisory": ("OpenThreat: advisories", "Government and vendor advisories",
+                 lambda i: i.get("category") == "advisory"),
+}
+
+
+def write_filtered_feeds(output: dict, export_dir: Path) -> list[str]:
+    """Write feed-<name>.xml for each entry in FILTERED_FEEDS."""
+    names = []
+    for name, (title, description, keep) in FILTERED_FEEDS.items():
+        subset = [i for i in output.get("items", []) if keep(i)]
+        # Most urgent first where there is a score; the feed's own order
+        # (newest first) otherwise.
+        if name in ("urgent", "exploited", "rising"):
+            subset.sort(key=lambda i: -(i.get("priority_score") or 0))
+        fname = f"feed-{name}.xml"
+        _write_rss({**output, "items": subset}, export_dir / fname,
+                   title=title, description=description)
+        names.append(fname)
+    return names
+
+
+def _write_rss(output: dict, path: Path, limit: int = 60,
+               title: str = "OpenThreat Threat Intelligence",
+               description: str = "Aggregated CVEs, advisories, incidents and IOCs") -> None:
     items = output.get("items", [])[:limit]
     updated = _rfc822(output.get("last_updated", ""))
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<rss version="2.0"><channel>',
-        "<title>OpenThreat Threat Intelligence</title>",
+        f"<title>{xml_escape(title)}</title>",
         # This was "https://github.com/" — a placeholder that shipped. A reader
         # that follows the channel link is supposed to land on the feed's own
         # site, so it now points where the feed actually lives.
         f"<link>{xml_escape(str(CONFIG.dashboard_url or '').rstrip('/') or '')}</link>",
-        "<description>Aggregated CVEs, advisories, incidents and IOCs</description>",
+        f"<description>{xml_escape(description)}</description>",
         f"<lastBuildDate>{xml_escape(updated)}</lastBuildDate>",
         # RFC-era RSS expects bare addresses here, not mailto: URIs.
         f"<managingEditor>{xml_escape(str(CONFIG.contact_email or ''))}</managingEditor>",
@@ -340,7 +482,10 @@ def _write_rss(output: dict, path: Path, limit: int = 60) -> None:
         # reason it is safe lives in a different file.
         sev = xml_escape((item.get("severity") or "").upper())
         cats = xml_escape(item.get("category") or "")
-        guid = xml_escape(item.get("url") or item.get("title") or title)
+        # Built from the vetted link, not the raw URL. isPermaLink is false, but
+        # readers that find no <link> fall back to the guid, and a rejected
+        # `javascript:` URL must not come back in through it.
+        guid = link or xml_escape(item.get("title") or "Untitled")
         pub = xml_escape(_rfc822(item.get("published") or output.get("last_updated", "")))
         parts.append(
             "<item>"
@@ -368,9 +513,10 @@ def write_exports(output: dict, export_dir: Path, darkweb_index: dict = None) ->
 
     _write_csv(rows, export_dir / "iocs.csv")
     _write_json(rows, export_dir / "iocs.json", generated)
-    _write_stix(rows, export_dir / "stix.json", generated)
+    _write_stix(rows, export_dir / "stix.json", generated, items)
     _write_rss(output, export_dir / "feed.xml")
     written_names = ["iocs.csv", "iocs.json", "stix.json", "feed.xml"]
+    written_names += write_filtered_feeds(output, export_dir)
     if CONFIG.enable_misp_export:
         count = _write_misp(output, rows, export_dir / "misp_event.json", generated)
         written_names.append(f"misp_event.json ({count} attributes)")

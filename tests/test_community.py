@@ -162,8 +162,9 @@ class TestExportIdentity(unittest.TestCase):
 
     def test_identity_is_not_counted_as_an_indicator(self):
         """_write_stix returns an INDICATOR count that the caller logs."""
-        block = self.src.split("def _write_stix", 1)[1]
-        self.assertIn("return len(objects) - 1", block)
+        block = self.src.split("def _write_stix", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("return indicators", block)
+        self.assertNotIn("return len(objects)", block)
 
 
 if __name__ == "__main__":

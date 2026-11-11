@@ -29,6 +29,9 @@ const FRAMER = '<!doctype html><title>framer</title>'
 
 function resolve(urlPath) {
   if (urlPath === '/data/intel.json') return path.join(FIXTURES, 'intel.json');
+  // Absent on purpose, so a head file left by a local pipeline run cannot leak
+  // into the tests. The specs that exercise it supply one with page.route().
+  if (urlPath === '/data/feed-head.json') return path.join(FIXTURES, 'feed-head.json');
   const clean = path.normalize(decodeURIComponent(urlPath)).replace(/^([/\\])+/, '');
   const file = path.join(ROOT, clean || 'index.html');
   // Never serve outside the repository, whatever the URL says.
@@ -37,6 +40,11 @@ function resolve(urlPath) {
 
 http.createServer((req, res) => {
   const urlPath = new URL(req.url, 'http://localhost').pathname;
+  // An empty page to attach routes on before the dashboard is requested.
+  if (urlPath === '/__blank') {
+    res.writeHead(200, { 'Content-Type': TYPES['.html'] });
+    return res.end('<!doctype html><title>blank</title>');
+  }
   if (urlPath === '/__framer') {
     res.writeHead(200, { 'Content-Type': TYPES['.html'] });
     return res.end(FRAMER);

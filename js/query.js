@@ -52,6 +52,7 @@ const QUERY_FIELDS = {
 
   kev:         { kind: 'bool', get: (i) => !!i.cisa_kev, note: 'listed in CISA KEV' },
   poc:         { kind: 'bool', get: (i) => !!i.has_poc, note: 'a public PoC exists' },
+  rising:      { kind: 'bool', get: (i) => !!i.epss_rising, note: 'EPSS rose sharply this week' },
   exploited:   { kind: 'bool', get: (i) => !!(i.cisa_kev || i.ssvc_exploitation === 'active'), note: 'KEV or SSVC exploitation active' },
   automatable: { kind: 'bool', get: (i) => i.ssvc_automatable === 'yes', note: 'SSVC: exploitable at scale' },
   stack:       { kind: 'bool', get: (i, ctx) => ctx.matchesStack(i), note: 'matches your saved stack' },

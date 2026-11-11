@@ -68,6 +68,128 @@ test('a filter tab shows only what it names', async ({ page }) => {
   expect(problems).toEqual([]);
 });
 
+const fs = require('fs');
+const nodePath = require('path');
+
+function fixtureFeed() {
+  return JSON.parse(fs.readFileSync(nodePath.join(__dirname, 'fixtures', 'intel.json'), 'utf8'));
+}
+
+/** Serve a modified copy of the fixture feed, optionally after a delay. */
+async function serveFeed(page, feed, delayMs = 0) {
+  await page.route('**/data/intel.json', async (route) => {
+    if (delayMs) await new Promise((done) => setTimeout(done, delayMs));
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(feed) });
+  });
+}
+
+test('the first screen is painted from the head file before the full feed lands', async ({ page }) => {
+  const feed = fixtureFeed();
+  const verdicts = feed.items.filter((i) => i.priority_label);
+  const head = { ...feed, items: verdicts.slice(0, 2), partial: true,
+    head_counts: { total: 17, urgent: 9, critical: 8, high: 7, verdicts: verdicts.length } };
+  const problems = await open(page, '/__blank');
+  await serveFeed(page, feed, 1500);
+  await page.route('**/data/feed-head.json', (route) => route.fulfill(
+    { contentType: 'application/json', body: JSON.stringify(head) }));
+  await page.goto('/');
+  // Two cards, but the header already speaks for the whole feed.
+  await expect(page.locator('#cards-container .intel-card')).toHaveCount(2);
+  await expect(page.locator('#count-total')).toHaveText('17');
+  await expect(page.locator('#count-urgent')).toHaveText('9');
+  // Then the rest arrives and the counts come from the items themselves.
+  await expect(page.locator('#cards-container .intel-card')).toHaveCount(verdicts.length);
+  await expect(page.locator('#count-total')).toHaveText('17');
+  expect(problems).toEqual([]);
+});
+
+test('a head file with no full feed behind it still shows the head', async ({ page }) => {
+  const feed = fixtureFeed();
+  const head = { ...feed, items: feed.items.filter((i) => i.priority_label).slice(0, 2),
+    partial: true, head_counts: { total: 17, urgent: 9, critical: 8, high: 7, verdicts: 2 } };
+  await open(page, '/__blank');
+  await page.route('**/data/intel.json', (route) => route.fulfill({ status: 503, body: 'down' }));
+  await page.route('**/data/feed-head.json', (route) => route.fulfill(
+    { contentType: 'application/json', body: JSON.stringify(head) }));
+  await page.goto('/');
+  await expect(page.locator('#cards-container .intel-card')).toHaveCount(2);
+  await expect(page.locator('#error-state')).toBeHidden();
+  await expect(page.locator('#toast-host')).toContainText('top of the feed only');
+});
+
+test('repeats of one story fold behind a single card that lists them', async ({ page }) => {
+  const feed = fixtureFeed();
+  const [a, b, c] = feed.items;
+  [a, b, c].forEach((item) => Object.assign(item, { story_id: 'abc123', story_size: 3, story_sources: 3 }));
+  a.story_lead = true;
+  const problems = await open(page, '/__blank');
+  await serveFeed(page, feed);
+  await page.goto('/');
+  await waitForFeed(page);
+  await page.locator('#filter-tabs [data-filter="all"]').click();
+  await expect(page.locator('#cards-container .intel-card')).toHaveCount(15);
+  await expect(page.locator('#feed-count')).toContainText('2 repeats of the same story folded');
+  const lead = page.locator('#cards-container .intel-card', { has: page.locator('.story-badge') });
+  await expect(lead).toHaveCount(1);
+  await expect(lead.locator('.story-badge')).toHaveText('3 SOURCES');
+  await lead.locator('.card-verdict').click();
+  await expect(lead.locator('.card-story .story-row')).toHaveCount(2);
+  expect(problems).toEqual([]);
+});
+
+test('a CVE whose EPSS is climbing says so', async ({ page }) => {
+  const feed = fixtureFeed();
+  const item = feed.items.find((i) => i.epss_score != null);
+  Object.assign(item, { epss_delta: 0.184, epss_rising: true });
+  const problems = await open(page, '/__blank');
+  await serveFeed(page, feed);
+  await page.goto('/');
+  await waitForFeed(page);
+  await page.locator('#filter-tabs [data-filter="all"]').click();
+  const card = page.locator('#cards-container .intel-card', { has: page.locator('.rising-badge') });
+  await expect(card).toHaveCount(1);
+  await card.locator('.card-verdict').click();
+  await expect(card.locator('.meta-epss-trend')).toHaveText('▲ 18.4 pts / 7d');
+  await page.locator('#search-input').fill('rising');
+  await expect(page.locator('#cards-container .intel-card')).toHaveCount(1);
+  expect(problems).toEqual([]);
+});
+
+test('the time machine searches every archived day, not just today', async ({ page }) => {
+  const index = {
+    generated: '2026-11-11T00:00:00+00:00', days: 3, from: '2026-08-14', to: '2026-11-11', count: 3,
+    columns: ['title', 'url', 'source', 'cve', 'label', 'first', 'last'],
+    rows: [
+      ['Ivanti Connect Secure zero-day exploited', 'https://example.com/ivanti', 'Rapid7', 'CVE-2026-1111', 'urgent', '2026-08-14', '2026-08-20'],
+      ['Ivanti EPMM advisory', 'javascript:alert(1)', 'Ivanti', '', '', '2026-08-15', '2026-08-15'],
+      ['Chrome stable update', 'https://example.com/chrome', 'Chrome Releases', '', '', '2026-11-10', '2026-11-11'],
+    ],
+  };
+  const problems = await open(page, '/__blank');
+  let fetched = 0;
+  await page.route('**/data/api/search_index.json', (route) => {
+    fetched += 1;
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(index) });
+  });
+  await page.goto('/');
+  await waitForFeed(page);
+  await page.locator('#timemachine-open').click();
+  await expect(page.locator('#tm-search-input')).toBeVisible();
+  // Nothing is downloaded until somebody actually searches.
+  expect(fetched).toBe(0);
+  await page.locator('#tm-search-input').fill('ivanti');
+  await expect(page.locator('#tm-search-results .tm-search-row')).toHaveCount(2);
+  await expect(page.locator('#tm-search-status')).toContainText('2 items between 2026-08-14 and 2026-11-11');
+  // A hostile link in the index is shown as text, never as an anchor.
+  await expect(page.locator('#tm-search-results a')).toHaveCount(1);
+  await page.locator('#tm-search-input').fill('ivanti zero-day');
+  await expect(page.locator('#tm-search-results .tm-search-row')).toHaveCount(1);
+  await page.locator('#tm-search-input').fill('nothing-like-this');
+  await expect(page.locator('#tm-search-status')).toContainText('Nothing matching');
+  expect(fetched).toBe(1);
+  expect(problems).toEqual([]);
+});
+
 /** Type into the My Stack box in the filter panel, then close the panel. */
 async function addToStack(page, text) {
   await page.locator('#filters-open').click();
