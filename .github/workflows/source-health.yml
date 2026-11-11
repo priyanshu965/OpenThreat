@@ -4,6 +4,10 @@
 # Daily URL validation for every external source the pipeline depends on.
 # Catches "the API changed / went behind a PoW wall / started 403ing" breakage
 # BEFORE the dashboard data goes stale, and files a GitHub issue when it does.
+#
+# The second job probes every configured feed, and the waiting list in
+# scripts/feed_candidates.txt, FROM A RUNNER. A feed that answers a laptop can
+# still refuse this address range, and a runner is where the pipeline lives.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 name: Source Health Check
@@ -60,3 +64,58 @@ jobs:
           - **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
           Check the run log to see which source(s) failed, then update the URL(s) in \`scripts/fetch_intel.py\`."
+
+  probe-feeds:
+    name: Probe feeds from a runner
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Probe configured feeds and the waiting list
+        id: probe
+        run: |
+          python scripts/probe_feeds.py --configured --strict \
+            --candidates scripts/feed_candidates.txt | tee probe.log
+
+      # One open issue at a time. A feed that is down for a week should not
+      # file seven of them.
+      - name: File issue on a feed that stopped answering
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: "Feeds not answering the runner"
+        run: |
+          OPEN=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --search "in:title \"${TITLE}\"" --json number --jq 'length')
+          if [ "${OPEN}" != "0" ]; then
+            echo "An issue is already open; not filing another."
+            exit 0
+          fi
+          {
+            echo "One or more configured feeds returned nothing to a GitHub runner on two attempts."
+            echo
+            echo '```'
+            grep '^FAILING:' probe.log || true
+            echo '```'
+            echo
+            echo "- **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo "If it stays down, move the feed from \`scripts/sources.py\` to \`scripts/feed_candidates.txt\`."
+          } > issue.md
+          gh issue create --repo "${{ github.repository }}" --title "${TITLE}" --body-file issue.md

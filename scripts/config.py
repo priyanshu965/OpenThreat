@@ -99,6 +99,14 @@ class Config:
     # A source whose newest item is older than this is reported "stale" rather
     # than "ok" — a dead feed serving a 4-year-old archive is not healthy.
     source_stale_days      = _int("SOURCE_STALE_DAYS", 30)
+    # Research blogs that publish a handful of long reports a year (Project
+    # Zero, Volexity, watchTowr) are the ones that break zero-days first, and
+    # the 30-day rule above marks every one of them stale. Sources declared
+    # `"cadence": "slow"` are held to this instead, and contribute only what
+    # they published inside the window below - a feed's ten most recent posts
+    # can reach back two years, and a 2024 write-up is not today's news.
+    source_slow_stale_days  = _int("SOURCE_SLOW_STALE_DAYS", 365)
+    slow_source_window_days = _int("SLOW_SOURCE_WINDOW_DAYS", 120)
 
     # ── Attacker map (geoip + infrastructure feeds) ────────────────────────
     # DB-IP Country Lite is a monthly file, so a 30-day cache is the natural

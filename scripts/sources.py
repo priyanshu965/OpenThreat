@@ -11,6 +11,7 @@ so `fetch_intel.RSS_SOURCES` and the like keep working.
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -27,7 +28,7 @@ from fetchlib import (
     cached_fetch as _cached_fetch,
 )
 from classify import extract_cve_id, infer_category, infer_severity, valid_cve_id
-from feedutil import clean_html, make_request, make_request_text, now_utc, parse_date
+from feedutil import clean_html, entry_date, make_request, make_request_text, now_utc, parse_date
 from iocs import extract_iocs
 from scoring import cvss_to_severity
 
@@ -194,6 +195,21 @@ def _save_feed_meta() -> None:
         log.warning(f"Could not persist feed metadata: {e}")
 
 
+def recent_only(items: list[dict]) -> list[dict]:
+    """What a slow-cadence source published inside the window, newest first.
+
+    The newest post is always kept, however old, so a quiet research blog
+    still reports its real age to the health check instead of reading as an
+    empty feed.
+    """
+    if not items:
+        return items
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(days=CONFIG.slow_source_window_days)).isoformat()
+    ordered = sorted(items, key=lambda i: str(i.get("published") or ""), reverse=True)
+    return [i for i in ordered if str(i.get("published") or "") >= cutoff] or ordered[:1]
+
+
 def fetch_rss(source: dict) -> list[dict]:
     log.info(f"Fetching RSS: {source['name']}")
     items = []
@@ -231,7 +247,7 @@ def fetch_rss(source: dict) -> list[dict]:
             elif hasattr(entry, "content"):
                 description = clean_html(entry.content[0].get("value", ""))
             description = description.strip()[:999]
-            pub_date = parse_date(entry.get("published_parsed") or entry.get("updated_parsed"))
+            pub_date = entry_date(entry) or now_utc()
             severity = infer_severity(title + " " + description, source["severity"])
             category = infer_category(title + " " + description, source["category"])
             text = title + " " + description
@@ -243,6 +259,8 @@ def fetch_rss(source: dict) -> list[dict]:
             })
     except Exception as e:
         log.error(f"Unexpected error {source['name']}: {e}")
+    if source.get("cadence") == "slow":
+        items = recent_only(items)
     if items:
         _store_cached_feed(source["url"], items)
     log.info(f"  Got {len(items)} items from {source['name']}")
@@ -346,6 +364,114 @@ def fetch_reddit_netsec() -> list[dict]:
         log.warning(f"Reddit r/netsec failed: {e}")
     log.info(f"  Got {len(items)} posts from Reddit r/netsec")
     return items
+
+# ── Hacker News (Algolia search API) ──────────────────────────────────────────
+# hnrss.org, the RSS front end, does not answer GitHub's runners. This is the
+# API that site is itself built on, queried directly. Search there is AND-only,
+# so each term is its own request and the results are merged.
+
+_HN_TERMS = ("vulnerability", "exploit", "CVE", "ransomware", "malware",
+             "breach", "zero-day", "backdoor", "hacked", "security")
+_HN_MIN_POINTS = 100
+_HN_TITLE = re.compile(
+    r"vulnerab|exploit|\bCVE\b|CVE-\d|ransomware|malware|breach|zero.?day|0.?day|backdoor"
+    r"|\bhack(?:ed|ers?|ing)?\b|\bRCE\b|phishing|spyware|botnet|supply.chain|security (?:flaw|bug|hole|advisory|incident)"
+    r"|leak(?:ed|s)?\b|stolen|compromis", re.I)
+
+
+def fetch_hacker_news() -> list[dict]:
+    log.info("Fetching Hacker News security stories...")
+    seen: dict[str, dict] = {}
+    since = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp())
+    for term in _HN_TERMS:
+        data = make_request(
+            "https://hn.algolia.com/api/v1/search_by_date",
+            params={"query": term, "tags": "story", "hitsPerPage": 20,
+                    "restrictSearchableAttributes": "title",
+                    "numericFilters": f"points>={_HN_MIN_POINTS},created_at_i>{since}"})
+        for hit in (data or {}).get("hits", []):
+            story_id = str(hit.get("objectID") or "")
+            title = (hit.get("title") or "").strip()
+            # The API matches loosely (typos, prefixes, the linked page), so
+            # a title has to earn its place here as well.
+            if not story_id or not title or story_id in seen or not _HN_TITLE.search(title):
+                continue
+            discussion = f"https://news.ycombinator.com/item?id={story_id}"
+            seen[story_id] = {
+                "title": title,
+                "description": f"{hit.get('points', 0)} points and "
+                               f"{hit.get('num_comments', 0)} comments on Hacker News. "
+                               f"Discussion: {discussion}",
+                "url": hit.get("url") or discussion,
+                "cve_id": extract_cve_id(title),
+                "source": "Hacker News", "category": infer_category(title, "news"),
+                "severity": infer_severity(title, "low"), "cvss_score": None,
+                "published": parse_date(hit.get("created_at") or ""),
+                "_points": int(hit.get("points") or 0),
+            }
+    # The most-discussed stories of the week, not merely the latest ten.
+    items = sorted(seen.values(), key=lambda i: i["_points"], reverse=True)[:MAX_ITEMS_PER_SOURCE]
+    for item in items:
+        item.pop("_points", None)
+    log.info(f"  Got {len(items)} stories from Hacker News")
+    return items
+
+
+# ── CERT-In (listing pages; the agency publishes no feed) ─────────────────────
+# India's national CERT lists advisories (CIAD) and vulnerability notes (CIVN)
+# on two server-rendered pages per year. Each row is a code, a date in
+# brackets and a one-line title, which is everything a feed item needs.
+
+_CERT_IN_BASE = "https://www.cert-in.org.in/s2cMainServlet"
+_CERT_IN_ROW = re.compile(
+    r'href="(?P<path>/s2cMainServlet\?pageid=[A-Z0-9]+&(?:amp;)?VLCODE=(?P<code>CI(?:AD|VN)-\d{4}-\d+))"'
+    r'.*?\(\s*(?P<date>[A-Z][a-z]+\s+\d{1,2},\s+\d{4})\s*\)'
+    r'.*?padding-left:\s*\d+px">(?P<title>.*?)</span>', re.S)
+
+
+def parse_cert_in(html_text: str) -> list[dict]:
+    """Rows of one CERT-In listing page, in page order (newest first)."""
+    items = []
+    for row in _CERT_IN_ROW.finditer(html_text or ""):
+        code = row.group("code")
+        title = clean_html(row.group("title")).strip()
+        try:
+            published = datetime.strptime(" ".join(row.group("date").split()), "%B %d, %Y") \
+                .replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            continue
+        if not title:
+            continue
+        kind = "Advisory" if code.startswith("CIAD") else "Vulnerability Note"
+        text = f"{code}: {title}"
+        items.append({
+            "title": text,
+            "description": f"CERT-In {kind} {code}. {title}",
+            "url": "https://www.cert-in.org.in" + row.group("path").replace("&amp;", "&"),
+            "cve_id": extract_cve_id(title), "source": "CERT-In", "category": "advisory",
+            "severity": infer_severity(title, "high" if kind == "Advisory" else "medium"),
+            "cvss_score": None, "published": published,
+        })
+    return items
+
+
+def fetch_cert_in() -> list[dict]:
+    log.info("Fetching CERT-In advisories and vulnerability notes...")
+    year = datetime.now(timezone.utc).year
+    items: list[dict] = []
+    for page in ("PUBADVLIST02", "VLNLIST02"):
+        rows: list[dict] = []
+        # January has almost nothing listed under the new year yet.
+        for y in (year, year - 1):
+            text = make_request_text(f"{_CERT_IN_BASE}?pageid={page}&year={y}")
+            rows += parse_cert_in(text or "")
+            if len(rows) >= MAX_ITEMS_PER_SOURCE:
+                break
+        items += rows[:MAX_ITEMS_PER_SOURCE]
+    items.sort(key=lambda i: i["published"], reverse=True)
+    log.info(f"  Got {len(items)} from CERT-In")
+    return items[:MAX_ITEMS_PER_SOURCE]
+
 
 # ── AlienVault OTX Fetcher (API key) ──────────────────────────────────────────
 
@@ -686,7 +812,7 @@ def _fetch_rss_source(name: str, url: str, default_severity: str, extra_headers:
             # which feedparser exposes as `updated`. Without the fallback
             # parse_date() answers "now", so every item looks brand new on
             # every run and the staleness check can never fire.
-            pub = parse_date(entry.get("published_parsed") or entry.get("updated_parsed"))
+            pub = entry_date(entry) or now_utc()
             items.append({
                 "title": title, "description": desc, "url": link,
                 "cve_id": extract_cve_id(title + " " + desc),
@@ -1025,6 +1151,8 @@ def fetch_ransomware_live() -> list[dict]:
 API_SOURCES = [
     ("NVD",            fetch_nvd_cves),
     ("Reddit/netsec",  fetch_reddit_netsec),
+    ("Hacker News",    fetch_hacker_news),
+    ("CERT-In",        fetch_cert_in),
     ("AlienVault OTX", fetch_otx_pulse),
     ("URLhaus",        fetch_urlhaus),
     ("Spamhaus",       fetch_spamhaus_drop),
@@ -1072,6 +1200,13 @@ def _median_age_days(items: list[dict]) -> float | None:
     return round(ages[mid] if len(ages) % 2 else (ages[mid - 1] + ages[mid]) / 2, 1)
 
 
+def stale_after_days(name: str) -> int:
+    """How old a source's median item may be before it is reported stale."""
+    if any(s["name"] == name and s.get("cadence") == "slow" for s in RSS_SOURCES):
+        return CONFIG.source_slow_stale_days
+    return CONFIG.source_stale_days
+
+
 def run_source(name: str, fetcher, health: dict) -> list[dict]:
     """
     Invoke a single fetcher, capturing timing + outcome into ``health`` so a
@@ -1090,7 +1225,7 @@ def run_source(name: str, fetcher, health: dict) -> list[dict]:
         median_age = _median_age_days(items)
         if not items:
             status = "empty"
-        elif median_age is not None and median_age > CONFIG.source_stale_days:
+        elif median_age is not None and median_age > stale_after_days(name):
             status = "stale"
             log.warning(f"Source '{name}' is STALE — median item age {median_age:.0f} days")
         else:
