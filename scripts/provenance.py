@@ -140,10 +140,8 @@ _SOURCE_PROVENANCE = {
     "Reddit/netsec": INDEPENDENT,
     "PoC-in-GitHub": INDEPENDENT,
     "Have I Been Pwned": INDEPENDENT,
-    "Hacker News": INDEPENDENT,
     "Lobsters": INDEPENDENT,
     "oss-security": INDEPENDENT,
-    "Exploit-DB": INDEPENDENT,
 
     # Journalism
     "The Hacker News": JOURNALISM,
@@ -165,9 +163,7 @@ _SOURCE_PROVENANCE = {
     "DataBreaches.net": JOURNALISM,
     "Industrial Cyber": JOURNALISM,
     "The Cyber Express": JOURNALISM,
-    "Cybernews": JOURNALISM,
     "GBHackers": JOURNALISM,
-    "SecurityOnline": JOURNALISM,
     "Cyber Press": JOURNALISM,
     "The420": JOURNALISM,
     "ET CISO": JOURNALISM,

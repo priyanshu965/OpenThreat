@@ -4,7 +4,7 @@ A self-updating threat intelligence dashboard. Live at **[openthreat.in](https:/
 
 ## What it is
 
-OpenThreat collects CVEs, security advisories, incident reports and attack indicators from 107
+OpenThreat collects CVEs, security advisories, incident reports and attack indicators from 103
 public sources, scores each item on how likely it is to be exploited, and publishes the result as
 a static website. It also links items to threat actors, malware and ATT&CK techniques, and ships
 detection rules for them.

@@ -126,9 +126,9 @@ RSS_SOURCES = [
     # blocked (Trellix, Trend Micro, Security Boulevard), undated entries
     # (CrowdStrike, BankInfoSecurity) or too slow a cadence (Google Threat
     # Intelligence, Volexity, watchTowr, Project Zero, The DFIR Report).
-    {"name": "Cybernews",                              "url": "https://cybernews.com/feed/",                                                              "category": "news",     "severity": "medium"},
+    # Cybernews, SecurityOnline, Exploit-DB and hnrss.org answer a desktop but
+    # refuse or time out GitHub's runners, which is where this actually runs.
     {"name": "GBHackers",                              "url": "https://gbhackers.com/feed/",                                                              "category": "news",     "severity": "medium"},
-    {"name": "SecurityOnline",                         "url": "https://securityonline.info/feed/",                                                        "category": "news",     "severity": "medium"},
     {"name": "Cyber Press",                            "url": "https://cyberpress.org/feed/",                                                             "category": "news",     "severity": "medium"},
     {"name": "The420",                                 "url": "https://the420.in/feed/",                                                                  "category": "news",     "severity": "medium"},
     {"name": "ET CISO",                                "url": "https://ciso.economictimes.indiatimes.com/rss/topstories",                                 "category": "news",     "severity": "medium"},
@@ -136,7 +136,6 @@ RSS_SOURCES = [
     {"name": "Nextgov",                                "url": "https://www.nextgov.com/rss/cybersecurity/",                                               "category": "news",     "severity": "medium"},
     {"name": "Risky Business",                         "url": "https://news.risky.biz/rss/",                                                              "category": "news",     "severity": "medium"},
     {"name": "Have I Been Pwned",                      "url": "https://feeds.feedburner.com/HaveIBeenPwnedLatestBreaches",                                "category": "news",     "severity": "medium"},
-    {"name": "Hacker News",                            "url": "https://hnrss.org/newest?q=security+OR+vulnerability+OR+CVE&points=100",                   "category": "news",     "severity": "medium"},
     {"name": "Lobsters",                               "url": "https://lobste.rs/t/security.rss",                                                         "category": "news",     "severity": "medium"},
     # Research teams
     {"name": "Elastic Security Labs",                  "url": "https://www.elastic.co/security-labs/rss/feed.xml",                                        "category": "news",     "severity": "medium"},
@@ -154,7 +153,7 @@ RSS_SOURCES = [
     {"name": "Socket",                                 "url": "https://socket.dev/api/blog/feed.atom",                                                    "category": "news",     "severity": "medium"},
     {"name": "Wordfence",                              "url": "https://www.wordfence.com/feed/",                                                          "category": "news",     "severity": "medium"},
     {"name": "SpecterOps",                             "url": "https://specterops.io/feed/",                                                              "category": "news",     "severity": "medium"},
-    # Government, vendor PSIRTs, disclosure lists and public exploits
+    # Government, vendor PSIRTs, and disclosure lists
     {"name": "UK NCSC",                                "url": "https://www.ncsc.gov.uk/api/1/services/v1/all-rss-feed.xml",                               "category": "advisory", "severity": "medium"},
     {"name": "CERT/CC",                                "url": "https://www.kb.cert.org/vuls/atomfeed/",                                                   "category": "advisory", "severity": "high"},
     {"name": "HKCERT",                                 "url": "https://www.hkcert.org/getrss/security-bulletin",                                          "category": "advisory", "severity": "medium"},
@@ -164,7 +163,6 @@ RSS_SOURCES = [
     {"name": "Splunk",                                 "url": "https://advisory.splunk.com/feed.xml",                                                     "category": "advisory", "severity": "medium"},
     {"name": "Chrome Releases",                        "url": "https://chromereleases.googleblog.com/feeds/posts/default",                                "category": "advisory", "severity": "medium"},
     {"name": "oss-security",                           "url": "https://seclists.org/rss/oss-sec.rss",                                                     "category": "advisory", "severity": "medium"},
-    {"name": "Exploit-DB",                             "url": "https://www.exploit-db.com/rss.xml",                                                       "category": "advisory", "severity": "high"},
 ]
 
 
