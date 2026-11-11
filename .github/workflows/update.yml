@@ -144,7 +144,7 @@ jobs:
 
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy2.outputs.page_url }}
 
     steps:
 
@@ -482,6 +482,21 @@ jobs:
 
       - name: Deploy to GitHub Pages
         id: deploy
+        continue-on-error: true
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+      # The artifact API is eventually consistent. Run 43010911157 uploaded
+      # the artifact, asked for it one second later, was told there were none,
+      # and threw away a good pipeline run on a day the scheduler had already
+      # dropped four hours of attempts. One more try after a pause; if this
+      # one fails too the job fails as before.
+      - name: Wait before retrying the deploy
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 30
+
+      - name: Deploy to GitHub Pages (second attempt)
+        id: deploy2
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
       # A sustained outage used to open 24 identical issues a day. Only file one
